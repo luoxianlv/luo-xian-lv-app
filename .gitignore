@@ -1,5 +1,6 @@
 .gradle/
 .kotlin/
+.idea/
 build/
 app/build/
 local.properties
@@ -18,7 +19,6 @@ tools/*.pdb
 /*.wav
 /*.mp4
 /.superpowers/
-.staging/
 .staging/
 
 # 签名密钥（勿提交）
