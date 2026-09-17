@@ -26,14 +26,14 @@
 
 ## 功能
 
-| | |
-| --- | --- |
-| 🎼 **谱库** | 精选 / 最新 / 热门榜单，关键词搜索，创作者主页，谱子详情与播放统计 |
-| ⭐ **收藏同步** | 登录后收藏跨设备同步，本地离线缓存随时可弹 |
-| 🪗 **自动演奏** | 无障碍服务实时截屏识别琴键布局，`GestureDescription` 毫秒级手势序列，悬浮窗控制播放/暂停/切歌 |
-| 📥 **谱面导入** | 本地 MIDI 文件一键导入收藏（服务端编译），内置示例曲开箱即弹 |
-| 🔐 **账号** | QQ 邮箱验证码注册，鼠鼠 OAuth 一键登录，JWT 会话 |
-| 🔄 **应用内更新** | 内置更新通道，新版本自动提醒 |
+|                   |                                                                                               |
+|-------------------|-----------------------------------------------------------------------------------------------|
+| 🎼 **谱库**       | 精选 / 最新 / 热门榜单，关键词搜索，创作者主页，谱子详情与播放统计                            |
+| ⭐ **收藏同步**   | 登录后收藏跨设备同步，本地离线缓存随时可弹                                                    |
+| 🪗 **自动演奏**   | 无障碍服务实时截屏识别琴键布局，`GestureDescription` 毫秒级手势序列，悬浮窗控制播放/暂停/切歌 |
+| 📥 **谱面导入**   | 本地 MIDI 文件一键导入收藏（服务端编译），内置示例曲开箱即弹                                  |
+| 🔐 **账号**       | QQ 邮箱验证码注册，鼠鼠 OAuth 一键登录，JWT 会话                                              |
+| 🔄 **应用内更新** | 内置更新通道，新版本自动提醒                                                                  |
 
 ## 架构
 
@@ -64,14 +64,16 @@ app/src/main/java/app/luoxianlv/
 
 ## 技术栈
 
-| 层面 | 选型 |
-| --- | --- |
-| 语言 | Kotlin 2.0（JVM 17） |
-| UI | Jetpack Compose（Material 3） |
-| 演奏 | `AccessibilityService` + `GestureDescription` + `MediaProjection` 截屏识别 |
-| 网络 | 零依赖 `HttpURLConnection` 封装，JWT Bearer 鉴权 |
-| 持久化 | SharedPreferences |
-| 构建 | Gradle 9 · AGP 8.7 · compileSdk 35 |
+| 层面   | 选型                                                                       |
+|--------|----------------------------------------------------------------------------|
+| 语言   | Kotlin 2.4（JVM 17）                                                       |
+
+| UI     | Jetpack Compose（Material 3）                                              |
+| 演奏   | `AccessibilityService` + `GestureDescription` + `MediaProjection` 截屏识别 |
+| 网络   | 零依赖 `HttpURLConnection` 封装，JWT Bearer 鉴权                           |
+| 持久化 | SharedPreferences                                                          |
+| 构建   | Gradle 9.7 · AGP 9.1 · compileSdk / targetSdk 37                           |
+
 
 ## 快速开始
 
