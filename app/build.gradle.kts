@@ -43,6 +43,9 @@ android {
 
     buildTypes {
         release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             if (project.hasProperty("releaseStoreFile")) {
                 signingConfig = signingConfigs.getByName("release")
             } else if (project.findProperty("useDebugSigning") == "true") {

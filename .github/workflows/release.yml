@@ -86,6 +86,14 @@ jobs:
           apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           test -n "$apksigner"
           "$apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+          test -s app/build/outputs/mapping/release/mapping.txt
+          echo "APK size: $(stat -c%s app/build/outputs/apk/release/app-release.apk) bytes" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve obfuscation mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-mapping
+          path: app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
