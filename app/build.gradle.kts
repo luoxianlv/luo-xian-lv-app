@@ -69,7 +69,7 @@ dependencies {
     implementation("com.google.android.material:material:1.10.0")
 
     // Compose (M1)：主界面迁移用；material:1.10 暂保留给悬浮窗 View
-    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
