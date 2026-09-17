@@ -20,16 +20,12 @@ data class RustCompiledMidi(
 object RustMidiCompiler {
     private val baseUrl = BuildConfig.UPDATE_BASE_URL.trimEnd('/')
 
-    /** 需要登录：编译接口要求 Bearer token，未登录直接给出明确提示。 */
-    class AuthRequiredException(message: String) : IllegalStateException(message)
-
     fun compile(
         token: String?,
         bytes: ByteArray,
         track: Int? = null,
         melody: Boolean = true,
     ): RustCompiledMidi {
-        if (token.isNullOrBlank()) throw AuthRequiredException("登录后才能编译谱子")
         val request =
             JSONObject()
                 .put("midi", Base64.encodeToString(bytes, Base64.NO_WRAP))
@@ -72,7 +68,7 @@ object RustMidiCompiler {
 
     private fun postCompileJson(
         body: String,
-        token: String,
+        token: String?,
     ): String {
         val connection =
             try {
@@ -83,7 +79,7 @@ object RustMidiCompiler {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("Authorization", "Bearer $token")
+                    if (!token.isNullOrBlank()) setRequestProperty("Authorization", "Bearer $token")
                 }
             } catch (e: IOException) {
                 throw IOException("网络连接失败，请检查网络后重试", e)
@@ -93,14 +89,11 @@ object RustMidiCompiler {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8).use { it?.readText().orEmpty() }
-            if (status == 401 || status == 403) throw AuthRequiredException("登录已过期，请重新登录后再编译谱子")
             if (status !in 200..299) {
                 val message = runCatching { JSONObject(text).optString("message") }.getOrDefault("").ifBlank { "HTTP $status" }
                 error(message)
             }
             return text
-        } catch (e: AuthRequiredException) {
-            throw e
         } catch (e: IOException) {
             throw IOException("网络连接失败，请检查网络后重试", e)
         } finally {

@@ -80,6 +80,12 @@ jobs:
             build_args+=("-PupdateBaseUrl=$UPDATE_BASE_URL")
           fi
           bash ./gradlew assembleRelease --no-daemon "${build_args[@]}"
+      - name: Verify APK signature
+        run: |
+          set -eu
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          test -n "$apksigner"
+          "$apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,14 +93,16 @@ jobs:
         run: |
           set -eu
           test -f app/build/outputs/apk/release/app-release.apk
-          sha256sum app/build/outputs/apk/release/app-release.apk > app-release.sha256
+          asset="luoxianlv-${RELEASE_TAG}-release.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$asset"
+          sha256sum "$asset" > "$asset.sha256"
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" \
-              app/build/outputs/apk/release/app-release.apk app-release.sha256 \
+              "$asset" "$asset.sha256" \
               --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$RELEASE_TAG" \
-              app/build/outputs/apk/release/app-release.apk app-release.sha256 \
+              "$asset" "$asset.sha256" \
               --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "落弦律 ${RELEASE_TAG}"
           fi
       - name: Remove signing key
