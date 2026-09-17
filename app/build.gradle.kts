@@ -5,20 +5,24 @@ plugins {
 }
 
 android {
-    namespace = "com.example.autoplaymusic"
+    namespace = "app.luoxianlv"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.autoplaymusic"
+        applicationId = "app.luoxianlv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "2.1"
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 5
+        versionName = project.findProperty("appVersionName") as String? ?: "1.0.0"
 
         // 本地模拟器构建指向宿主机上的 Rust 服务；
         // Release 构建用 -PupdateBaseUrl=https://... 覆盖
-        val updateBaseUrl = project.findProperty("updateBaseUrl") as String? ?: "http://10.0.2.2:8787"
+        val updateBaseUrl = project.findProperty("updateBaseUrl") as String? ?: "https://luoxianlv.com"
+        require(updateBaseUrl.matches(Regex("https?://[A-Za-z0-9.:-]+"))) { "updateBaseUrl must be an HTTP(S) origin" }
         buildConfigField("String", "UPDATE_BASE_URL", "\"$updateBaseUrl\"")
+        val updateSource = project.findProperty("updateSource") as String? ?: "oss"
+        require(updateSource in listOf("oss", "github")) { "updateSource must be oss or github" }
+        buildConfigField("String", "UPDATE_SOURCE", "\"$updateSource\"")
     }
 
     buildFeatures {
@@ -63,7 +67,6 @@ android {
 
 dependencies {
     implementation("com.google.android.material:material:1.10.0")
-    implementation("dev.atsushieno:ktmidi-jvm:0.8.2")
 
     // Compose (M1)：主界面迁移用；material:1.10 暂保留给悬浮窗 View
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
@@ -78,4 +81,5 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

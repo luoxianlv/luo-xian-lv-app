@@ -1,0 +1,64 @@
+name: Issue Auto Label
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  auto-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Label team member issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            if (['OWNER', 'MEMBER', 'COLLABORATOR'].includes(issue.author_association)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ['maintainer'],
+              });
+            }
+
+      - name: Match labels by issue content
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const text = `${issue.title}\n${issue.body || ''}`;
+            const rules = [
+              { label: 'bug', match: /(bug|崩溃|闪退|报错|异常|无法|失败|error|crash/i },
+              { label: 'enhancement', match: /(功能|建议|需求|新增|支持|希望|feature|enhancement|request/i },
+              { label: 'documentation', match: /(文档|readme|说明|documentation|docs)/i },
+              { label: 'question', match: /(请问|如何|怎么|为什么|question|help)/i },
+            ];
+            const hits = rules.filter(r => r.match.test(text)).map(r => r.label);
+            if (!hits.length) return;
+            for (const label of hits) {
+              // 标签不存在时先创建，避免 addLabels 失败
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label,
+                  color: label === 'bug' ? 'd73a4a'
+                       : label === 'enhancement' ? 'a2eeef'
+                       : label === 'documentation' ? '0075ca'
+                       : 'd876e3',
+                });
+              } catch (e) { /* 已存在 */ }
+            }
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: hits,
+            });
+            console.log(`Labeled #${issue.number}: ${hits.join(', ')}`);

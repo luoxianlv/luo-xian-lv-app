@@ -1,0 +1,37 @@
+name: Issue Staleness Management
+
+on:
+  schedule:
+    - cron: "0 0 * * *" # 每日 UTC 00:00
+  workflow_dispatch:
+
+env:
+  daysBeforeStale: 60
+  daysBeforeClose: 7
+
+permissions:
+  issues: write
+  actions: write # https://github.com/actions/stale/issues/1090 的 workaround
+  contents: none
+
+jobs:
+  stale:
+    name: Handle stale issues
+    runs-on: ubuntu-latest
+    steps:
+      - name: Handle stale issues
+        uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          days-before-stale: ${{ env.daysBeforeStale }}
+          days-before-close: ${{ env.daysBeforeClose }}
+          stale-issue-label: "stale"
+          stale-issue-message: |
+            这个 Issue 已经超过 ${{ env.daysBeforeStale }} 天没有活动，被标记为过期；
+            如果 ${{ env.daysBeforeClose }} 天内仍无更新将被自动关闭。有新进展请随时留言~
+          close-issue-message: |
+            由于长期没有活动，这个 Issue 已被自动关闭。问题若仍然存在，欢迎补充信息后重新打开。
+          exempt-issue-labels: "keep-open, bug, enhancement"
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          operations-per-run: 100

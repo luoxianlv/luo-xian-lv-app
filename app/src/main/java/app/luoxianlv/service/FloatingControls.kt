@@ -1,0 +1,495 @@
+package app.luoxianlv.service
+
+import android.content.res.ColorStateList
+import android.graphics.PixelFormat
+import android.os.Handler
+import android.os.Looper
+import android.view.ContextThemeWrapper
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewConfiguration
+import android.view.WindowManager
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import app.luoxianlv.PlayerUi
+import app.luoxianlv.PlayerUi.dp
+import app.luoxianlv.R
+import app.luoxianlv.data.SongRepository
+import app.luoxianlv.data.timeLabel
+import com.google.android.material.button.MaterialButton
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+/**
+ * 悬浮窗（无障碍 overlay）。
+ *
+ * 视觉对齐 App 浅色主题：白卡（92% 不透明 + 细描边 + 阴影）、品牌蓝主按钮、
+ * 深藏青标题。两个形态：
+ * - 收起：40dp 白底蓝音符气泡，可拖动；
+ * - 展开：单行小胶囊（播放钮 + 曲名/状态 + 选歌 + 收起），底部 3dp 蓝色进度条，
+ *   进度条区域可点按/拖动 seek。
+ * 「选歌」开居中独立小窗，不再是贴面板下拉。
+ */
+class FloatingControls(
+    private val service: MusicAccessibilityService,
+) {
+    private val context = ContextThemeWrapper(service, R.style.AppTheme)
+    private val wm = service.getSystemService(WindowManager::class.java)
+    private val prefs = service.getSharedPreferences("floating_position", 0)
+    private val handler = Handler(Looper.getMainLooper())
+    private var root: View? = null
+    private var params: WindowManager.LayoutParams? = null
+    private var popup: View? = null
+    private var marker: View? = null
+    private var expanded = false
+    private var title: TextView? = null
+    private var status: TextView? = null
+    private var play: ImageView? = null
+    private var progressFill: View? = null
+    private var progressTrack: View? = null
+    private var seeking = false
+    private var displayRequested = false
+    private var showRetries = 0
+    // 选歌窗打开时面板先退出，关闭后恢复（两者不共存）。
+    private var panelHiddenForPicker = false
+    private var x = prefs.getInt("x", context.dp(16))
+    private var y = prefs.getInt("y", context.dp(140))
+    private val tick =
+        object : Runnable {
+            override fun run() {
+                refresh()
+                if (root != null) handler.postDelayed(this, 200)
+            }
+        }
+    private val removeMarker =
+        Runnable {
+            marker?.let { wm.removeView(it) }
+            marker = null
+        }
+
+    fun show() {
+        displayRequested = true
+        showRetries = 0
+        if (root != null) return
+        handler.post { if (displayRequested && root == null) render(false) }
+    }
+
+    fun hide() {
+        displayRequested = false
+        dismissPlaylist()
+        handler.removeCallbacks(tick)
+        root?.let { wm.removeView(it) }
+        root = null
+        title = null
+        status = null
+        play = null
+        progressFill = null
+        progressTrack = null
+    }
+
+    fun destroy() {
+        hide()
+        handler.removeCallbacksAndMessages(null)
+        removeMarker.run()
+    }
+
+    fun reposition() {
+        if (root != null) render(expanded)
+    }
+
+    private fun layout(
+        width: Int,
+        height: Int,
+    ) = WindowManager
+        .LayoutParams(
+            width,
+            height,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+    private fun render(open: Boolean) {
+        if (!displayRequested) return
+        // render 会先 hide() → dismissPlaylist()，先清标记避免在里面递归恢复面板。
+        panelHiddenForPicker = false
+        hide()
+        displayRequested = true
+        expanded = open
+        val bounds = service.screenBounds()
+        val view: View
+        val width: Int
+        if (!open) {
+            width = context.dp(44)
+            view =
+                ImageView(context).apply {
+                    setImageResource(R.drawable.ic_music_note)
+                    background = PlayerUi.background(context, 0xf2ffffff.toInt(), 22, true)
+                    imageTintList = ColorStateList.valueOf(PlayerUi.BLUE)
+                    setPadding(context.dp(10), context.dp(10), context.dp(10), context.dp(10))
+                    elevation = context.dp(3).toFloat()
+                    contentDescription = "展开播放器"
+                    setOnClickListener { render(true) }
+                }
+            attachDrag(view, true)
+        } else {
+            width = minOf(context.dp(236), bounds.width() - context.dp(16))
+            view = buildPanel(width)
+        }
+        view.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        params =
+            layout(width, if (open) -2 else context.dp(44)).apply {
+                x = this@FloatingControls.x.coerceIn(0, (bounds.width() - width).coerceAtLeast(0))
+                y =
+                    this@FloatingControls.y.coerceIn(
+                        context.dp(24),
+                        (bounds.height() - view.measuredHeight - context.dp(24)).coerceAtLeast(context.dp(24)),
+                    )
+            }
+        try {
+            wm.addView(view, params)
+            root = view
+            showRetries = 0
+            handler.post(tick)
+        } catch (_: WindowManager.BadTokenException) {
+            root = null
+            // Some OEMs bind the accessibility window a moment after the
+            // callback. Retry once the window token is available.
+            retryShow()
+        } catch (_: IllegalStateException) {
+            root = null
+            retryShow()
+        }
+    }
+
+    /** 展开态：单行小胶囊，进度条叠在胶囊底部边缘（不占额外高度，内容才居中）。 */
+    private fun buildPanel(width: Int): View {
+        val panel =
+            android.widget.FrameLayout(context).apply {
+                background = PlayerUi.background(context, 0xebffffff.toInt(), 26, true)
+                elevation = context.dp(4).toFloat()
+            }
+        val row =
+            PlayerUi.row(context).apply {
+                setPadding(context.dp(6), 0, context.dp(4), 0)
+            }
+        // 播放/暂停：蓝色实心圆钮（ImageView 画圆，图标严格居中——
+        // MaterialButton 的 icon 布局在圆形小按钮上对不齐）。
+        play =
+            ImageView(context).apply {
+                contentDescription = "播放"
+                setImageResource(R.drawable.ic_play)
+                imageTintList = ColorStateList.valueOf(0xffffffff.toInt())
+                background = PlayerUi.background(context, PlayerUi.BLUE, 17, false)
+                scaleType = ImageView.ScaleType.CENTER
+                setOnClickListener { service.toggle() }
+            }
+        row.addView(play, LinearLayout.LayoutParams(context.dp(34), context.dp(34)))
+        // 曲名 + 状态（拖动把手）
+        val info =
+            PlayerUi.column(context).apply {
+                setPadding(context.dp(8), 0, context.dp(4), 0)
+            }
+        title =
+            PlayerUi.text(context, service.song.title, 12f, PlayerUi.TEXT, bold = true).apply {
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }
+        info.addView(title, LinearLayout.LayoutParams(-1, -2))
+        status = PlayerUi.text(context, "", 10f, PlayerUi.MUTED)
+        info.addView(status, LinearLayout.LayoutParams(-1, -2))
+        row.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
+        attachDrag(info, false)
+        // 选歌：居中弹独立小窗
+        val picker =
+            PlayerUi.button(context, "选歌", R.drawable.ic_folder_music, iconOnly = true).apply {
+                backgroundTintList = ColorStateList.valueOf(0x00000000)
+                iconTint = ColorStateList.valueOf(PlayerUi.BLUE)
+                iconSize = context.dp(18)
+                cornerRadius = context.dp(16)
+                setPadding(0, 0, 0, 0)
+                setOnClickListener { if (popup == null) showPlaylist() else dismissPlaylist() }
+            }
+        row.addView(picker, LinearLayout.LayoutParams(context.dp(32), context.dp(32)))
+        // 收起
+        val collapse =
+            PlayerUi.button(context, "收起", iconOnly = true).apply {
+                text = "×"
+                backgroundTintList = ColorStateList.valueOf(0x00000000)
+                setTextColor(PlayerUi.MUTED)
+                textSize = 16f
+                cornerRadius = context.dp(14)
+                setPadding(0, 0, 0, 0)
+                setOnClickListener { render(false) }
+            }
+        row.addView(collapse, LinearLayout.LayoutParams(context.dp(28), context.dp(32)))
+        // 底部进度条：3dp 蓝条，区域可点按/拖动 seek
+        val track =
+            object : LinearLayout(context) {
+                init {
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(context.dp(12), 0, context.dp(12), 0)
+                }
+            }
+        val rail =
+            View(context).apply {
+                background = PlayerUi.background(context, PlayerUi.LINE, 2, false)
+            }
+        track.addView(rail, LinearLayout.LayoutParams(-1, context.dp(3)))
+        progressTrack = track
+        val fillHolder =
+            object : LinearLayout(context) {}.apply {
+                gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                clipChildren = false
+                // 与轨道同样的左右内边距，填充条才对齐轨道。
+                setPadding(context.dp(12), 0, context.dp(12), 0)
+            }
+        val fill =
+            View(context).apply {
+                background = PlayerUi.background(context, PlayerUi.BLUE, 2, false)
+            }
+        fillHolder.addView(fill, LinearLayout.LayoutParams(0, context.dp(3)))
+        progressFill = fill
+        // 叠放：轨道在下、填充在上，整体作为 seek 触控区
+        val strip =
+            android.widget.FrameLayout(context).apply {
+                addView(track, android.widget.FrameLayout.LayoutParams(-1, -1))
+                addView(fillHolder, android.widget.FrameLayout.LayoutParams(-1, -1))
+            }
+        strip.tag = fillHolder
+        strip.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    seeking = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                    val fraction = (e.x / v.width).coerceIn(0f, 1f)
+                    service.seek((fraction * service.durationMs).toLong())
+                    if (e.actionMasked == MotionEvent.ACTION_UP) {
+                        seeking = false
+                        refresh()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+        // 内容行固定 46dp，进度条叠在底部 10dp 内，胶囊整体 46dp 高。
+        panel.addView(row, android.widget.FrameLayout.LayoutParams(-1, context.dp(46)))
+        panel.addView(
+            strip,
+            android.widget.FrameLayout.LayoutParams(-1, context.dp(10), Gravity.BOTTOM),
+        )
+        return panel
+    }
+
+    private fun retryShow() {
+        if (++showRetries <= 3) {
+            handler.postDelayed({ if (displayRequested && root == null) render(expanded) }, 500)
+        }
+    }
+
+    private fun attachDrag(
+        handle: View,
+        clickable: Boolean,
+    ) {
+        var sx = 0f
+        var sy = 0f
+        var bx = 0
+        var by = 0
+        var moved = false
+        handle.setOnTouchListener { v, e ->
+            val p = params ?: return@setOnTouchListener false
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    sx = e.rawX
+                    sy = e.rawY
+                    bx = p.x
+                    by = p.y
+                    moved = false
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - sx
+                    val dy = e.rawY - sy
+                    if (abs(dx) + abs(dy) > ViewConfiguration.get(context).scaledTouchSlop) moved = true
+                    if (moved) {
+                        dismissPlaylist()
+                        val bounds = service.screenBounds()
+                        p.x = (bx + dx).toInt().coerceIn(0, (bounds.width() - (root?.width ?: 0)).coerceAtLeast(0))
+                        p.y = (by + dy).toInt().coerceIn(0, (bounds.height() - (root?.height ?: 0)).coerceAtLeast(0))
+                        root?.let { wm.updateViewLayout(it, p) }
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    if (moved) {
+                        x = p.x
+                        y = p.y
+                        prefs
+                            .edit()
+                            .putInt("x", x)
+                            .putInt("y", y)
+                            .apply()
+                    } else if (clickable) {
+                        v.performClick()
+                    }
+                    true
+                }
+
+                else -> {
+                    true
+                }
+            }
+        }
+    }
+
+    fun refresh() {
+        title?.text = service.song.title
+        status?.text = service.error ?: if (service.preparing) "识别按键中…" else "${service.modeLabel} · ${timeLabel(service.positionMs)}/${timeLabel(service.durationMs)}"
+        play?.apply {
+            setImageResource(if (service.playing) R.drawable.ic_pause else R.drawable.ic_play)
+            contentDescription = if (service.playing) "暂停" else "播放"
+        }
+        if (!seeking) {
+            val fraction = (service.positionMs.toFloat() / service.durationMs.coerceAtLeast(1)).coerceIn(0f, 1f)
+            val strip = progressFill?.parent as? View ?: return
+            val width = ((strip.width - context.dp(24)).coerceAtLeast(0) * fraction).roundToInt()
+            progressFill?.let { fill ->
+                val lp = fill.layoutParams
+                if (lp.width != width) {
+                    lp.width = width
+                    fill.layoutParams = lp
+                }
+            }
+        }
+    }
+
+    /** 选歌：居中独立小窗（白卡 + 当前曲目蓝色高亮）。打开时面板退出，关闭后恢复。 */
+    private fun showPlaylist() {
+        if (root != null) {
+            panelHiddenForPicker = true
+            handler.removeCallbacks(tick)
+            root?.let { wm.removeView(it) }
+            root = null
+        }
+        val songs = SongRepository(service).songs()
+        val card =
+            PlayerUi.column(context).apply {
+                background = PlayerUi.background(context, 0xf5ffffff.toInt(), 20, true)
+                elevation = context.dp(6).toFloat()
+                setPadding(context.dp(14), context.dp(10), context.dp(14), context.dp(10))
+            }
+        val header = PlayerUi.row(context)
+        header.addView(
+            PlayerUi.text(context, "选择谱子", 14f, PlayerUi.TEXT, bold = true),
+            LinearLayout.LayoutParams(0, -2, 1f),
+        )
+        val close =
+            PlayerUi.button(context, "关闭", iconOnly = true).apply {
+                text = "×"
+                backgroundTintList = ColorStateList.valueOf(0x00000000)
+                setTextColor(PlayerUi.MUTED)
+                textSize = 16f
+                cornerRadius = context.dp(14)
+                setPadding(0, 0, 0, 0)
+                setOnClickListener { dismissPlaylist() }
+            }
+        header.addView(close, LinearLayout.LayoutParams(context.dp(28), context.dp(28)))
+        card.addView(header)
+
+        val list = PlayerUi.column(context)
+        if (songs.isEmpty()) {
+            list.addView(
+                PlayerUi.text(context, "先去曲库添加谱子", 13f, PlayerUi.MUTED).apply {
+                    setPadding(0, context.dp(16), 0, context.dp(16))
+                    gravity = Gravity.CENTER
+                },
+                LinearLayout.LayoutParams(-1, -2),
+            )
+        }
+        songs.forEach { song ->
+            val current = song.id == service.song.id
+            val row =
+                PlayerUi.text(context, song.title, 13f, if (current) 0xffffffff.toInt() else PlayerUi.TEXT, bold = current).apply {
+                    setPadding(context.dp(12), 0, context.dp(12), 0)
+                    gravity = Gravity.CENTER_VERTICAL
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    background = PlayerUi.background(context, if (current) PlayerUi.BLUE else 0x00000000, 10, false)
+                    setOnClickListener {
+                        service.select(song)
+                        dismissPlaylist()
+                        refresh()
+                    }
+                }
+            list.addView(row, LinearLayout.LayoutParams(-1, context.dp(40)))
+        }
+        val bounds = service.screenBounds()
+        val maxHeight = minOf(context.dp(300), bounds.height() / 2)
+        val scroll =
+            ScrollView(context).apply {
+                addView(list)
+                setOnTouchListener { _, event ->
+                    if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                        dismissPlaylist()
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        card.addView(
+            scroll,
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = context.dp(6) },
+        )
+        card.measure(
+            View.MeasureSpec.makeMeasureSpec(context.dp(264), View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST),
+        )
+        val height = minOf(card.measuredHeight, maxHeight)
+        val p =
+            layout(context.dp(264), height).apply {
+                flags = flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                x = ((bounds.width() - context.dp(264)) / 2).coerceAtLeast(0)
+                y = ((bounds.height() - height) / 2).coerceAtLeast(0)
+            }
+        popup = card
+        wm.addView(card, p)
+    }
+
+    private fun dismissPlaylist() {
+        popup?.let { wm.removeView(it) }
+        popup = null
+        if (panelHiddenForPicker) {
+            panelHiddenForPicker = false
+            if (displayRequested && root == null) render(expanded)
+        }
+    }
+
+    fun mark(
+        x: Float,
+        y: Float,
+    ) {
+        handler.removeCallbacks(removeMarker)
+        if (marker == null) {
+            marker = View(context).apply { background = PlayerUi.background(context, 0x55007aff, 20, true) }
+            val p = layout(context.dp(20), context.dp(20)).apply { flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE }
+            wm.addView(marker, p)
+        }
+        val p = marker!!.layoutParams as WindowManager.LayoutParams
+        p.x = x.toInt() - context.dp(10)
+        p.y = y.toInt() - context.dp(10)
+        wm.updateViewLayout(marker, p)
+        handler.postDelayed(removeMarker, 120)
+    }
+}

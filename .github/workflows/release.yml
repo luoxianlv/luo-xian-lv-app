@@ -3,6 +3,19 @@ name: release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing v* tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   apk:
@@ -11,26 +24,79 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Validate release secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -eu
+          : "${ANDROID_KEYSTORE_BASE64:?Missing required release secret: ANDROID_KEYSTORE_BASE64}"
+          : "${ANDROID_KEYSTORE_PASSWORD:?Missing required release secret: ANDROID_KEYSTORE_PASSWORD}"
+          : "${ANDROID_KEY_ALIAS:?Missing required release secret: ANDROID_KEY_ALIAS}"
+          : "${ANDROID_KEY_PASSWORD:?Missing required release secret: ANDROID_KEY_PASSWORD}"
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: |
+          set -eu
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) echo "Release tag must start with v: $RELEASE_TAG" >&2; exit 1 ;;
+          esac
       - name: Prepare signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          set -eu
           test -n "$ANDROID_KEYSTORE_BASE64"
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/luoxianlv-release.jks"
-      - run: ./gradlew assembleRelease \
-          -PreleaseStoreFile="$RUNNER_TEMP/luoxianlv-release.jks" \
-          -PreleaseStorePassword="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-          -PreleaseKeyAlias="${{ secrets.ANDROID_KEY_ALIAS }}" \
-          -PreleaseKeyPassword="${{ secrets.ANDROID_KEY_PASSWORD }}"
+      - name: Run Android unit tests
+        run: bash ./gradlew testDebugUnitTest --no-daemon
+      - name: Build signed APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          UPDATE_BASE_URL: ${{ vars.UPDATE_BASE_URL }}
+        run: |
+          set -eu
+          build_args=(
+            "-PreleaseStoreFile=$RUNNER_TEMP/luoxianlv-release.jks"
+            "-PreleaseStorePassword=$ANDROID_KEYSTORE_PASSWORD"
+            "-PreleaseKeyAlias=$ANDROID_KEY_ALIAS"
+            "-PreleaseKeyPassword=$ANDROID_KEY_PASSWORD"
+          )
+          if [ -n "${UPDATE_BASE_URL:-}" ]; then
+            build_args+=("-PupdateBaseUrl=$UPDATE_BASE_URL")
+          fi
+          bash ./gradlew assembleRelease --no-daemon "${build_args[@]}"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
         run: |
+          set -eu
+          test -f app/build/outputs/apk/release/app-release.apk
           sha256sum app/build/outputs/apk/release/app-release.apk > app-release.sha256
-          gh release create "${GITHUB_REF_NAME}" app/build/outputs/apk/release/app-release.apk app-release.sha256 \
-            --repo "$GITHUB_REPOSITORY" --generate-notes --title "落弦律 ${GITHUB_REF_NAME}"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              app/build/outputs/apk/release/app-release.apk app-release.sha256 \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              app/build/outputs/apk/release/app-release.apk app-release.sha256 \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "落弦律 ${RELEASE_TAG}"
+          fi
+      - name: Remove signing key
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/luoxianlv-release.jks"

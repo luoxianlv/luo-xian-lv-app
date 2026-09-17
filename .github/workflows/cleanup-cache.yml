@@ -1,0 +1,30 @@
+name: Cleanup Actions Cache
+
+# PR 关闭/合并时清理其 merge ref 的构建缓存，避免缓存无限堆积。
+
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  pr-closed:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup closed PR caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_REF: refs/pull/${{ github.event.pull_request.number || 0 }}/merge
+        run: |
+          set -eu
+          ids=$(gh api "repos/${GITHUB_REPOSITORY}/actions/caches?ref=${PR_REF}" --jq '.actions_caches[].id')
+          for id in $ids; do
+            echo "Deleting cache $id for ${PR_REF}"
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/actions/caches/${id}"
+          done
+          echo "Done."

@@ -20,3 +20,6 @@ tools/*.pdb
 /.superpowers/
 .staging/
 .staging/
+
+# 签名密钥（勿提交）
+app/release-keystore.jks
