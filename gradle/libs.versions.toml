@@ -1,0 +1,29 @@
+[versions]
+agp = "9.1.1"
+kotlin = "2.4.20"
+material = "1.14.0"
+composeBom = "2026.09.00"
+activityCompose = "1.13.0"
+lifecycle = "2.11.0"
+navigationCompose = "2.10.1"
+junit = "4.13.2"
+json = "20260814"
+
+[libraries]
+material = { module = "com.google.android.material:material", version.ref = "material" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
+junit = { module = "junit:junit", version.ref = "junit" }
+json = { module = "org.json:json", version.ref = "json" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
