@@ -155,7 +155,7 @@ fun SettingsScreen(
                         iconTint = IconOrange,
                         onClick = onDiagnostics,
                     )
-                    PreferenceDivider(startIndent = 64.dp)
+                    PreferenceDivider()
                     PreferenceItem(
                         title = "忽略电池优化",
                         summary =
@@ -167,7 +167,7 @@ fun SettingsScreen(
                         icon = Icons.Filled.BatterySaver,
                         iconTint = IconGreen,
                     ) { KeepAlive.requestBatteryExemption(context) }
-                    PreferenceDivider(startIndent = 64.dp)
+                    PreferenceDivider()
                     PreferenceItem(
                         title = "播放通知",
                         summary =
@@ -187,7 +187,7 @@ fun SettingsScreen(
                             KeepAlive.openNotificationSettings(context)
                         }
                     }
-                    PreferenceDivider(startIndent = 64.dp)
+                    PreferenceDivider()
                     PreferenceItem(
                         title = "自启动与后台权限",
                         summary = "部分手机需在系统设置中允许后台运行",
@@ -211,7 +211,7 @@ fun SettingsScreen(
                         icon = Icons.Filled.SystemUpdate,
                         iconTint = IconUpdate,
                     )
-                    PreferenceDivider(startIndent = 64.dp)
+                    PreferenceDivider()
                     PreferenceItem(
                         title = "关于落弦律",
                         icon = Icons.Filled.Info,

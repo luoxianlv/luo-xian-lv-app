@@ -100,13 +100,14 @@ fun PreferenceSection(
 /**
  * 行与行 / 组与组之间的分割线。
  *
- * [startIndent] 用来对齐正文：带图标的行正文从 16(边距)+36(图标)+12(间距) = 64dp 开始，
- * 分割线缩进同一位置，分割才是「切在行之间」而不是「切在图标上」。
+ * 默认左右各留 [horizontalPadding]（16dp，等于卡片内容边距）：一条居中的
+ * 悬浮短线，两端都有呼吸感，不顶到卡片边缘。
+ * 想铺满整行传 <code>0.dp</code>；想对齐正文再加大。
  */
 @Composable
-fun PreferenceDivider(startIndent: Dp = 16.dp) {
+fun PreferenceDivider(horizontalPadding: Dp = 16.dp) {
     HorizontalDivider(
-        modifier = Modifier.padding(start = startIndent),
+        modifier = Modifier.padding(horizontal = horizontalPadding),
         color = MaterialTheme.colorScheme.outlineVariant,
     )
 }
