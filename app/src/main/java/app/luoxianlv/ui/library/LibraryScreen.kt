@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -42,8 +41,9 @@ import app.luoxianlv.ui.components.ActionPill
 import app.luoxianlv.ui.components.ErrorDialogHost
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.PageTitle
+import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
-import app.luoxianlv.ui.components.SongCard
+import app.luoxianlv.ui.components.SongRow
 import app.luoxianlv.ui.theme.ON_BACKDROP_SURFACE_ALPHA
 import app.luoxianlv.ui.theme.OnBackdropContent
 
@@ -96,7 +96,6 @@ fun LibraryScreen(
             modifier = Modifier.weight(1f),
             contentPadding =
                 PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             if (state.visibleSongs.isEmpty()) {
                 item {
@@ -112,15 +111,24 @@ fun LibraryScreen(
                         textAlign = TextAlign.Center,
                     )
                 }
-            }
-            items(state.visibleSongs, key = { it.id }) { song ->
-                SongCard(
-                    song = song,
-                    selected = song.id == state.highlightedSongId,
-                    onClick = { vm.select(song) },
-                    onEdit = { editing = song },
-                    onDelete = if (song.builtIn) null else ({ deleting = song }),
-                )
+            } else {
+                // 所有曲目连成一张卡：内部零分隔（先试了居中细线，仍嫌线条多），
+                // 行与行直接相邻，靠行高与内容自然分格；整列只有外轮廓一条边界。
+                item {
+                    SettingsCard {
+                        Column {
+                            state.visibleSongs.forEach { song ->
+                                SongRow(
+                                    song = song,
+                                    selected = song.id == state.highlightedSongId,
+                                    onClick = { vm.select(song) },
+                                    onEdit = { editing = song },
+                                    onDelete = if (song.builtIn) null else ({ deleting = song }),
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -223,12 +231,15 @@ private fun SongFilterRow(
 /**
  * 分段按钮配色。
  *
- * 两个都是被底色逼出来的选择：
+ * 三个都是被底色逼出来的选择：
  * 1. 未选中态必须给 surface 白底 —— Material 默认是透明色，
  *    透明容器直接压在渐变底上就只剩一圈细边框，看着像控件失效。
  * 2. 选中态用深藏青 [OnBackdropContent] 而不是 primaryContainer：
  *    primaryContainer 是 #EAF3FF 的浅蓝，压在同为蓝灰的渐变底上，
  *    和白底的未选中态几乎分不出来，选中的那一格会「消失」。
+ * 3. 两态的边框全透明：outlineVariant 的灰框会让整行看起来像
+ *    三个描边小盒拼在一起，和圆角卡片格格不入；去掉后整行融成
+ *    一个圆角长条（选中格是唯一强调），分隔交给底色对比完成。
  */
 @Composable
 private fun filterSegmentColors(): SegmentedButtonColors =
@@ -240,5 +251,5 @@ private fun filterSegmentColors(): SegmentedButtonColors =
         activeBorderColor = Color.Transparent,
         inactiveContainerColor = MaterialTheme.colorScheme.surface,
         inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        inactiveBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        inactiveBorderColor = Color.Transparent,
     )

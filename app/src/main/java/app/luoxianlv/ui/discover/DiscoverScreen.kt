@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
@@ -28,7 +27,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.ui.components.ErrorDialogHost
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.PageTitle
-import app.luoxianlv.ui.components.RemoteScoreCard
+import app.luoxianlv.ui.components.RemoteScoreRow
+import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.theme.containerElevation
 
@@ -83,14 +83,23 @@ fun DiscoverScreen(
             modifier = Modifier.fillMaxSize(),
             // 导航栏是叠层，这里自行留出它占的高度
             contentPadding = PaddingValues(bottom = NavBarClearance),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
-            items(state.scores, key = { it.id }) { remote ->
-                RemoteScoreCard(
-                    remote = remote,
-                    downloading = remote.id in state.downloading,
-                    onDownload = { vm.download(remote) },
-                )
+            // 与曲库歌曲列表同一套连排语言：整列一张卡，内部零分隔，
+            // 行与行直接相邻，靠行高与内容自然分格。
+            if (state.scores.isNotEmpty()) {
+                item {
+                    SettingsCard {
+                        Column {
+                            state.scores.forEach { remote ->
+                                RemoteScoreRow(
+                                    remote = remote,
+                                    downloading = remote.id in state.downloading,
+                                    onDownload = { vm.download(remote) },
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
