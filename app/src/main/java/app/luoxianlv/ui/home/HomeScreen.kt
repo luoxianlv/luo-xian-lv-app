@@ -139,8 +139,18 @@ fun HomeScreen(
             // 只留 top / end / bottom 8dp，**左侧不留**（紧贴侧栏），
             // 靠 topStart / bottomStart 的 36dp 大圆角与侧栏渐变区分开。
             //
+            // 整张卡铺同一支渐变（就是原先插画那支，画布从插画扩大到全卡）：
+            // 插画不再是孤立的彩色块，蓝 → 灰白 → 粉的光晕一路铺到卡底，
+            // 问候语、一言、状态胶囊、启动按钮、版本页脚全都坐在这层渐变上，
+            // 文本区与白卡底之间不再有大反差断层。
+            //
             // 内部再按参考实现的 HomeContentPanel 分配高度：
             // 插画按可用高度取比例，信息区至少拿到剩余高度，于是整列总被填满。
+            // 渐变三站 = 原插画渐变取值（深色主题下参考实现另有一套，我们只做浅色）。
+            val cardBrush =
+                Brush.linearGradient(
+                    listOf(Color(0xFF8FD8F7), Color(0xFFDCE6F2), Color(0xFFF4DDEB)),
+                )
             BoxWithConstraints(
                 modifier =
                     Modifier
@@ -154,7 +164,7 @@ fun HomeScreen(
                                 bottomStart = 36.dp,
                                 bottomEnd = 18.dp,
                             ),
-                        ).background(MaterialTheme.colorScheme.surface),
+                        ).background(cardBrush),
             ) {
                 // 插画高度：抄参考实现的取值（矮屏 47%、高屏 54%，夹 270–520dp）。
                 // 之前担心方图被横向裁掉而压到 0.42，现在图标是圆裁居中，不再有裁剪问题。
@@ -442,8 +452,10 @@ private fun RailEntry(
 /**
  * 顶部插画。
  *
- * 结构抄自参考实现的 `HomeHero`：渐变铺底 + 两个半透明装饰圆 + 居中图标
- * + 底部渐变过渡融入内容区（高度 124dp，与参考一致）。
+ * 结构抄自参考实现的 `HomeHero`：两个半透明装饰圆 + 居中图标。
+ * 底不铺自己的渐变 —— 外层内容卡整卡铺着同一支渐变（见 HomeScreen
+ * 的 cardBrush），插画只是坐在渐变上段，彩色自然延伸进下方信息区，
+ * 所以这里也不再需要「底部渐变过渡带」。
  *
  * 居中图标用 `shadow(18.dp, CircleShape).clip(CircleShape)`：
  * **不是整块铺满**，而是裁成圆形 + 一圈阴影作边界，四周露出渐变。
@@ -455,14 +467,8 @@ private fun HomeHero(
     height: Dp = 280.dp,
     modifier: Modifier = Modifier,
 ) {
-    // 渐变取值与参考实现一致（深色主题下参考实现另有一套，我们主题只做浅色）
-    val heroBrush =
-        Brush.linearGradient(
-            listOf(Color(0xFF8FD8F7), Color(0xFFDCE6F2), Color(0xFFF4DDEB)),
-        )
-
     BoxWithConstraints(
-        modifier = modifier.fillMaxWidth().height(height).background(heroBrush),
+        modifier = modifier.fillMaxWidth().height(height),
     ) {
         // 图标直径：屏宽的 76%、可用高度的 72%、350dp 三者取小（抄参考实现）
         val logoSize = minOf(maxWidth * 0.76f, maxHeight * 0.72f, 350.dp)
@@ -520,19 +526,8 @@ private fun HomeHero(
             }
         }
 
-        // 底部渐变过渡：让图标与渐变底自然融入下方内容区
-        Box(
-            modifier =
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(124.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, MaterialTheme.colorScheme.surface),
-                        ),
-                    ),
-        )
+        // 底部不再有渐变过渡带：整卡同一片渐变，插画与信息区之间
+        // 没有需要「过渡」的断层（原 124dp 落白过渡已随白卡一起撤掉）。
     }
 }
 
