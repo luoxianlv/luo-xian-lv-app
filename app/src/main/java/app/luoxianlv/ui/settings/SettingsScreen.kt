@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -61,6 +62,7 @@ private val IconGreen = Color(0xFF4CAF50)
 private val IconPink = Color(0xFFD8659E)
 private val IconTeal = Color(0xFF2FA3A0)
 private val IconGray = Color(0xFF7A8AA0)
+private val IconUpdate = Color(0xFF5B8DEF)
 
 /**
  * 设置页：QQ 式分组 —— 一组一张白卡，组标题小灰字贴在卡上方，
@@ -201,6 +203,15 @@ fun SettingsScreen(
                 PreferenceGroupCaption("关于")
                 Spacer(modifier = Modifier.height(6.dp))
                 SettingsCard {
+                    PreferenceSwitchItem(
+                        title = "自动检查更新",
+                        checked = state.autoUpdate,
+                        onCheckedChange = vm::setAutoUpdate,
+                        summary = "启动和回到前台时自动检查新版本",
+                        icon = Icons.Filled.SystemUpdate,
+                        iconTint = IconUpdate,
+                    )
+                    PreferenceDivider(startIndent = 64.dp)
                     PreferenceItem(
                         title = "关于落弦律",
                         icon = Icons.Filled.Info,

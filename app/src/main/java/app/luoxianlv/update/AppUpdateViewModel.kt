@@ -308,7 +308,8 @@ class AppUpdateViewModel(
     fun onResume(activity: Activity) {
         if (_state.value.needsPermission && activity.packageManager.canRequestPackageInstalls()) {
             install(activity)
-        } else {
+        } else if (UpdateAutoCheck.isEnabled(app)) {
+            // 自动检查被设置关掉就不查；手动「检查新版本」走 check(manual = true)，不受此约束。
             check()
         }
     }

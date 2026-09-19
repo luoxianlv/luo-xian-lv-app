@@ -32,6 +32,7 @@ import app.luoxianlv.ui.components.Snowfall
 import app.luoxianlv.ui.navigation.AppNavHost
 import app.luoxianlv.ui.theme.LuoXianLvTheme
 import app.luoxianlv.update.AppUpdateViewModel
+import app.luoxianlv.update.UpdateAutoCheck
 import app.luoxianlv.update.UpdateManager
 
 /** Compose 单 Activity 入口：只负责挂 UI 树与生命周期级的服务/热更新对齐。 */
@@ -158,6 +159,8 @@ class MainActivity : AppCompatActivity() {
     /** 每次打开应用且已读完免责声明后立即检查一次，后续前台恢复走节流检查。 */
     private fun checkUpdatesAfterDisclaimer() {
         if (updateCheckOnOpenDone || !disclaimerAccepted) return
+        // 用户关了「自动检查更新」：启动不再请求更新服务，关于页仍可手动检查。
+        if (!UpdateAutoCheck.isEnabled(this)) return
         updateCheckOnOpenDone = true
         appUpdates.check(manual = true)
     }

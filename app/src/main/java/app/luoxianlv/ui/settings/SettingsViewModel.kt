@@ -11,6 +11,7 @@ import app.luoxianlv.data.SessionStore
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.service.KeepAliveStatus
 import app.luoxianlv.service.MusicAccessibilityService
+import app.luoxianlv.update.UpdateAutoCheck
 import app.luoxianlv.update.UpdateManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,8 @@ data class SettingsUiState(
     val registered: Boolean = false,
     val appearance: AppearanceSettings = AppearanceSettings(),
     val keepAlive: KeepAliveStatus = KeepAliveStatus(false, false, true),
+    /** 「自动检查更新」开关：默认开，读自 app_updates 存储。 */
+    val autoUpdate: Boolean = true,
 )
 
 class SettingsViewModel(
@@ -45,6 +48,7 @@ class SettingsViewModel(
                 session = sessionStore.current(),
                 appearance = AppearanceStore.load(app),
                 keepAlive = KeepAlive.status(app),
+                autoUpdate = UpdateAutoCheck.isEnabled(app),
             )
         }
 
@@ -100,6 +104,12 @@ class SettingsViewModel(
         val next = _state.value.appearance.copy(snowEnabled = enabled)
         AppearanceStore.save(app, next)
         _state.update { it.copy(appearance = next) }
+    }
+
+    /** 开关自动检查更新：直接改偏好并落盘。 */
+    fun setAutoUpdate(enabled: Boolean) {
+        UpdateAutoCheck.setEnabled(app, enabled)
+        _state.update { it.copy(autoUpdate = enabled) }
     }
 
     fun loadCalibration(): KeyLayout = ConfigStore.load(app)
