@@ -36,7 +36,7 @@ object AppearanceStore {
     }
 
     fun load(context: Context): AppearanceSettings {
-        val prefs = context.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        val prefs = Kv.of(context, NAME)
         return AppearanceSettings(snowEnabled = prefs.getBoolean(KEY_SNOW, true))
     }
 
@@ -44,8 +44,8 @@ object AppearanceStore {
         context: Context,
         settings: AppearanceSettings,
     ) {
-        context
-            .getSharedPreferences(NAME, Context.MODE_PRIVATE)
+        Kv
+            .of(context, NAME)
             .edit()
             .putBoolean(KEY_SNOW, settings.snowEnabled)
             .apply()

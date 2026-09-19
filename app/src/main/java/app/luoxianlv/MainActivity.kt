@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
 import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.data.DisclaimerStore
+import app.luoxianlv.data.Kv
 import app.luoxianlv.data.SessionStore
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.service.KeepAlive
@@ -123,7 +124,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val appPrefs by lazy { getSharedPreferences("app_state", MODE_PRIVATE) }
+    private val appPrefs by lazy { Kv.of(this, "app_state") }
 
     private fun isFirstLaunch(): Boolean = !appPrefs.getBoolean("onboarding_done", false)
 

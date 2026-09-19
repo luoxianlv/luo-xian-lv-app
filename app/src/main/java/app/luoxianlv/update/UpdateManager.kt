@@ -1,12 +1,13 @@
 package app.luoxianlv.update
-import android.content.Context
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Base64
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.core.harmonica.RustMidiCompiler
 import app.luoxianlv.data.AccountSession
+import app.luoxianlv.data.Kv
 import app.luoxianlv.data.SessionStore
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.data.SyncApplyResult
@@ -57,40 +58,79 @@ class UpdateManager(
     private val baseUrl = BuildConfig.UPDATE_BASE_URL.trimEnd('/')
     private val sessionStore = SessionStore(context)
 
-    private fun compileToken(explicit: String? = null): String? = explicit?.takeIf { it.isNotBlank() } ?: sessionStore.current()?.accessToken
+    private fun compileToken(explicit: String? = null): String? =
+        explicit?.takeIf { it.isNotBlank() } ?: sessionStore.current()?.accessToken
 
     fun startShushuLogin(activity: Activity) {
         val random = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val verifier = Base64.encodeToString(random, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
         val stateBytes = ByteArray(24).also { SecureRandom().nextBytes(it) }
         val state = Base64.encodeToString(stateBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val challenge = Base64.encodeToString(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        context.getSharedPreferences("oauth", Context.MODE_PRIVATE).edit().putString("state", state).putString("verifier", verifier).apply()
-        val url = Uri.parse("https://shushu.fan/oauth/authorize").buildUpon()
-            .appendQueryParameter("response_type", "code")
-            .appendQueryParameter("client_id", "shu_8d4eddbcb1e96ff01a8b52fb")
-            .appendQueryParameter("redirect_uri", "https://luoxianlv.com/login/callback")
-            .appendQueryParameter("scope", "openid profile")
-            .appendQueryParameter("state", "app_$state")
-            .appendQueryParameter("code_challenge", challenge)
-            .appendQueryParameter("code_challenge_method", "S256")
-            .build()
+        val challenge =
+            Base64.encodeToString(
+                MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()),
+                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+            )
+        Kv
+            .of(context, "oauth")
+            .edit()
+            .putString("state", state)
+            .putString("verifier", verifier)
+            .apply()
+        val url =
+            Uri
+                .parse("https://shushu.fan/oauth/authorize")
+                .buildUpon()
+                .appendQueryParameter("response_type", "code")
+                .appendQueryParameter("client_id", "shu_8d4eddbcb1e96ff01a8b52fb")
+                .appendQueryParameter("redirect_uri", "https://luoxianlv.com/login/callback")
+                .appendQueryParameter("scope", "openid profile")
+                .appendQueryParameter("state", "app_$state")
+                .appendQueryParameter("code_challenge", challenge)
+                .appendQueryParameter("code_challenge_method", "S256")
+                .build()
         activity.startActivity(Intent(Intent.ACTION_VIEW, url))
     }
 
-    fun finishShushuLogin(intent: Intent, onResult: (Result<LoginResult>) -> Unit) {
+    fun finishShushuLogin(
+        intent: Intent,
+        onResult: (Result<LoginResult>) -> Unit,
+    ) {
         val data = intent.data ?: return
         val code = data.getQueryParameter("code") ?: return
         val returnedState = data.getQueryParameter("state") ?: return
-        val prefs = context.getSharedPreferences("oauth", Context.MODE_PRIVATE)
+        val prefs = Kv.of(context, "oauth")
         if (returnedState != "app_${prefs.getString("state", null)}") return
         val verifier = prefs.getString("verifier", null) ?: return
         prefs.edit().clear().apply()
         background(onResult) {
-            val root = JSONObject(postJson("$baseUrl/api/auth/oauth/exchange", JSONObject().put("code", code).put("state", returnedState).put("redirect_uri", "https://luoxianlv.com/login/callback").put("code_verifier", verifier).toString()))
+            val root =
+                JSONObject(
+                    postJson(
+                        "$baseUrl/api/auth/oauth/exchange",
+                        JSONObject()
+                            .put(
+                                "code",
+                                code,
+                            ).put(
+                                "state",
+                                returnedState,
+                            ).put("redirect_uri", "https://luoxianlv.com/login/callback")
+                            .put("code_verifier", verifier)
+                            .toString(),
+                    ),
+                )
             val access = root.optString("accessToken").ifBlank { root.optString("access_token") }
             require(access.isNotBlank()) { root.optString("message", "鼠鼠登录失败") }
-            LoginResult(AccountSession(access, root.optString("refreshToken"), root.optJSONObject("user")?.optString("nickname").orEmpty(), System.currentTimeMillis() + (root.optLong("expiresIn", 0L).takeIf { it > 0 } ?: root.optLong("expires_in", 30L * 24 * 3600)) * 1000L))
+            LoginResult(
+                AccountSession(
+                    access,
+                    root.optString("refreshToken"),
+                    root.optJSONObject("user")?.optString("nickname").orEmpty(),
+                    System.currentTimeMillis() +
+                        (root.optLong("expiresIn", 0L).takeIf { it > 0 } ?: root.optLong("expires_in", 30L * 24 * 3600)) * 1000L,
+                ),
+            )
         }
     }
 
@@ -368,9 +408,14 @@ class UpdateManager(
         retryAuth: Boolean = true,
     ): ByteArray {
         val current = sessionStore.current()
-        val token = if (!accessToken.isNullOrBlank() && current?.accessToken == accessToken && current.expiresAt > 0L && current.expiresAt - System.currentTimeMillis() < 5 * 60 * 1000L) {
-            refreshSession(accessToken)?.accessToken ?: accessToken
-        } else accessToken
+        val token =
+            if (!accessToken.isNullOrBlank() && current?.accessToken == accessToken && current.expiresAt > 0L &&
+                current.expiresAt - System.currentTimeMillis() < 5 * 60 * 1000L
+            ) {
+                refreshSession(accessToken)?.accessToken ?: accessToken
+            } else {
+                accessToken
+            }
         val connection = open(url)
         if (!token.isNullOrBlank()) connection.setRequestProperty("Authorization", "Bearer $token")
         connection.connect()
@@ -389,21 +434,26 @@ class UpdateManager(
         return bytes
     }
 
-    private fun refreshSession(previous: String): AccountSession? = runCatching {
-        val root = JSONObject(postJsonWithAuth("$baseUrl/api/auth/refresh", previous))
-        parseAccountSession(root).also { sessionStore.save(it) }
-    }.getOrElse {
-        sessionStore.clear()
-        null
-    }
-
-    private fun postJsonWithAuth(url: String, token: String): String {
-        val connection = open(url).apply {
-            requestMethod = "POST"
-            doOutput = true
-            setRequestProperty("Authorization", "Bearer $token")
-            setRequestProperty("Content-Type", "application/json")
+    private fun refreshSession(previous: String): AccountSession? =
+        runCatching {
+            val root = JSONObject(postJsonWithAuth("$baseUrl/api/auth/refresh", previous))
+            parseAccountSession(root).also { sessionStore.save(it) }
+        }.getOrElse {
+            sessionStore.clear()
+            null
         }
+
+    private fun postJsonWithAuth(
+        url: String,
+        token: String,
+    ): String {
+        val connection =
+            open(url).apply {
+                requestMethod = "POST"
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Content-Type", "application/json")
+            }
         connection.outputStream.use { it.write("{}".toByteArray()) }
         return readResponse(connection)
     }

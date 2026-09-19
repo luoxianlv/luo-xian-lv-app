@@ -12,11 +12,16 @@ data class AccountSession(
 class SessionStore(
     context: Context,
 ) {
-    private val prefs = context.applicationContext.getSharedPreferences("account_session", Context.MODE_PRIVATE)
+    private val prefs = Kv.of(context, "account_session")
 
     fun current(): AccountSession? =
         prefs.getString("access", null)?.takeIf { it.isNotBlank() }?.let {
-            AccountSession(it, prefs.getString("refresh", "").orEmpty(), prefs.getString("nickname", "").orEmpty(), prefs.getLong("expires_at", 0L))
+            AccountSession(
+                it,
+                prefs.getString("refresh", "").orEmpty(),
+                prefs.getString("nickname", "").orEmpty(),
+                prefs.getLong("expires_at", 0L),
+            )
         }
 
     fun save(session: AccountSession) =

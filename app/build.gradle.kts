@@ -81,6 +81,7 @@ dependencies {
     implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.navigation.compose)
+    implementation(libs.fastkv)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)

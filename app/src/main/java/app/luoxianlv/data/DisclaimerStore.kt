@@ -8,7 +8,7 @@ import java.security.MessageDigest
 class DisclaimerStore(
     context: Context,
 ) {
-    private val prefs = context.applicationContext.getSharedPreferences("app_state", Context.MODE_PRIVATE)
+    private val prefs = Kv.of(context, "app_state")
 
     /** 已同意的协议哈希；从未同意过返回 null。 */
     fun agreedSha(): String? = prefs.getString(KEY, null)?.takeIf { it.isNotBlank() }
@@ -22,7 +22,10 @@ class DisclaimerStore(
         fun currentSha(context: Context): String = sha256(readAsset(context))
 
         fun readAsset(context: Context): String =
-            context.assets.open(ASSET_PATH).bufferedReader().use { it.readText() }
+            context.assets
+                .open(ASSET_PATH)
+                .bufferedReader()
+                .use { it.readText() }
 
         fun sha256(text: String): String {
             val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))

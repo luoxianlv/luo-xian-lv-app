@@ -13,7 +13,7 @@ object ConfigStore {
     private const val NAME = "ratio_config_v3"
 
     fun load(context: Context): KeyLayout {
-        val prefs = context.getSharedPreferences(NAME, 0)
+        val prefs = Kv.of(context, NAME)
         val xs = floatArrayOf(.189f, .278f, .367f, .456f, .545f, .633f, .722f, .810f)
         val modes =
             mapOf(
@@ -31,8 +31,8 @@ object ConfigStore {
         context: Context,
         layout: KeyLayout,
     ) {
-        context
-            .getSharedPreferences(NAME, 0)
+        Kv
+            .of(context, NAME)
             .edit()
             .apply {
                 layout.noteX.forEachIndexed { index, x -> putFloat("noteX$index", x) }

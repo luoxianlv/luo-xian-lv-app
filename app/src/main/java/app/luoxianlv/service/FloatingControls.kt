@@ -17,6 +17,7 @@ import android.widget.TextView
 import app.luoxianlv.PlayerUi
 import app.luoxianlv.PlayerUi.dp
 import app.luoxianlv.R
+import app.luoxianlv.data.Kv
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.data.timeLabel
 import com.google.android.material.button.MaterialButton
@@ -38,7 +39,7 @@ class FloatingControls(
 ) {
     private val context = ContextThemeWrapper(service, R.style.AppTheme)
     private val wm = service.getSystemService(WindowManager::class.java)
-    private val prefs = service.getSharedPreferences("floating_position", 0)
+    private val prefs = Kv.of(service, "floating_position")
     private val handler = Handler(Looper.getMainLooper())
     private var root: View? = null
     private var params: WindowManager.LayoutParams? = null
@@ -53,6 +54,7 @@ class FloatingControls(
     private var seeking = false
     private var displayRequested = false
     private var showRetries = 0
+
     // 选歌窗打开时面板先退出，关闭后恢复（两者不共存）。
     private var panelHiddenForPicker = false
     private var x = prefs.getInt("x", context.dp(16))
@@ -281,6 +283,7 @@ class FloatingControls(
                     seeking = true
                     true
                 }
+
                 MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
                     val fraction = (e.x / v.width).coerceIn(0f, 1f)
                     service.seek((fraction * service.durationMs).toLong())
@@ -290,7 +293,10 @@ class FloatingControls(
                     }
                     true
                 }
-                else -> false
+
+                else -> {
+                    false
+                }
             }
         }
         // 内容行固定 46dp，进度条叠在底部 10dp 内，胶囊整体 46dp 高。
@@ -371,7 +377,15 @@ class FloatingControls(
 
     fun refresh() {
         title?.text = service.song.title
-        status?.text = service.error ?: if (service.preparing) "识别按键中…" else "${service.modeLabel} · ${timeLabel(service.positionMs)}/${timeLabel(service.durationMs)}"
+        status?.text =
+            service.error
+                ?: if (service.preparing) {
+                    "识别按键中…"
+                } else {
+                    "${service.modeLabel} · ${timeLabel(
+                        service.positionMs,
+                    )}/${timeLabel(service.durationMs)}"
+                }
         play?.apply {
             setImageResource(if (service.playing) R.drawable.ic_pause else R.drawable.ic_play)
             contentDescription = if (service.playing) "暂停" else "播放"

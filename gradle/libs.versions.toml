@@ -8,6 +8,7 @@ lifecycle = "2.11.0"
 navigationCompose = "2.10.1"
 junit = "4.13.2"
 json = "20260814"
+fastkv = "3.0.1"
 
 [libraries]
 material = { module = "com.google.android.material:material", version.ref = "material" }
@@ -23,6 +24,7 @@ lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-com
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
 junit = { module = "junit:junit", version.ref = "junit" }
 json = { module = "org.json:json", version.ref = "json" }
+fastkv = { module = "io.github.billywei01:fastkv", version.ref = "fastkv" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

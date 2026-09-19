@@ -42,7 +42,7 @@ class SongRepository(
     context: Context,
 ) {
     private val appContext = context.applicationContext
-    private val prefs = context.applicationContext.getSharedPreferences("song_library", 0)
+    private val prefs = Kv.of(context, "song_library")
     private val builtIns: List<Song> by lazy { loadBuiltIns() }
 
     init {

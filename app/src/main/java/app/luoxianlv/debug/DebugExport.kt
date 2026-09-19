@@ -9,6 +9,7 @@ import android.view.Display
 import androidx.core.content.FileProvider
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.data.ConfigStore
+import app.luoxianlv.data.Kv
 import app.luoxianlv.service.MusicAccessibilityService
 import org.json.JSONObject
 import java.io.File
@@ -22,21 +23,23 @@ import java.util.zip.ZipOutputStream
 /** 打包调试信息（日志/截图/布局/设备信息）成 ZIP 并通过 FileProvider 分享。 */
 object DebugExport {
     suspend fun exportAndShare(context: Context): Boolean {
-        val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                PlaybackDebugLog.init(context)
-                PlaybackDebugLog.flush()
-                PlaybackDebugLog.withSnapshot { export(context) }
-            }.getOrNull()
-        } ?: return false
+        val file =
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    PlaybackDebugLog.init(context)
+                    PlaybackDebugLog.flush()
+                    PlaybackDebugLog.withSnapshot { export(context) }
+                }.getOrNull()
+            } ?: return false
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
             runCatching {
                 val uri = FileProvider.getUriForFile(context, context.packageName + ".updates", file)
-                val send = Intent(Intent.ACTION_SEND).apply {
-                    type = "application/zip"
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
+                val send =
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
                 context.startActivity(Intent.createChooser(send, "分享调试 ZIP").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }.isSuccess
         }
@@ -50,8 +53,11 @@ object DebugExport {
                 "updates/luoxianlv-debug-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".zip",
             )
         zipFile.parentFile?.mkdirs()
-        zipFile.parentFile?.listFiles { f -> f.name.startsWith("luoxianlv-debug-") && f.extension == "zip" }
-            ?.sortedByDescending { it.lastModified() }?.drop(2)?.forEach { it.delete() }
+        zipFile.parentFile
+            ?.listFiles { f -> f.name.startsWith("luoxianlv-debug-") && f.extension == "zip" }
+            ?.sortedByDescending { it.lastModified() }
+            ?.drop(2)
+            ?.forEach { it.delete() }
         ZipOutputStream(FileOutputStream(zipFile)).use { zip ->
             zip.putNextEntry(ZipEntry("device.json"))
             zip.write(deviceInfo(context).toString(2).toByteArray(Charsets.UTF_8))
@@ -102,7 +108,7 @@ object DebugExport {
     private fun diagnostics(context: Context): JSONObject {
         val d = MusicAccessibilityService.instance?.diagnostics()
         val layout = ConfigStore.load(context)
-        val prefs = context.getSharedPreferences("ratio_config_v3", 0).all
+        val prefs = Kv.of(context, "ratio_config_v3").all
         val modes = JSONObject()
         layout.modes.forEach { (mode, point) ->
             modes.put(mode.name, "%.4f,%.4f".format(point[0], point[1]))
