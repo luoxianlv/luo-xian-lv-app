@@ -2,7 +2,6 @@
 .kotlin/
 __pycache__/
 *.pyc
-.idea/
 build/
 app/build/
 local.properties
@@ -23,5 +22,6 @@ tools/*.pdb
 /.superpowers/
 .staging/
 
+.idea
 # 签名密钥（勿提交）
 app/release-keystore.jks
