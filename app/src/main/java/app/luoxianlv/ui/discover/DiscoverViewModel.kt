@@ -1,6 +1,7 @@
 package app.luoxianlv.ui.discover
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import app.luoxianlv.data.SessionStore
 import app.luoxianlv.data.SongRepository
@@ -39,6 +40,9 @@ class DiscoverViewModel(
     companion object {
         /** 列表每批渲染的条数，滑近底部再追加下一批 */
         const val PAGE_SIZE = 30
+
+        /** 发现页数据缓存有效期：TTL 内切回发现页直接复用缓存，不再发请求 */
+        const val SCORES_CACHE_TTL_MS = 5 * 60 * 1000L
     }
 
     private val updater = UpdateManager(app)
@@ -46,6 +50,12 @@ class DiscoverViewModel(
     private val sessionStore = SessionStore(app)
     private val _state = MutableStateFlow(RemoteUiState())
     val state = _state.asStateFlow()
+
+    // 发现页数据缓存（随 ViewModel/Activity 生命周期，不跨进程）。
+    // 必须独立于 state.scores 单独存：搜索/平台页与发现页共用 state，
+    // 搜索后切回发现页时 state.scores 已是搜索结果，要靠快照恢复发现页列表。
+    private var scoresLoadedAtMs = 0L
+    private var discoverFeedCache: List<PlatformScore>? = null
 
     private fun token() = sessionStore.current()?.accessToken
 
@@ -59,12 +69,34 @@ class DiscoverViewModel(
         _state.update { it.copy(visibleCount = (it.visibleCount + PAGE_SIZE).coerceAtMost(it.scores.size)) }
     }
 
-    /** 发现页：加载全部已发布公开谱子（服务端一次性返回，无分页）。 */
-    fun loadScores() {
+    /**
+     * 发现页：加载全部已发布公开谱子（服务端一次性返回，无分页）。
+     * 带生命周期缓存：TTL 内重复调用（切 Tab 重建页面导致的 LaunchedEffect 重跑）
+     * 直接恢复缓存快照，不重复请求；过期或 [force] 才重新拉取。
+     * 拉取失败保留旧列表，下次进入再试。
+     */
+    fun loadScores(force: Boolean = false) {
+        val cache = discoverFeedCache
+        val fresh =
+            cache != null &&
+                SystemClock.elapsedRealtime() - scoresLoadedAtMs < SCORES_CACHE_TTL_MS
+        if (!force && fresh) {
+            _state.update {
+                it.copy(
+                    loading = false,
+                    scores = cache,
+                    visibleCount = revealFirstPage(cache),
+                    status = "共 ${cache.size} 首公开谱子",
+                )
+            }
+            return
+        }
         _state.update { it.copy(loading = true, status = "正在加载…") }
         updater.fetchLatestScores(token()) { result ->
             result
                 .onSuccess { scores ->
+                    scoresLoadedAtMs = SystemClock.elapsedRealtime()
+                    discoverFeedCache = scores
                     _state.update {
                         it.copy(
                             loading = false,
