@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var appUpdates: AppUpdateViewModel
     private var showOnboarding by mutableStateOf(false)
     private var showBatteryPrompt by mutableStateOf(false)
+    private var showAutoStartPrompt by mutableStateOf(false)
     private var disclaimerAccepted by mutableStateOf(true)
     private var updateCheckOnOpenDone = false
     private lateinit var disclaimerText: String
@@ -74,6 +75,7 @@ class MainActivity : AppCompatActivity() {
                             DisclaimerStore(this).markAgreed(disclaimerSha)
                             disclaimerAccepted = true
                             checkUpdatesAfterDisclaimer()
+                            requestBackgroundPermissionsOnce()
                         },
                         onDecline = ::finishAffinity,
                     )
@@ -102,7 +104,17 @@ class MainActivity : AppCompatActivity() {
                                 onLater = {
                                     markBatteryAsked()
                                     showBatteryPrompt = false
+                                    requestBackgroundPermissionsOnce()
                                 },
+                            )
+                        }
+                        if (showAutoStartPrompt) {
+                            AutoStartDialog(
+                                onAllow = {
+                                    markAutoStartAsked()
+                                    KeepAlive.openAutoStartSettings(this@MainActivity)
+                                },
+                                onLater = ::markAutoStartAsked,
                             )
                         }
                     }
@@ -137,6 +149,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (android.os.Build.VERSION.SDK_INT >= 33 && repository.floatingEnabled &&
+            appPrefs.getBoolean("auto_start_asked", false) &&
             MusicAccessibilityService.isEnabled(this) &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
             !appPrefs.getBoolean("notification_permission_asked", false)
@@ -153,26 +166,33 @@ class MainActivity : AppCompatActivity() {
                 appUpdates.onResume(this)
             }
         }
-        requestBatteryExemptionOnce()
+        requestBackgroundPermissionsOnce()
     }
 
     /** 每次打开应用且已读完免责声明后立即检查一次，后续前台恢复走节流检查。 */
     private fun checkUpdatesAfterDisclaimer() {
         if (updateCheckOnOpenDone || !disclaimerAccepted) return
-        // 用户关了「自动检查更新」：启动不再请求更新服务，关于页仍可手动检查。
+        // 启动绕过六小时节流，但不显示手动检查的结果提示。
         if (!UpdateAutoCheck.isEnabled(this)) return
         updateCheckOnOpenDone = true
-        appUpdates.check(manual = true)
+        appUpdates.check(force = true)
     }
 
-    /** 无障碍开启后，引导一次「忽略电池优化」：防 Doze/OEM 后台清理把服务和悬浮窗杀掉。
-     * 先弹应用内说明再跳系统授权页，只问一次；入口常驻在设置 → 后台运行保护。 */
-    private fun requestBatteryExemptionOnce() {
+    /** 无障碍开启后依次引导电池优化和自启动；返回系统设置后继续下一步。 */
+    private fun requestBackgroundPermissionsOnce() {
+        if (!disclaimerAccepted || showOnboarding || showBatteryPrompt || showAutoStartPrompt) return
         if (!MusicAccessibilityService.isEnabled(this)) return
         val pm = getSystemService(PowerManager::class.java) ?: return
-        if (pm.isIgnoringBatteryOptimizations(packageName)) return
-        if (appPrefs.getBoolean("battery_exemption_asked", false)) return
-        showBatteryPrompt = true
+        if (!pm.isIgnoringBatteryOptimizations(packageName) && !appPrefs.getBoolean("battery_exemption_asked", false)) {
+            showBatteryPrompt = true
+        } else if (!appPrefs.getBoolean("auto_start_asked", false)) {
+            showAutoStartPrompt = true
+        }
+    }
+
+    private fun markAutoStartAsked() {
+        appPrefs.edit().putBoolean("auto_start_asked", true).apply()
+        showAutoStartPrompt = false
     }
 
     private fun markBatteryAsked() {
@@ -191,10 +211,7 @@ private fun BatteryExemptionDialog(
         title = { Text("防止后台被清理") },
         text = {
             Text(
-                "自动演奏依赖无障碍服务和悬浮窗长期在后台运行。" +
-                    "系统省电策略可能会在切后台或息屏后杀掉它们，导致权限反复丢失、悬浮窗消失。" +
-                    "请把落弦律加入电池优化白名单；" +
-                    "红魔、小米等手机还需在「设置 → 后台运行保护」里允许自启动。",
+                "请允许忽略电池优化，减少后台播放中断和悬浮窗消失。",
             )
         },
         confirmButton = {
@@ -203,5 +220,16 @@ private fun BatteryExemptionDialog(
         dismissButton = {
             TextButton(onClick = onLater) { Text("以后再说") }
         },
+    )
+}
+
+@Composable
+private fun AutoStartDialog(onAllow: () -> Unit, onLater: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onLater,
+        title = { Text("允许自启动与关联启动") },
+        text = { Text("请在系统设置中允许落弦律自启动、关联启动和后台运行。不同手机的选项名称可能不同，可稍后在设置中调整。") },
+        confirmButton = { TextButton(onClick = onAllow) { Text("去设置") } },
+        dismissButton = { TextButton(onClick = onLater) { Text("以后再说") } },
     )
 }

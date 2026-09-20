@@ -99,10 +99,11 @@ object KeepAlive {
                 Intent()
                     .setClassName("cn.nubia.security2", "cn.nubia.security.MainActivity"),
             )
-        val pm = context.packageManager
-        val target =
-            candidates.firstOrNull { it.resolveActivity(pm) != null }
-                ?: Intent(
+        // 直接尝试启动，避免 Android 包可见性限制使 resolveActivity 误判。
+        for (candidate in candidates) {
+            if (runCatching { context.startActivity(candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess) return
+        }
+        val target = Intent(
                     Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     Uri.parse("package:${context.packageName}"),
                 )

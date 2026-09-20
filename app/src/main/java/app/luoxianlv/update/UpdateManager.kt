@@ -533,7 +533,7 @@ class UpdateManager(
         val connection = URL(url).openConnection() as HttpURLConnection
         ClientVersion.attach(connection)
         connection.connectTimeout = 8000
-        connection.readTimeout = 8000
+        connection.readTimeout = if (connection.url.path == "/api/scores/search") 30_000 else 8000
         connection.requestMethod = "GET"
         connection.setRequestProperty("Accept", "application/json")
         return connection

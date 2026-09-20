@@ -61,12 +61,12 @@ class AppUpdateViewModel(
         source: UpdateSource,
     ) = File(cacheDir, "${release.versionCode}-${source.sha256.ifBlank { release.sha256 }}.apk")
 
-    fun check(manual: Boolean = false) {
+    fun check(manual: Boolean = false, force: Boolean = false) {
         if (_state.value.checking || _state.value.downloading) return
         if (!manual && _state.value.release != null) return
         val now = System.currentTimeMillis()
         val last = prefs.getLong("last_check", 0)
-        if (!manual && now >= last && now - last < 6 * 60 * 60 * 1000L) return
+        if (!manual && !force && now >= last && now - last < 6 * 60 * 60 * 1000L) return
         _state.update { it.copy(checking = true, error = null) }
         viewModelScope.launch {
             try {
