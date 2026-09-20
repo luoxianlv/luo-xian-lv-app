@@ -30,17 +30,25 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -71,9 +79,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.ui.components.AccessibilityPromptDialog
 import app.luoxianlv.ui.components.ActionPill
 import app.luoxianlv.ui.components.ErrorDialogHost
+import app.luoxianlv.ui.components.SmallSwitch
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.components.decodeSampleSize
 import app.luoxianlv.ui.library.LibraryViewModel
@@ -116,8 +126,13 @@ fun HomeScreen(
     vm: LibraryViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val appearance by AppearanceStore.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val time = rememberHomeTime()
+    // 一言：用户自定义优先，未设置或清空时用内置文案
+    val headline = appearance.homeQuote.ifBlank { HOME_QUOTE }
+    // 侧边栏开关（首页设置菜单里可切）：收起时内容卡独立成卡
+    val showRail = appearance.sideRailEnabled
 
     SnackbarNotice(state.notice, snackbarHostState, vm::consumeNotice)
 
@@ -128,16 +143,19 @@ fun HomeScreen(
         val railWidth = (maxWidth * 0.18f).coerceIn(68.dp, 86.dp)
 
         Row(modifier = Modifier.fillMaxSize()) {
-            HomeSideRail(
-                time = time,
-                onLibrary = onLibrary,
-                onDiscover = onDiscover,
-                onSettings = onSettings,
-                modifier = Modifier.width(railWidth).fillMaxHeight(),
-            )
+            if (showRail) {
+                HomeSideRail(
+                    time = time,
+                    onLibrary = onLibrary,
+                    onDiscover = onDiscover,
+                    onSettings = onSettings,
+                    modifier = Modifier.width(railWidth).fillMaxHeight(),
+                )
+            }
             // 内容卡：取值全部抄参考实现 HomeScaffold ——
             // 只留 top / end / bottom 8dp，**左侧不留**（紧贴侧栏），
             // 靠 topStart / bottomStart 的 36dp 大圆角与侧栏渐变区分开。
+            // 侧栏收起时内容卡独立成卡：补上左侧 8dp，四角统一 18dp。
             //
             // 整张卡铺同一支渐变（就是原先插画那支，画布从插画扩大到全卡）：
             // 插画不再是孤立的彩色块，蓝 → 灰白 → 粉的光晕一路铺到卡底，
@@ -156,12 +174,16 @@ fun HomeScreen(
                     Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .padding(top = 8.dp, end = 8.dp, bottom = 8.dp)
-                        .clip(
+                        .padding(
+                            start = if (showRail) 0.dp else 8.dp,
+                            top = 8.dp,
+                            end = 8.dp,
+                            bottom = 8.dp,
+                        ).clip(
                             RoundedCornerShape(
-                                topStart = 36.dp,
+                                topStart = if (showRail) 36.dp else 18.dp,
                                 topEnd = 18.dp,
-                                bottomStart = 36.dp,
+                                bottomStart = if (showRail) 36.dp else 18.dp,
                                 bottomEnd = 18.dp,
                             ),
                         ).background(cardBrush),
@@ -181,8 +203,7 @@ fun HomeScreen(
                         // 直接从 time 派生：rememberHomeTime() 每分钟写回一个 MutableState，
                         // 这里读 time.hour 就订阅了它，跨时段会自动重算，不需要额外的刷新逻辑。
                         greeting = greetingFor(time.hour),
-                        // 一言：与参考实现那句诗相同的位置（问候语下方的主文案）
-                        headline = HOME_QUOTE,
+                        headline = headline,
                         statusText = state.statusText,
                         statusColor =
                             if (state.service.connected && state.service.error == null) {
@@ -205,6 +226,19 @@ fun HomeScreen(
                         },
                         // 「启动 / 关闭」：同一个按钮按真实状态开或关。
                         onToggleFloating = vm::toggleFloating,
+                        // 启动按钮左侧的「首页设置」：编辑一言 + 侧边栏开关
+                        settingsButton = {
+                            HomePageSettings(
+                                quote = headline,
+                                sideRailEnabled = appearance.sideRailEnabled,
+                                onQuoteChange = {
+                                    AppearanceStore.save(context.applicationContext, appearance.copy(homeQuote = it))
+                                },
+                                onSideRailChange = {
+                                    AppearanceStore.save(context.applicationContext, appearance.copy(sideRailEnabled = it))
+                                },
+                            )
+                        },
                     )
                 }
             }
@@ -542,6 +576,7 @@ private fun HomeOverview(
     running: Boolean,
     onStatusClick: () -> Unit,
     onToggleFloating: () -> Unit,
+    settingsButton: @Composable () -> Unit,
 ) {
     // heightIn(min) 保证信息区至少占满「整列高度 - 插画高度」，
     // 内部用 weight 撑开把页脚推到底部，于是右下角不会留白。
@@ -599,12 +634,17 @@ private fun HomeOverview(
 
         // 宽胶囊：启动 / 关闭，按真实运行状态切换。
         // 动作对象由上方状态胶囊（“悬浮窗运行中 · 点击关闭”）交代，按钮只留动词，文案更短。
-        ActionPill(
-            label = if (running) "关闭" else "启动",
-            onClick = onToggleFloating,
-            icon = if (running) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        // 左侧固定一枚「首页设置」图标（编辑一言 / 侧边栏开关）。
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            settingsButton()
+            Spacer(modifier = Modifier.width(10.dp))
+            ActionPill(
+                label = if (running) "关闭" else "启动",
+                onClick = onToggleFloating,
+                icon = if (running) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                modifier = Modifier.weight(1f),
+            )
+        }
 
         // 页脚：与参考实现的「Thanks to YumeBox」同款。
         // 放在信息区底部而不是压在插画上，既避免和插画主体重叠，也把右下角的空间用上。
@@ -647,6 +687,83 @@ private fun VersionFooter(modifier: Modifier = Modifier) {
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 1.1.sp,
             ),
+    )
+}
+
+/**
+ * 「首页设置」：启动按钮左侧的 Tune 图标，下拉两项——
+ * 「编辑一言」弹窗输入，改动即时写盘生效（无需保存按钮）；
+ * 「展开侧边栏」即点即开，控制「我的」页左侧竖栏，默认开。
+ */
+@Composable
+private fun HomePageSettings(
+    quote: String,
+    sideRailEnabled: Boolean,
+    onQuoteChange: (String) -> Unit,
+    onSideRailChange: (Boolean) -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { menu = true }) {
+            Icon(Icons.Filled.Tune, contentDescription = "首页设置")
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text("编辑一言") },
+                leadingIcon = { Icon(Icons.Filled.EditNote, contentDescription = null) },
+                onClick = {
+                    menu = false
+                    editing = true
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("展开侧边栏") },
+                trailingIcon = {
+                    SmallSwitch(checked = sideRailEnabled, onCheckedChange = onSideRailChange)
+                },
+                onClick = { onSideRailChange(!sideRailEnabled) },
+            )
+        }
+    }
+
+    if (editing) {
+        HomeQuoteEditor(
+            quote = quote,
+            onChange = onQuoteChange,
+            onClose = { editing = false },
+        )
+    }
+}
+
+/**
+ * 一言编辑弹窗：没有保存按钮 —— 每次输入都直接写盘，
+ * 弹窗背后的问候语区实时跟着变，「完成」只是关窗。
+ */
+@Composable
+private fun HomeQuoteEditor(
+    quote: String,
+    onChange: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    var draft by remember { mutableStateOf(quote) }
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("编辑一言") },
+        text = {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = {
+                    draft = it
+                    onChange(it)
+                },
+                singleLine = true,
+                placeholder = { Text("问候语下方的那句话") },
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onClose) { Text("完成") }
+        },
     )
 }
 
