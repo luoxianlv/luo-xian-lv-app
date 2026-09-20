@@ -6,6 +6,9 @@ import androidx.compose.ui.graphics.Color
 val PlayerPrimary = Color(0xFF0A84FF)
 val PlayerPrimaryDark = Color(0xFF006EDB)
 val PlayerAccent = Color(0xFF18A999)
+
+/** 开关（SmallSwitch）勾选轨道的强调蓝：QQ 蓝，比主色更亮更清透 */
+val PlayerQqBlue = Color(0xFF12B7F5)
 val PlayerBg = Color(0xFFF6F7FB)
 val PlayerSurface = Color(0xFFFFFFFF)
 val PlayerSurfaceTint = Color(0xFFEAF3FF)

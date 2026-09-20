@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.ui.theme.PlayerQqBlue
 
 /**
  * 紧凑型开关（40×22dp）：替代默认 M3 Switch（52×32dp），
@@ -34,7 +35,8 @@ fun SmallSwitch(
     val trackColor by animateColorAsState(
         targetValue =
             if (checked) {
-                MaterialTheme.colorScheme.primary
+                // 强调蓝用 QQ 蓝而非主色：默认主色偏深，小尺寸轨道里更显沉闷
+                PlayerQqBlue
             } else {
                 MaterialTheme.colorScheme.surfaceVariant
             },
