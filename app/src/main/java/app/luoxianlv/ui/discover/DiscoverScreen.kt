@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
@@ -27,7 +26,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.ui.components.ErrorDialogHost
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.PageTitle
-import app.luoxianlv.ui.components.RemoteScoreRow
 import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.theme.containerElevation
@@ -79,29 +77,15 @@ fun DiscoverScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 6.dp),
         )
-        LazyColumn(
+        // 数据量大时分批渲染，滑近底部自动追加（见 RemoteScoreList）
+        RemoteScoreList(
+            state = state,
+            onDownload = vm::download,
+            onLoadMore = vm::loadMore,
             modifier = Modifier.fillMaxSize(),
             // 导航栏是叠层，这里自行留出它占的高度
             contentPadding = PaddingValues(bottom = NavBarClearance),
-        ) {
-            // 与曲库歌曲列表同一套连排语言：整列一张卡，内部零分隔，
-            // 行与行直接相邻，靠行高与内容自然分格。
-            if (state.scores.isNotEmpty()) {
-                item {
-                    SettingsCard {
-                        Column {
-                            state.scores.forEach { remote ->
-                                RemoteScoreRow(
-                                    remote = remote,
-                                    downloading = remote.id in state.downloading,
-                                    onDownload = { vm.download(remote) },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        )
     }
 
     ErrorDialogHost(state.error, vm::dismissError)
