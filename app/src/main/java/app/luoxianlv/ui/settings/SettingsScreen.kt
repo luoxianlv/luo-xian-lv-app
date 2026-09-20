@@ -182,8 +182,8 @@ fun SettingsScreen(
                         }
                     }
                     PreferenceItem(
-                        title = "自启动与关联启动",
-                        summary = "允许自启动、关联启动及后台运行",
+                        title = "自启动",
+                        summary = "在系统设置中允许落弦律自启动",
                         icon = Icons.Filled.RocketLaunch,
                         iconTint = IconTeal,
                     ) { KeepAlive.openAutoStartSettings(context) }

@@ -178,19 +178,22 @@ class MainActivity : AppCompatActivity() {
         appUpdates.check(force = true)
     }
 
-    /** 无障碍开启后依次引导电池优化和自启动；返回系统设置后继续下一步。 */
+    /** 每项引导仅显示一次；展示前保存记录，返回设置、重开无障碍或应用都不重复。 */
     private fun requestBackgroundPermissionsOnce() {
         if (!disclaimerAccepted || showOnboarding || showBatteryPrompt || showAutoStartPrompt) return
         if (!MusicAccessibilityService.isEnabled(this)) return
         val pm = getSystemService(PowerManager::class.java) ?: return
         if (!pm.isIgnoringBatteryOptimizations(packageName) && !appPrefs.getBoolean("battery_exemption_asked", false)) {
+            appPrefs.edit().putBoolean("battery_exemption_asked", true).commit()
             showBatteryPrompt = true
         } else if (!appPrefs.getBoolean("auto_start_asked", false)) {
+            appPrefs.edit().putBoolean("auto_start_asked", true).commit()
             showAutoStartPrompt = true
         }
     }
 
     private fun markAutoStartAsked() {
+        // Only records that the one-time guide was handled; never an authorization result.
         appPrefs.edit().putBoolean("auto_start_asked", true).apply()
         showAutoStartPrompt = false
     }
@@ -227,9 +230,9 @@ private fun BatteryExemptionDialog(
 private fun AutoStartDialog(onAllow: () -> Unit, onLater: () -> Unit) {
     AlertDialog(
         onDismissRequest = onLater,
-        title = { Text("允许自启动与关联启动") },
-        text = { Text("请在系统设置中允许落弦律自启动、关联启动和后台运行。不同手机的选项名称可能不同，可稍后在设置中调整。") },
+        title = { Text("自启动设置") },
+        text = { Text("请在系统设置中允许落弦律自启动，已开启可跳过。此提示只显示一次。") },
         confirmButton = { TextButton(onClick = onAllow) { Text("去设置") } },
-        dismissButton = { TextButton(onClick = onLater) { Text("以后再说") } },
+        dismissButton = { TextButton(onClick = onLater) { Text("不再提醒") } },
     )
 }
