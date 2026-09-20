@@ -21,7 +21,10 @@ class AppReleaseTest {
         val release = parseAppRelease(manifest(), 4, "https://example.com", "github", false)!!
         assertEquals(listOf("github", "oss"), release.sources.map { it.id })
         assertEquals("https://example.com/api/update/github", release.sources.first().url)
-        assertFalse(release.mandatory)
+        assertTrue(release.mandatory)
+    }
+    @Test fun newerVersionIsMandatoryEvenWhenServerMarksItOptional() {
+        assertTrue(parseAppRelease(manifest().put("mandatory", false), 4, "https://example.com", "oss", false)!!.mandatory)
     }
     @Test fun minimumVersionRequiresUpdate() {
         assertTrue(parseAppRelease(manifest(), 2, "https://example.com", "oss", false)!!.mandatory)

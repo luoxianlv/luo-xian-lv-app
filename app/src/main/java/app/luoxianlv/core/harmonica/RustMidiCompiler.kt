@@ -73,6 +73,7 @@ object RustMidiCompiler {
         val connection =
             try {
                 (URL("$baseUrl/api/compile-midi").openConnection() as HttpURLConnection).apply {
+                    app.luoxianlv.update.ClientVersion.attach(this)
                     connectTimeout = 8000
                     readTimeout = 15000
                     requestMethod = "POST"

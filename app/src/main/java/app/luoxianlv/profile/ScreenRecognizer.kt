@@ -34,8 +34,8 @@ object ScreenRecognizer {
     private val MODE_ORDER = listOf(PlayMode.SEMITONE, PlayMode.RAISE, PlayMode.NATURAL, PlayMode.LOWER)
 
     // Mode row geometry relative to the note row, in units of note spacing,
-    // measured on real captures. Used as a prior for matching and as the
-    // fallback when mode text is too dim to read.
+    // measured on real captures. Only limits the search region; the final
+    // coordinates must come from observed mode text, never from this prior.
     private const val MODE_SEMI_OFFSET = 1.96f
     private val MODE_GAPS = floatArrayOf(0f, 1.20f, 2.15f, 3.08f)
     private const val MODE_Y_OFFSET = -0.91f
@@ -96,8 +96,19 @@ object ScreenRecognizer {
         // Top-hat: pixels much brighter than their local surroundings. The key
         // digits pass this even when the scene (sky) is brighter than they are.
         val local = localMean(luma, width, height, 18)
-        val strict = BooleanArray(luma.size) { luma[it] - local[it] > 45f && luma[it] > 120f }
-        val notes = findNoteRow(glyphs(strict, width, height), width) ?: return null
+        var notes: List<Glyph>? = null
+        for (threshold in listOf(45f, 30f, 20f, 10f)) {
+            val strict = BooleanArray(luma.size) { luma[it] - local[it] > threshold && luma[it] > 120f }
+            notes = findNoteRow(glyphs(strict, width, height), width)
+            if (notes != null) break
+        }
+        if (notes == null) {
+            for (threshold in listOf(200f, 175f, 150f)) {
+                notes = findNoteRow(glyphs(BooleanArray(luma.size) { luma[it] > threshold }, width, height), width)
+                if (notes != null) break
+            }
+        }
+        notes = notes ?: return null
         val noteY = notes.map { it.cy }.average().toFloat()
         val noteH = notes.map { it.h }.average().toFloat()
         val noteXs = notes.map { it.cx }
@@ -121,30 +132,16 @@ object ScreenRecognizer {
             loose[i] = luma[i] - local[i] > 22f && luma[i] > 85f
         }
         val labels = modeLabels(glyphs(loose, width, height), noteY, noteH, predictedY, spacing)
-        val matched = predictedX.map { px -> labels.filter { abs(it.cx - px) <= 0.3f * spacing }.minByOrNull { abs(it.cx - px) } }
-        val hits = matched.count { it != null }
-        val modeX: FloatArray
-        val modeY: Float
-        if (hits == 4 && coherent(matched.map { it!! }, spacing)) {
-            modeX = FloatArray(4) { matched[it]!!.cx }
-            modeY = matched.map { it!!.cy }.average().toFloat()
-        } else if (hits >= 3) {
-            // Trust labels only when they land near the prior; a label this far
-            // off is usually a mis-grouped artifact (e.g. the divider merged in).
-            modeX =
-                FloatArray(
-                    4,
-                ) { i -> matched[i].takeIf { it != null && abs(it.cx - predictedX[i]) <= 0.15f * spacing }?.cx ?: predictedX[i] }
-            modeY =
-                matched
-                    .filterNotNull()
-                    .map { it.cy }
-                    .average()
-                    .toFloat()
-        } else {
-            modeX = predictedX
-            modeY = predictedY
-        }
+        // A horizontal match alone can pick scenery above/below the buttons.
+        val matched = predictedX.map { px -> labels.filter {
+            abs(it.cx - px) <= 0.3f * spacing && abs(it.cy - predictedY) <= 0.20f * spacing
+        }.minByOrNull { abs(it.cx - px) + abs(it.cy - predictedY) } }
+        val row = if (matched.all { it != null } && coherent(matched.filterNotNull(), spacing)) {
+            matched.filterNotNull()
+        } else locateModeText(luma, width, height, predictedX, predictedY, spacing, noteH, noteY)
+            ?: return null
+        val modeX = FloatArray(4) { row[it].cx }
+        val modeY = row.map { it.cy }.average().toFloat()
 
         val r = 0.31f * spacing
         val contrast = FloatArray(4) { stateContrast(luma, width, height, modeX[it], modeY, r) }
@@ -160,6 +157,46 @@ object ScreenRecognizer {
 
         val modes = MODE_ORDER.mapIndexed { i, m -> m to floatArrayOf(modeX[i] / width, modeY / height) }.toMap()
         return Result(KeyLayout(FloatArray(8) { noteXs[it] / width }, noteY / height, modes), mode, halfTone)
+    }
+
+    /** Recover low-contrast labels without adopting coordinates from the prior.
+     * Long scenery edges are excluded before connected-component grouping. */
+    private fun locateModeText(
+        luma: FloatArray, w: Int, h: Int, xs: FloatArray, y: Float,
+        spacing: Float, noteH: Float, noteY: Float,
+    ): List<Label>? {
+        val top = max(0, (y - .45f * spacing).toInt())
+        val bottom = min(h - 1, (y + .45f * spacing).toInt())
+        val fineMean = localMean(luma, w, h, 3)
+        val evidence = mutableListOf<Label>()
+        for (threshold in listOf(200f, 175f, 145f, 115f, 12f, 20f, 30f)) {
+            val mask = BooleanArray(luma.size)
+            for (yy in top..bottom) {
+                for (xx in max(0, (xs.first() - .4f * spacing).toInt())..min(w - 1, (xs.last() + .4f * spacing).toInt())) {
+                    val i = yy * w + xx
+                    mask[i] = if (threshold < 100f) luma[i] > 100f && luma[i] - fineMean[i] > threshold else luma[i] > threshold
+                }
+                var start = 0
+                while (start < w) {
+                    if (!mask[yy * w + start]) { start++; continue }
+                    var end = start + 1
+                    while (end < w && mask[yy * w + end]) end++
+                    if (end - start > noteH * 2.5f) {
+                        for (xx in start until end) mask[yy * w + xx] = false
+                    }
+                    start = end
+                }
+            }
+            val candidates = modeLabels(glyphs(mask, w, h), noteY, noteH, y, spacing)
+            evidence.addAll(candidates)
+            for (seed in evidence) {
+                val row = xs.map { x -> evidence.filter {
+                    abs(it.cx - x) < .32f * spacing && abs(it.cy - seed.cy) < .4f * noteH
+                }.minByOrNull { abs(it.cx - x) } }
+                if (row.all { it != null } && coherent(row.filterNotNull(), spacing)) return row.filterNotNull()
+            }
+        }
+        return null
     }
 
     /** Box mean of radius [r] around every pixel via a summed-area table. */
@@ -252,16 +289,41 @@ object ScreenRecognizer {
         return merged
     }
 
-    /** Eight same-size glyphs on a level, evenly spaced row = the note keys. */
+    /** Match the eight-key grid, rejecting the adjacent smaller sharp signs.
+     * At most one missing digit may be recovered from the observed grid. */
     private fun findNoteRow(glyphs: List<Glyph>, width: Int): List<Glyph>? {
+        val digits = glyphs
         var best: List<Glyph>? = null
         var bestScore = Float.MAX_VALUE
-        for (seed in glyphs) {
-            val band = glyphs.filter { abs(it.cy - seed.cy) <= 0.4f * seed.h && it.h >= seed.h * 0.67f && it.h <= seed.h * 1.5f }
-            if (band.size < 8) continue
-            val sorted = band.sortedBy { it.cx }
-            for (k in 0..sorted.size - 8) {
-                val window = sorted.subList(k, k + 8)
+        for (seed in digits) {
+            val band = digits.filter { abs(it.cy - seed.cy) <= 0.4f * seed.h && it.h >= seed.h * 0.67f && it.h <= seed.h * 1.5f }
+            if (band.size < 7) continue
+            // Match a grid rather than requiring adjacent components in the
+            // component list: sharp signs and scenery may sit between digits.
+            for (second in band) {
+                val step = second.cx - seed.cx
+                if (step < width * .04f || step > width * .14f || step < seed.h * 1.8f) continue
+                for (offset in 0..1) {
+                val startX = seed.cx - offset * step
+                if (startX <= 0 || startX + 7 * step >= width) continue
+                val grid = (0..7).map { index ->
+                    band.filter { abs(it.cx - (startX + step * index)) <= step * .10f }
+                        .minByOrNull { abs(it.cx - (startX + step * index)) }
+                }
+                val observed = grid.filterNotNull()
+                if (observed.size < 7) continue
+                // Do not extend a seven-key row in the wrong direction. A
+                // missing edge digit requires its adjacent sharp as evidence.
+                if (listOf(0, 7).any { index -> grid[index] == null && glyphs.none { sharp ->
+                    sharp.h < seed.h * .75f &&
+                        startX + step * index - sharp.cx in seed.h * .25f..seed.h * 1.5f &&
+                        seed.cy - sharp.cy in 0f..seed.h * .65f
+                } }) continue
+                val window = grid.mapIndexed { index, glyph -> glyph ?: run {
+                    val cx = (startX + step * index).toInt()
+                    val cy = observed.map { it.cy }.average().toInt()
+                    Glyph(cx - seed.w / 2, cx + seed.w / 2, cy - seed.h / 2, cy + seed.h / 2, 0)
+                } }
                 val meanH = window.map { it.h }.average().toFloat()
                 if (window.maxOf { it.h } > meanH * 1.5f || window.minOf { it.h } < meanH / 1.5f) continue
                 val minY = window.minOf { it.cy }
@@ -269,15 +331,28 @@ object ScreenRecognizer {
                 if (maxY - minY > 0.45f * meanH) continue
                 val xs = window.map { it.cx }
                 val meanSp = (xs.last() - xs.first()) / 7f
+                // The eight sharp signs form an exceptionally regular row,
+                // but are much smaller than the digits next to them. Reject
+                // a row when most candidates have a taller glyph just right
+                // and below them (the actual note digit).
+                val accidentals = window.count { candidate ->
+                    glyphs.any { digit ->
+                        digit.h >= candidate.h * 1.4f &&
+                            digit.cx - candidate.cx in candidate.h * 0.5f..candidate.h * 2.5f &&
+                            digit.cy - candidate.cy in 0f..candidate.h.toFloat()
+                    }
+                }
+                if (accidentals >= 6) continue
                 // A row of HUD text can also be evenly spaced. Piano keys
                 // must span a substantial width with gaps larger than digits.
                 if (meanSp < meanH * 1.8f || xs.last() - xs.first() < width * 0.30f) continue
                 val cv = sqrt(xs.zipWithNext { a, b -> (b - a - meanSp) * (b - a - meanSp) }.average().toFloat()) / meanSp
                 if (cv >= 0.12f) continue
-                val score = cv + (maxY - minY) / meanH * 0.1f
+                val score = cv + (maxY - minY) / meanH * 0.1f + (8 - observed.size) * .15f
                 if (score < bestScore) {
                     bestScore = score
                     best = window
+                }
                 }
             }
         }
@@ -297,7 +372,7 @@ object ScreenRecognizer {
             glyphs
                 .filter {
                     it.cy < noteY - 1.2f * noteH && abs(it.cy - predictedY) < 0.7f * spacing && it.h <= 1.2f * noteH &&
-                        it.h >= 6
+                        it.h >= 6 && it.w >= .4f * it.h && it.w <= 1.8f * it.h
                 }.sortedBy { it.cx }
         val groups = mutableListOf<MutableList<Glyph>>()
         for (g in candidates) {
@@ -306,7 +381,7 @@ object ScreenRecognizer {
                     val gy = grp.map { it.cy }.average().toFloat()
                     val gh = grp.map { it.h }.average().toFloat()
                     val right = grp.maxOf { it.cx + it.w / 2f }
-                    abs(g.cy - gy) <= 0.6f * gh && g.cx - g.w / 2f - right <= 1.6f * gh
+                    abs(g.cy - gy) <= 0.4f * gh && g.cx - g.w / 2f - right <= .7f * gh
                 }
             if (host == null) groups.add(mutableListOf(g)) else host.add(g)
         }

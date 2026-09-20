@@ -71,7 +71,7 @@ fun parseAppRelease(json: JSONObject, currentCode: Int, baseUrl: String, preferr
     val notes = parseReleaseNotes(json.opt("releaseNotes"))
     return AppRelease(code, json.getString("latestVersionName"), sha, json.optLong("apkSize", 0),
         notes,
-        json.optBoolean("mandatory") || currentCode < json.optInt("minSupportedVersionCode", 1), sources)
+        true, sources) // 检测到更高版本后必须更新，不允许跳过。
 }
 
 fun validatedUpdateUrl(value: String, baseUrl: String, allowLocal: Boolean): String {

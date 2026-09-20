@@ -4,17 +4,17 @@ import android.content.Context
 import app.luoxianlv.data.Kv
 
 /**
- * 「自动检查更新」开关：存在 `app_updates` 存储里，与更新检查的节流
- * 记录（`last_check`）同一个文件，默认开。
- *
- * 只约束**自动**检查（启动、回前台）；关于页的手动「检查新版本」
- * 和 DEBUG 广播触发不受它管 —— 那是用户点出来的动作。
+ * 自动检查当前固定开启。保留旧开关的存储代码，但不再读取其关闭状态。
+ * 启动和回前台检查沿用原有时机与节流，手动检查不受节流影响。
  */
 internal object UpdateAutoCheck {
     private const val STORE = "app_updates"
     private const val KEY = "auto_check"
 
-    fun isEnabled(context: Context): Boolean = Kv.of(context, STORE).getBoolean(KEY, true)
+    // 强制开启检查，忽略旧版本保存的关闭状态；保留原读取逻辑供恢复。
+    @Suppress("UNUSED_PARAMETER")
+    fun isEnabled(context: Context): Boolean = true
+    // fun isEnabled(context: Context): Boolean = Kv.of(context, STORE).getBoolean(KEY, true)
 
     fun setEnabled(
         context: Context,

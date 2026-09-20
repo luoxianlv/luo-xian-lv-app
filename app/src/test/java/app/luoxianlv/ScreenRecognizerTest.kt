@@ -9,6 +9,34 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class ScreenRecognizerTest {
+    @Test fun modeRowMovesIndependentlyAndMissingLabelsAreRejected() {
+        val bytes = javaClass.getResourceAsStream("/keyboard-sample.gray")!!.readBytes()
+        val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val w = header.int
+        val h = header.int
+        val pixels = FloatArray(w * h) { bytes[8 + it].toInt().and(255).toFloat() }
+        val original = ScreenRecognizer.analyze(pixels, w, h)!!
+        val y = (original.layout.modes.getValue(PlayMode.NATURAL)[1] * h).toInt()
+        val spacing = (original.layout.noteX[1] - original.layout.noteX[0]) * w
+        val radius = (spacing * .42f).toInt()
+        val shift = (spacing * .12f).toInt()
+        val moved = pixels.copyOf()
+        for (yy in y-radius..y+radius+shift) for (xx in 0 until w) moved[yy*w+xx] = 0f
+        for (yy in y-radius..y+radius) for (xx in 0 until w) moved[(yy+shift)*w+xx] = pixels[yy*w+xx]
+        val detected = ScreenRecognizer.analyze(moved, w, h)
+        assertNotNull("Observed mode row must follow the image", detected)
+        assertEquals(original.layout.noteY, detected!!.layout.noteY, .005f)
+        for (mode in PlayMode.values()) {
+            assertEquals(original.layout.modes.getValue(mode)[1]*h + shift,
+                detected.layout.modes.getValue(mode)[1]*h, 4f)
+        }
+        val removed = pixels.copyOf()
+        for (yy in 0 until (original.layout.noteY*h-spacing*.45f).toInt()) {
+            for (xx in 0 until w) removed[yy*w+xx] = 0f
+        }
+        org.junit.Assert.assertNull("No mode coordinates without image evidence", ScreenRecognizer.analyze(removed,w,h))
+    }
+
     @Test fun blankAndCompactHudTextAreRejected() {
         val width = 1024
         val height = 600

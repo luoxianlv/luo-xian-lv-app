@@ -254,12 +254,19 @@ class UpdateManager(
         }
     }
 
-    /** 全部已发布公开谱子（服务端一次性返回，无分页）。 */
+    data class ScorePage(val items: List<PlatformScore>, val nextPage: Int?, val total: Int)
+
+    /** 新版服务端按页返回；兼容尚未升级的服务端返回完整列表。 */
     fun fetchLatestScores(
         accessToken: String? = null,
-        onResult: (Result<List<PlatformScore>>) -> Unit,
+        page: Int = 1,
+        onResult: (Result<ScorePage>) -> Unit,
     ) {
-        background(onResult) { parsePlatformScores(JSONObject(requestText("$baseUrl/api/scores/latest", accessToken))) }
+        background(onResult) {
+            val root = JSONObject(requestText("$baseUrl/api/scores/latest?page=$page&pageSize=30", accessToken))
+            val items = parsePlatformScores(root)
+            ScorePage(items, root.optInt("nextPage", 0).takeIf { it > page }, root.optInt("total", items.size))
+        }
     }
 
     private fun parsePlatformScores(root: JSONObject): List<PlatformScore> {
@@ -524,6 +531,7 @@ class UpdateManager(
 
     private fun open(url: String): HttpURLConnection {
         val connection = URL(url).openConnection() as HttpURLConnection
+        ClientVersion.attach(connection)
         connection.connectTimeout = 8000
         connection.readTimeout = 8000
         connection.requestMethod = "GET"

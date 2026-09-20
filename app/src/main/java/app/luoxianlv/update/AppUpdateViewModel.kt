@@ -345,6 +345,7 @@ class AppUpdateViewModel(
 
     private fun open(url: String): HttpURLConnection =
         (URL(validatedUpdateUrl(url, baseUrl, BuildConfig.DEBUG)).openConnection() as HttpURLConnection).apply {
+            ClientVersion.attach(this)
             connectTimeout = 15_000
             readTimeout = 30_000
             instanceFollowRedirects = false

@@ -16,9 +16,11 @@ import kotlinx.coroutines.flow.update
 data class RemoteUiState(
     val loading: Boolean = false,
     val status: String = "",
-    /** 全量数据在内存里，但列表一次只渲染前 [visibleCount] 条，滑近底部再放大，避免一次组合全部行卡顿 */
+    /** 已加载页（含预取）；visibleCount 之后的记录暂不展示。 */
     val scores: List<PlatformScore> = emptyList(),
     val visibleCount: Int = 0,
+    val nextPage: Int? = null,
+    val loadingMore: Boolean = false,
     val downloading: Set<String> = emptySet(),
     val error: String? = null,
     /** 下载成功的曲名：触发跳转曲库 + Snackbar，消费后置空 */
@@ -30,7 +32,7 @@ data class RemoteUiState(
 
     /** 内存里还有没渲染出来的条目 */
     val hasMore: Boolean
-        get() = visibleCount < scores.size
+        get() = visibleCount < scores.size || nextPage != null
 }
 
 /** 发现 / 搜索 / 平台三页共用：平台乐谱的加载与下载。UpdateManager 回调在工作线程，StateFlow 线程安全。 */
@@ -56,26 +58,66 @@ class DiscoverViewModel(
     // 搜索后切回发现页时 state.scores 已是搜索结果，要靠快照恢复发现页列表。
     private var scoresLoadedAtMs = 0L
     private var discoverFeedCache: List<PlatformScore>? = null
+    private var cachedNextPage: Int? = null
+    private var cachedTotal = 0
+    private var requestGeneration = 0
+    private var discoverActive = false
+    private var revealOnArrival = false
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
 
     private fun token() = sessionStore.current()?.accessToken
 
-    /** 数据到位后只先渲染第一批；服务端一次性返回无分页，分批只是客户端渲染节奏。 */
+    /** 首屏展示一页，后台最多提前准备两页。 */
     private fun revealFirstPage(total: List<PlatformScore>): Int = minOf(PAGE_SIZE, total.size)
 
-    /** 滑近底部时调用：纯内存操作，立即放大渲染窗口。 */
+    /** 滚动先消费缓存，再补齐两页预取窗口。 */
     fun loadMore() {
         val s = _state.value
         if (s.loading || !s.hasMore) return
-        _state.update { it.copy(visibleCount = (it.visibleCount + PAGE_SIZE).coerceAtMost(it.scores.size)) }
+        if (s.visibleCount < s.scores.size) {
+            _state.update { it.copy(visibleCount = (it.visibleCount + PAGE_SIZE).coerceAtMost(it.scores.size)) }
+        } else {
+            revealOnArrival = true
+        }
+        _state.update { it.copy(error = null) }
+        prefetch()
+    }
+
+    private fun prefetch() {
+        val s = _state.value
+        if (!discoverActive || s.loading || s.loadingMore || s.error != null ||
+            s.scores.size - s.visibleCount >= PAGE_SIZE * 2) return
+        val next = s.nextPage ?: return
+        val generation = requestGeneration
+        _state.update { it.copy(loadingMore = true) }
+        updater.fetchLatestScores(token(), next) { result -> main.post {
+            if (generation != requestGeneration) return@post
+            result.onSuccess { page ->
+                val current = _state.value
+                val merged = (current.scores + page.items).distinctBy { it.id }
+                discoverFeedCache = merged
+                cachedNextPage = page.nextPage.takeIf { merged.size > current.scores.size }
+                val visible = if (revealOnArrival) (current.visibleCount + PAGE_SIZE).coerceAtMost(merged.size) else current.visibleCount
+                revealOnArrival = false
+                _state.update { it.copy(scores = merged, visibleCount = visible, nextPage = cachedNextPage, loadingMore = false) }
+                prefetch()
+            }.onFailure { e ->
+                _state.update { it.copy(loadingMore = false, error = e.message ?: "加载失败，请重试") }
+            }
+        } }
     }
 
     /**
-     * 发现页：加载全部已发布公开谱子（服务端一次性返回，无分页）。
+     * 发现页分页加载，首屏后预取两页。
      * 带生命周期缓存：TTL 内重复调用（切 Tab 重建页面导致的 LaunchedEffect 重跑）
      * 直接恢复缓存快照，不重复请求；过期或 [force] 才重新拉取。
      * 拉取失败保留旧列表，下次进入再试。
      */
     fun loadScores(force: Boolean = false) {
+        if (discoverActive && _state.value.loading && !force) return
+        discoverActive = true
+        revealOnArrival = false
+        val generation = ++requestGeneration
         val cache = discoverFeedCache
         val fresh =
             cache != null &&
@@ -86,15 +128,23 @@ class DiscoverViewModel(
                     loading = false,
                     scores = cache,
                     visibleCount = revealFirstPage(cache),
-                    status = "共 ${cache.size} 首公开谱子",
+                    status = "共 $cachedTotal 首公开谱子",
+                    nextPage = cachedNextPage,
+                    loadingMore = false,
+                    error = null,
                 )
             }
+            prefetch()
             return
         }
-        _state.update { it.copy(loading = true, status = "正在加载…") }
-        updater.fetchLatestScores(token()) { result ->
+        _state.update { it.copy(loading = true, loadingMore = false, nextPage = null, error = null, status = "正在加载…") }
+        updater.fetchLatestScores(token()) { result -> main.post {
+            if (generation != requestGeneration) return@post
             result
-                .onSuccess { scores ->
+                .onSuccess { page ->
+                    val scores = page.items
+                    cachedNextPage = page.nextPage
+                    cachedTotal = page.total
                     scoresLoadedAtMs = SystemClock.elapsedRealtime()
                     discoverFeedCache = scores
                     _state.update {
@@ -102,19 +152,25 @@ class DiscoverViewModel(
                             loading = false,
                             scores = scores,
                             visibleCount = revealFirstPage(scores),
-                            status = if (scores.isEmpty()) "暂无公开谱子" else "共 ${scores.size} 首公开谱子",
+                            status = if (scores.isEmpty()) "暂无公开谱子" else "共 ${page.total} 首公开谱子",
+                            nextPage = page.nextPage,
                         )
                     }
+                    prefetch()
                 }.onFailure { e ->
                     _state.update { it.copy(loading = false, status = e.message ?: "曲库暂时无法连接") }
                 }
-        }
+        } }
     }
 
     fun search(query: String) {
         if (query.isBlank()) return
+        discoverActive = false
+        val generation = ++requestGeneration
         _state.update { it.copy(loading = true, status = "搜索中…", scores = emptyList(), visibleCount = 0) }
-        updater.fetchPublicScores(query.trim(), token()) { result ->
+        _state.update { it.copy(nextPage = null, loadingMore = false) }
+        updater.fetchPublicScores(query.trim(), token()) { result -> main.post {
+            if (generation != requestGeneration) return@post
             result
                 .onSuccess { scores ->
                     _state.update {
@@ -128,12 +184,16 @@ class DiscoverViewModel(
                 }.onFailure { e ->
                     _state.update { it.copy(loading = false, status = e.message ?: "搜索失败") }
                 }
-        }
+        } }
     }
 
     fun loadPublic(query: String = "") {
+        discoverActive = false
+        val generation = ++requestGeneration
+        _state.update { it.copy(nextPage = null, loadingMore = false) }
         _state.update { it.copy(loading = true, status = "正在加载公开谱子…") }
-        updater.fetchPublicScores(query, token()) { result ->
+        updater.fetchPublicScores(query, token()) { result -> main.post {
+            if (generation != requestGeneration) return@post
             result
                 .onSuccess { scores ->
                     _state.update {
@@ -147,7 +207,7 @@ class DiscoverViewModel(
                 }.onFailure { e ->
                     _state.update { it.copy(loading = false, status = "平台暂时无法连接：${e.message ?: "网络错误"}") }
                 }
-        }
+        } }
     }
 
     fun download(remote: PlatformScore) {

@@ -60,7 +60,7 @@ def main():
         "latestVersionCode": package["versionCode"], "latestVersionName": package["versionName"],
         "apkUrl": "", "apkSha256": sha, "apkSize": size,
         "releaseNotes": release_notes,
-        "mandatory": False, "minSupportedVersionCode": 1,
+        "mandatory": True, "minSupportedVersionCode": package["versionCode"],
         "channels": {"oss": {"object": object_key, "sha256": sha, "size": size}},
     }
     Path("dist/stable.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

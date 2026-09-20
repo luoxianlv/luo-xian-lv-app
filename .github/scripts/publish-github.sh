@@ -2,6 +2,7 @@ set -euo pipefail
 
 asset=$(jq -r .asset dist/package.json)
 expected=$(sha256sum "dist/$asset" | cut -d' ' -f1)
+jq -r '.sections[] | "## " + .title + "\n\n" + (.items | map("- " + .) | join("\n")) + "\n"' dist/release-notes.json > dist/release-notes.md
 if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft > dist/release-state.json 2>/dev/null; then
   if [ "$(jq -r .isDraft dist/release-state.json)" = true ]; then
     gh release upload "$RELEASE_TAG" "dist/$asset" "dist/$asset.sha256" --repo "$GITHUB_REPOSITORY" --clobber
@@ -12,9 +13,9 @@ if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft > d
   fi
 else
   gh release create "$RELEASE_TAG" "dist/$asset" "dist/$asset.sha256" \
-    --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "落弦律 $RELEASE_TAG" --generate-notes
+    --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "落弦律 $RELEASE_TAG" --notes-file dist/release-notes.md
 fi
-gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file dist/release-notes.md --draft=false --latest
 gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > dist/github-release.json
 github_asset=$(jq -ce --arg asset "$asset" '.assets[] | select(.name == $asset)' dist/github-release.json)
 test "$(jq -r .digest <<< "$github_asset")" = "sha256:$expected"

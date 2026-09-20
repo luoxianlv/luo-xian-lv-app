@@ -1,10 +1,11 @@
 package app.luoxianlv.ui.discover
 
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,18 +18,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.luoxianlv.ui.components.RemoteScoreRow
-import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.update.PlatformScore
-
-/** 触底提前量（px）：约两行的高度，滑到这里就先追加下一批，避免到底后空滑一帧。 */
-private const val LOAD_MORE_THRESHOLD_PX = 400
 
 /**
  * 发现 / 搜索 / 平台三页共用的平台谱子列表。
  *
  * 与曲库歌曲列表同一套连排语言：整列一张卡，内部零分隔，行与行直接相邻。
- * 数据服务端一次返回、内存持有，这里一次只组合前 [RemoteUiState.visibleCount] 行，
- * 滑近底部自动放大渲染窗口，数据量大时进页面不再一次渲染全部行。
+ * 每首曲目是独立的惰性列表项，接近末尾时消费预取缓存。
  */
 @Composable
 fun RemoteScoreList(
@@ -43,10 +39,12 @@ fun RemoteScoreList(
         derivedStateOf {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
-            last.offset + last.size <= info.viewportEndOffset + LOAD_MORE_THRESHOLD_PX
+            last.index >= info.totalItemsCount - 5
         }
     }
-    LaunchedEffect(nearBottom) { if (nearBottom) onLoadMore() }
+    LaunchedEffect(nearBottom, state.visibleCount, state.loadingMore, state.error) {
+        if (nearBottom && state.error == null && (!state.loadingMore || state.visibleCount < state.scores.size)) onLoadMore()
+    }
 
     LazyColumn(
         state = listState,
@@ -55,26 +53,24 @@ fun RemoteScoreList(
     ) {
         val visible = state.visibleScores
         if (visible.isNotEmpty()) {
-            item {
-                SettingsCard {
-                    Column {
-                        visible.forEach { remote ->
-                            RemoteScoreRow(
-                                remote = remote,
-                                downloading = remote.id in state.downloading,
-                                onDownload = { onDownload(remote) },
-                            )
-                        }
-                        if (state.hasMore) {
-                            Text(
-                                "上滑加载更多",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                                textAlign = TextAlign.Center,
-                            )
-                        }
-                    }
+            items(visible, key = { it.id }) { remote ->
+                androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.surface) {
+                    RemoteScoreRow(
+                        remote = remote,
+                        downloading = remote.id in state.downloading,
+                        onDownload = { onDownload(remote) },
+                    )
+                }
+            }
+            if (state.hasMore) {
+                item {
+                    Text(
+                        if (state.error != null) "加载失败，点击重试" else if (state.loadingMore && state.visibleCount >= state.scores.size) "正在加载…" else "加载更多",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().clickable { onLoadMore() }.padding(vertical = 10.dp),
+                        textAlign = TextAlign.Center,
+                    )
                 }
             }
         }

@@ -30,6 +30,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -71,6 +73,7 @@ fun SettingsScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val notificationPermission =
         rememberLauncherForActivityResult(
             ActivityResultContracts.RequestPermission(),
@@ -193,6 +196,7 @@ fun SettingsScreen(
                 PreferenceGroupCaption("关于")
                 Spacer(modifier = Modifier.height(6.dp))
                 SettingsCard {
+                    /* 暂停提供关闭自动检查的入口；保留开关代码便于恢复。
                     PreferenceSwitchItem(
                         title = "自动检查更新",
                         checked = state.autoUpdate,
@@ -201,12 +205,31 @@ fun SettingsScreen(
                         icon = Icons.Filled.SystemUpdate,
                         iconTint = IconUpdate,
                     )
+                    */
                     PreferenceItem(
                         title = "关于落弦律",
                         icon = Icons.Filled.Info,
                         iconTint = IconGray,
                         onClick = onAbout,
                     )
+                }
+            }
+        }
+        item {
+            Column {
+                PreferenceGroupCaption("关注作者")
+                Spacer(modifier = Modifier.height(6.dp))
+                SettingsCard {
+                    PreferenceItem(
+                        title = "哔哩哔哩",
+                        summary = "使用教程与更新动态",
+                        icon = Icons.Filled.Person,
+                        iconTint = IconPink,
+                    ) {
+                        if (!openAuthor(context)) scope.launch {
+                            snackbarHostState.showSnackbar("无法打开主页，请在哔哩哔哩搜索 UID 498496565")
+                        }
+                    }
                 }
             }
         }
