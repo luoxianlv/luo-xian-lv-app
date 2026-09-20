@@ -16,7 +16,7 @@ android {
 
         // 本地模拟器构建指向宿主机上的 Rust 服务；
         // Release 构建用 -PupdateBaseUrl=https://... 覆盖
-        val updateBaseUrl = project.findProperty("updateBaseUrl") as String? ?: "https://luoxianlv.com"
+        val updateBaseUrl = project.findProperty("updateBaseUrl") as String? ?: "https://luoxianlv-api.admilk.cn"
         require(updateBaseUrl.matches(Regex("https?://[A-Za-z0-9.:-]+"))) { "updateBaseUrl must be an HTTP(S) origin" }
         buildConfigField("String", "UPDATE_BASE_URL", "\"$updateBaseUrl\"")
         val updateSource = project.findProperty("updateSource") as String? ?: "oss"

@@ -23,7 +23,7 @@ data class RemoteUiState(
     val loadingMore: Boolean = false,
     val downloading: Set<String> = emptySet(),
     val error: String? = null,
-    /** 下载成功的曲名：触发跳转曲库 + Snackbar，消费后置空 */
+    /** 下载成功只提示，不重载列表或改变导航；曲库通过 AppEvents 单独刷新。 */
     val downloaded: String? = null,
 ) {
     /** 当前实际渲染到列表的条目 */

@@ -38,7 +38,6 @@ import app.luoxianlv.ui.components.SnackbarNotice
 @Composable
 fun PlatformScreen(
     onBack: () -> Unit,
-    onDownloaded: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: DiscoverViewModel = viewModel(),
 ) {
@@ -46,11 +45,7 @@ fun PlatformScreen(
     var query by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) { vm.loadPublic() }
-    // 下载成功：提示 + 跳回曲库
-    SnackbarNotice(state.downloaded?.let { "已下载 $it" }, snackbarHostState) {
-        vm.ackDownloaded()
-        onDownloaded()
-    }
+    SnackbarNotice(state.downloaded?.let { "已加入曲库：$it" }, snackbarHostState, vm::ackDownloaded)
 
     Column(modifier = Modifier.fillMaxSize().padding(start = 8.dp, top = 4.dp, end = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -34,18 +34,13 @@ import app.luoxianlv.ui.theme.containerElevation
 @Composable
 fun DiscoverScreen(
     onSearch: () -> Unit,
-    onDownloaded: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: DiscoverViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.loadScores() }
-    // 下载成功：提示 + 跳回曲库
-    SnackbarNotice(state.downloaded?.let { "已下载 $it" }, snackbarHostState) {
-        vm.ackDownloaded()
-        onDownloaded()
-    }
+    SnackbarNotice(state.downloaded?.let { "已加入曲库：$it" }, snackbarHostState, vm::ackDownloaded)
 
     Column(modifier = Modifier.fillMaxSize().padding(start = 20.dp, top = 12.dp, end = 20.dp)) {
         PageTitle(

@@ -158,7 +158,6 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                         Routes.DISCOVER -> {
                             DiscoverScreen(
                                 onSearch = { subPage = Routes.SEARCH },
-                                onDownloaded = { goTab(Routes.LIBRARY) },
                                 snackbarHostState = snackbarHostState,
                             )
                         }
@@ -193,10 +192,6 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                 Routes.SEARCH -> {
                                     SearchScreen(
                                         onBack = { subPage = null },
-                                        onDownloaded = {
-                                            subPage = null
-                                            goTab(Routes.LIBRARY)
-                                        },
                                         snackbarHostState = snackbarHostState,
                                     )
                                 }
@@ -204,10 +199,6 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                 Routes.PLATFORM -> {
                                     PlatformScreen(
                                         onBack = { subPage = null },
-                                        onDownloaded = {
-                                            subPage = null
-                                            goTab(Routes.LIBRARY)
-                                        },
                                         snackbarHostState = snackbarHostState,
                                     )
                                 }
