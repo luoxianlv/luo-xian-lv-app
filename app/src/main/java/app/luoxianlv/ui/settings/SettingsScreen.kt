@@ -31,7 +31,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -42,27 +41,21 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.data.AccountSession
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.ui.components.ErrorDialogHost
+import app.luoxianlv.ui.components.IconBlue
+import app.luoxianlv.ui.components.IconCyan
+import app.luoxianlv.ui.components.IconGray
+import app.luoxianlv.ui.components.IconGreen
+import app.luoxianlv.ui.components.IconOrange
+import app.luoxianlv.ui.components.IconPink
+import app.luoxianlv.ui.components.IconTeal
+import app.luoxianlv.ui.components.IconUpdate
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.PageTitle
-import app.luoxianlv.ui.components.PreferenceDivider
 import app.luoxianlv.ui.components.PreferenceGroupCaption
 import app.luoxianlv.ui.components.PreferenceItem
 import app.luoxianlv.ui.components.PreferenceSwitchItem
 import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
-
-/**
- * 各组图标的颜色。QQ 设置的标志之一就是一组高饱和但不刺眼的彩色图标，
- * 这里给每一项固定一个色相，用户扫颜色就能定位功能。
- */
-private val IconBlue = Color(0xFF3E7BE0)
-private val IconCyan = Color(0xFF3FA8C9)
-private val IconOrange = Color(0xFFE8862E)
-private val IconGreen = Color(0xFF4CAF50)
-private val IconPink = Color(0xFFD8659E)
-private val IconTeal = Color(0xFF2FA3A0)
-private val IconGray = Color(0xFF7A8AA0)
-private val IconUpdate = Color(0xFF5B8DEF)
 
 /**
  * 设置页：QQ 式分组 —— 一组一张白卡，组标题小灰字贴在卡上方，
@@ -155,7 +148,6 @@ fun SettingsScreen(
                         iconTint = IconOrange,
                         onClick = onDiagnostics,
                     )
-                    PreferenceDivider()
                     PreferenceItem(
                         title = "忽略电池优化",
                         summary =
@@ -167,7 +159,6 @@ fun SettingsScreen(
                         icon = Icons.Filled.BatterySaver,
                         iconTint = IconGreen,
                     ) { KeepAlive.requestBatteryExemption(context) }
-                    PreferenceDivider()
                     PreferenceItem(
                         title = "播放通知",
                         summary =
@@ -187,7 +178,6 @@ fun SettingsScreen(
                             KeepAlive.openNotificationSettings(context)
                         }
                     }
-                    PreferenceDivider()
                     PreferenceItem(
                         title = "自启动与后台权限",
                         summary = "部分手机需在系统设置中允许后台运行",
@@ -211,7 +201,6 @@ fun SettingsScreen(
                         icon = Icons.Filled.SystemUpdate,
                         iconTint = IconUpdate,
                     )
-                    PreferenceDivider()
                     PreferenceItem(
                         title = "关于落弦律",
                         icon = Icons.Filled.Info,

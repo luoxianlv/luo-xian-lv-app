@@ -15,7 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -25,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.luoxianlv.ui.theme.containerElevation
 
@@ -56,11 +54,24 @@ fun SettingsCard(
 }
 
 /**
+ * 设置项图标色板：QQ 设置的标志之一就是一组高饱和但不刺眼的彩色图标，
+ * 给每一项固定一个色相，用户扫颜色就能定位功能。
+ */
+val IconBlue = Color(0xFF3E7BE0)
+val IconCyan = Color(0xFF3FA8C9)
+val IconOrange = Color(0xFFE8862E)
+val IconGreen = Color(0xFF4CAF50)
+val IconPink = Color(0xFFD8659E)
+val IconTeal = Color(0xFF2FA3A0)
+val IconGray = Color(0xFF7A8AA0)
+val IconUpdate = Color(0xFF5B8DEF)
+
+/**
  * 分组标题：卡片上方的小灰字。
  *
  * 配合「一组一张卡」用：标题在卡外贴着卡顶，组内各行不再另带标题，
- * 版面才是 QQ 那种「标题 + 白卡」的上下关系。播放诊断页那种
- * 卡片很多的密集页面仍用 [PreferenceSection]（标题留在卡内省纵向空间）。
+ * 版面才是 QQ 那种「标题 + 白卡」的上下关系。设置主界面、播放诊断页
+ * 都遵循这个语言。
  */
 @Composable
 fun PreferenceGroupCaption(
@@ -72,43 +83,6 @@ fun PreferenceGroupCaption(
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier.padding(start = 6.dp, top = 2.dp),
-    )
-}
-
-/**
- * 卡片内的分组：一个小标题 + 若干行。
- *
- * 用于**单卡多组**的页面（播放诊断）：标题标的是卡片里的这几行，所以放进卡片。
- * 组与组之间用 [PreferenceDivider] 分隔，第 1 组前面不用加。
- *
- * 「我的/设置」这种一组一张卡的页面不要用这个，用 [PreferenceGroupCaption]。
- */
-@Composable
-fun PreferenceSection(
-    title: String,
-    content: @Composable () -> Unit,
-) {
-    Text(
-        title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 2.dp),
-    )
-    content()
-}
-
-/**
- * 行与行 / 组与组之间的分割线。
- *
- * 默认左右各留 [horizontalPadding]（16dp，等于卡片内容边距）：一条居中的
- * 悬浮短线，两端都有呼吸感，不顶到卡片边缘。
- * 想铺满整行传 <code>0.dp</code>；想对齐正文再加大。
- */
-@Composable
-fun PreferenceDivider(horizontalPadding: Dp = 16.dp) {
-    HorizontalDivider(
-        modifier = Modifier.padding(horizontal = horizontalPadding),
-        color = MaterialTheme.colorScheme.outlineVariant,
     )
 }
 
@@ -139,20 +113,25 @@ private fun PreferenceIconChip(
     }
 }
 
-/** 偏好项：图标（可选）+ 标题 + 可选摘要 + 右侧箭头。 */
+/**
+ * 偏好项：图标（可选）+ 标题 + 可选摘要 + 右侧箭头。
+ *
+ * [onClick] 传 null 表示只读行（如播放诊断的状态读出）：
+ * 整行不可点击、无箭头，避免点了没反应的假入口。
+ */
 @Composable
 fun PreferenceItem(
     title: String,
     summary: String? = null,
     icon: ImageVector? = null,
     iconTint: Color = MaterialTheme.colorScheme.primary,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -171,11 +150,13 @@ fun PreferenceItem(
                 )
             }
         }
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (onClick != null) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
