@@ -1,3 +1,6 @@
+# 已导入友盟后台的事件定义（后台不可删除，以下两个已从代码移除，将恒为 0 次）：
+# register_success —— 注册流程在网站完成，App 内不可达
+# update_later —— 更新弹窗实际不向用户提供「稍后再说」入口
 play_start,开始演奏
 play_finish,完成演奏
 play_stop,手动停止演奏

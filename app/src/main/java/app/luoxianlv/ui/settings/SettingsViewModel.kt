@@ -94,7 +94,6 @@ class SettingsViewModel(
             result
                 .onSuccess { login ->
                     sessionStore.save(login.session)
-                    Analytics.logEvent(app, "register_success") // 埋点：注册网站账号成功
                     refresh()
                     _state.update { it.copy(registered = true, message = "注册成功") }
                 }.onFailure { e -> _state.update { it.copy(error = e.message ?: "注册失败") } }

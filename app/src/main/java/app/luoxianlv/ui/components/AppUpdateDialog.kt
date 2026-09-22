@@ -68,7 +68,6 @@ fun AppUpdateDialog(state: AppUpdateState, onDismiss: () -> Unit, onSource: (Str
                         Text(when { state.downloading -> "正在下载…"; state.ready -> "安装更新"; state.error != null -> "重新下载"; else -> "立即更新" })
                     }
                     if (dismissible) TextButton(onClick = {
-                        Analytics.logEvent(context, "update_later") // 埋点：更新弹窗点「稍后再说」
                         onDismiss()
                     }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("稍后再说") }
                 }
