@@ -23,10 +23,23 @@ import androidx.compose.ui.unit.dp
 const val ON_BACKDROP_SURFACE_ALPHA = 0.55f
 
 /**
+ * 深色模式的容器不透明度。
+ *
+ * 比浅色的 0.55 高一档，因为深色底下容器的余量本来就小：
+ * 渐变底 (#1B2436..#141A28) 与容器基色 (#3B4863) 的明度差只有二三十个色阶，
+ * 再压到 0.55 就快分不出「板子」和「洞」了。0.62 叠出来的约是 (49,62,88)，
+ * 与底色拉开一档，同时渐变仍然透得出来。
+ *
+ * 下限同样受文字可读性约束：[PlayerTextSecondaryNight] 压在混合色上约 5:1。
+ */
+const val ON_BACKDROP_SURFACE_ALPHA_DARK = 0.62f
+
+/**
  * 控件容器当前是否半透明。
  *
  * 判据取 `surface` 的 alpha，因为 [LuoXianLvTheme] 统一把 surface 压到
- * [ON_BACKDROP_SURFACE_ALPHA]。控件透明度调节移除后这恒为 true，
+ * [ON_BACKDROP_SURFACE_ALPHA]（深色下是 [ON_BACKDROP_SURFACE_ALPHA_DARK]）。
+ * 控件透明度调节移除后这恒为 true，
  * 保留判断是为了将来重新引入不透明容器时，各卡片自动恢复阴影。
  */
 @Composable

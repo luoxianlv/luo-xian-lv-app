@@ -34,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.ui.theme.OnBackdropContent
-import app.luoxianlv.ui.theme.PlayerDanger
 
 // 判定"已读到底部"的剩余像素余量：到底前的吸附距离内都算已读，
 // 避免最后一点内容被圆角/内边距遮住时按钮死活点不亮。
@@ -181,7 +180,9 @@ fun DisclaimerScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = onDecline, modifier = Modifier.weight(1f)) {
-                    Text("不同意并退出", color = PlayerDanger)
+                    // 走主题的 error 角色而不是写死的 PlayerDanger：
+                    // 那个值是浅色专用的 #D95B67，压在深藏青渐变上只有 3.4:1。
+                    Text("不同意并退出", color = MaterialTheme.colorScheme.error)
                 }
                 Button(
                     onClick = onAgree,

@@ -4,11 +4,11 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.Intent
-import android.hardware.display.DisplayManager
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Point
 import android.graphics.Rect
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -40,6 +40,7 @@ class MusicAccessibilityService : AccessibilityService() {
         val playbackDisplay: Triple<Int, Int, Int>?,
         val lastCoordinates: String?,
     )
+
     companion object {
         var instance: MusicAccessibilityService? = null
             private set
@@ -86,24 +87,31 @@ class MusicAccessibilityService : AccessibilityService() {
     private var recoveryAttempts = 0
     private var recoveryWasPlaying = false
     private val displayStability = DisplayStability()
-    private val monitorDisplay = object : Runnable {
-        override fun run() {
-            if ((playing || preparing) && !recoveringDisplay && playbackDisplay != displayState()) beginDisplayRecovery()
-            handler.postDelayed(this, 150)
-        }
-    }
-    private val displayListener = object : DisplayManager.DisplayListener {
-        override fun onDisplayAdded(displayId: Int) = Unit
-        override fun onDisplayRemoved(displayId: Int) = Unit
-        override fun onDisplayChanged(displayId: Int) {
-            if (displayId == Display.DEFAULT_DISPLAY && (playing || preparing) && playbackDisplay != displayState()) {
-                beginDisplayRecovery()
+    private val monitorDisplay =
+        object : Runnable {
+            override fun run() {
+                if ((playing || preparing) && !recoveringDisplay && playbackDisplay != displayState()) beginDisplayRecovery()
+                handler.postDelayed(this, 150)
             }
         }
-    }
+    private val displayListener =
+        object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = Unit
+
+            override fun onDisplayRemoved(displayId: Int) = Unit
+
+            override fun onDisplayChanged(displayId: Int) {
+                if (displayId == Display.DEFAULT_DISPLAY && (playing || preparing) && playbackDisplay != displayState()) {
+                    beginDisplayRecovery()
+                }
+            }
+        }
 
     private fun beginDisplayRecovery() {
-        PlaybackDebugLog.log("display recovery begin playback=$playbackDisplay current=" + displayState() + " wasPlaying=" + playing + " preparing=" + preparing)
+        PlaybackDebugLog.log(
+            "display recovery begin playback=$playbackDisplay current=" + displayState() + " wasPlaying=" + playing + " preparing=" +
+                preparing,
+        )
         if (recoveringDisplay) return
         recoveryWasPlaying = playing || preparing
         baseMs = positionMs
@@ -120,42 +128,47 @@ class MusicAccessibilityService : AccessibilityService() {
         handler.post(recoverDisplay)
     }
 
-    private val recoverDisplay = object : Runnable {
-        override fun run() {
-            if (!recoveringDisplay) return
-            val current = displayState()
-            recoveryAttempts++
-            if (recoveryAttempts > 30) {
-                finishDisplayRecovery(false)
-                error = "屏幕或琴键识别未稳定，请保持游戏界面可见后重试"
-                floating.refresh()
-                return
-            }
-            // The logical display and screenshot producer settle at different times.
-            if (!displayStability.ready(current, SystemClock.uptimeMillis())) {
-                handler.postDelayed(this, 120)
-                return
-            }
-            playbackDisplay = current
-            val token = ++generation
-            var completed = false
-            val timeout = Runnable {
-                if (token == generation && recoveringDisplay && !completed) {
+    private val recoverDisplay =
+        object : Runnable {
+            override fun run() {
+                if (!recoveringDisplay) return
+                val current = displayState()
+                recoveryAttempts++
+                if (recoveryAttempts > 30) {
+                    finishDisplayRecovery(false)
+                    error = "屏幕或琴键识别未稳定，请保持游戏界面可见后重试"
+                    floating.refresh()
+                    return
+                }
+                // The logical display and screenshot producer settle at different times.
+                if (!displayStability.ready(current, SystemClock.uptimeMillis())) {
+                    handler.postDelayed(this, 120)
+                    return
+                }
+                playbackDisplay = current
+                val token = ++generation
+                var completed = false
+                val timeout =
+                    Runnable {
+                        if (token == generation && recoveringDisplay && !completed) {
+                            completed = true
+                            generation++
+                            handler.postDelayed(this, 500)
+                        }
+                    }
+                handler.postDelayed(timeout, 2000)
+                syncWithScreen(token) { recognized ->
+                    if (token != generation || !recoveringDisplay || completed) return@syncWithScreen
                     completed = true
-                    generation++
-                    handler.postDelayed(this, 500)
+                    handler.removeCallbacks(timeout)
+                    if (recognized) {
+                        finishDisplayRecovery(recoveryWasPlaying)
+                    } else {
+                        handler.postDelayed(this, if (recoveryAttempts < 10) 350 else 1000)
+                    }
                 }
             }
-            handler.postDelayed(timeout, 2000)
-            syncWithScreen(token) { recognized ->
-                if (token != generation || !recoveringDisplay || completed) return@syncWithScreen
-                completed = true
-                handler.removeCallbacks(timeout)
-                if (recognized) finishDisplayRecovery(recoveryWasPlaying)
-                else handler.postDelayed(this, if (recoveryAttempts < 10) 350 else 1000)
-            }
         }
-    }
 
     private fun finishDisplayRecovery(resume: Boolean) {
         PlaybackDebugLog.log("display recovery finish resume=$resume")
@@ -181,6 +194,7 @@ class MusicAccessibilityService : AccessibilityService() {
         display.getRealSize(size)
         return Triple(size.x, size.y, display.rotation)
     }
+
     val durationMs get() = timeline.durationMs
     val positionMs get() = (baseMs + if (playing) ((SystemClock.uptimeMillis() - anchor) * speed).toLong() else 0).coerceIn(0, durationMs)
     val modeLabel get() = pitchMode.label + if (halfToneOn) " · 半音" else ""
@@ -188,7 +202,9 @@ class MusicAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         PlaybackDebugLog.init(this)
-        PlaybackDebugLog.log("service connected ${Build.MANUFACTURER}/${Build.MODEL} sdk=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) display=${displayState()}")
+        PlaybackDebugLog.log(
+            "service connected ${Build.MANUFACTURER}/${Build.MODEL} sdk=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) display=${displayState()}",
+        )
         repository = SongRepository(this)
         keys = ConfigStore.load(this)
         song = repository.selected()
@@ -246,15 +262,16 @@ class MusicAccessibilityService : AccessibilityService() {
             preparing = true
             val token = ++generation
             floating.refresh()
-            val timeout = Runnable {
-                if (token == generation && preparing) {
-                    generation++
-                    preparing = false
-                    error = "截图识别超时，请重试"
-                    PlaybackDebugLog.log("initial recognition timeout")
-                    floating.refresh()
+            val timeout =
+                Runnable {
+                    if (token == generation && preparing) {
+                        generation++
+                        preparing = false
+                        error = "截图识别超时，请重试"
+                        PlaybackDebugLog.log("initial recognition timeout")
+                        floating.refresh()
+                    }
                 }
-            }
             handler.postDelayed(timeout, 2500)
             syncWithScreen(token) { recognized ->
                 handler.removeCallbacks(timeout)
@@ -289,70 +306,87 @@ class MusicAccessibilityService : AccessibilityService() {
 
     /** Takes a screenshot, recognizes the keyboard, persists the layout and
      * syncs the pitch state. The callback runs on the main thread. */
-    private fun syncWithScreen(token: Int, done: (Boolean) -> Unit) {
+    private fun syncWithScreen(
+        token: Int,
+        done: (Boolean) -> Unit,
+    ) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             done(false)
             return
         }
         try {
-        takeScreenshot(
-            Display.DEFAULT_DISPLAY,
-            mainExecutor,
-            object : TakeScreenshotCallback {
-                override fun onSuccess(screenshot: ScreenshotResult) {
-                    val currentDisplay = displayState()
-                    if (token != generation || playbackDisplay != currentDisplay ||
-                        screenshot.hardwareBuffer.width != currentDisplay.first ||
-                        screenshot.hardwareBuffer.height != currentDisplay.second) {
-                        PlaybackDebugLog.log("screenshot mismatch tokenAlive=${token == generation} playback=$playbackDisplay current=$currentDisplay shot=${screenshot.hardwareBuffer.width}x${screenshot.hardwareBuffer.height}")
-                        screenshot.hardwareBuffer.close()
-                        done(false)
-                        return
+            takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(screenshot: ScreenshotResult) {
+                        val currentDisplay = displayState()
+                        if (token != generation || playbackDisplay != currentDisplay ||
+                            screenshot.hardwareBuffer.width != currentDisplay.first ||
+                            screenshot.hardwareBuffer.height != currentDisplay.second
+                        ) {
+                            PlaybackDebugLog.log(
+                                "screenshot mismatch tokenAlive=${token == generation} playback=$playbackDisplay current=$currentDisplay shot=${screenshot.hardwareBuffer.width}x${screenshot.hardwareBuffer.height}",
+                            )
+                            screenshot.hardwareBuffer.close()
+                            done(false)
+                            return
+                        }
+                        val started = SystemClock.uptimeMillis()
+                        val result =
+                            runCatching {
+                                val hardware =
+                                    try {
+                                        Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                                    } finally {
+                                        screenshot.hardwareBuffer.close()
+                                    }
+                                val bitmap =
+                                    try {
+                                        hardware?.copy(Bitmap.Config.ARGB_8888, false)
+                                    } finally {
+                                        hardware?.recycle()
+                                    }
+                                bitmap?.let(PlaybackDebugLog::saveScreenshot)
+                                PlaybackDebugLog.log("screenshot ${bitmap?.width}x${bitmap?.height} analyze start")
+                                try {
+                                    bitmap?.let(ScreenRecognizer::fromBitmap)
+                                } finally {
+                                    bitmap?.recycle()
+                                }
+                            }.onFailure {
+                                Log.w(TAG, "截图识别失败", it)
+                                PlaybackDebugLog.log("recognize failure: ${it.message}")
+                            }.getOrNull()
+                        PlaybackDebugLog.log("recognition elapsedMs=${SystemClock.uptimeMillis() - started}")
+                        PlaybackDebugLog.log(
+                            result?.let { r ->
+                                "recognized noteX=" + r.layout.noteX.joinToString(",") { v -> "%.3f".format(v) } +
+                                    " noteY=" + "%.3f".format(r.layout.noteY) + " mode=" + r.mode + " half=" + r.halfTone
+                            } ?: "recognize returned null",
+                        )
+                        if (token != generation || playbackDisplay != displayState()) {
+                            done(false)
+                            return
+                        }
+                        if (result != null && PlaybackCoordinates.validLayout(result.layout)) {
+                            keys = result.layout
+                            ConfigStore.save(this@MusicAccessibilityService, result.layout)
+                            result.mode?.let { pitchMode = it }
+                            result.halfTone?.let { halfToneOn = it }
+                            Log.i(TAG, "按键识别成功 mode=${result.mode} half=${result.halfTone}")
+                            floating.refresh()
+                        }
+                        done(result != null && PlaybackCoordinates.validLayout(result.layout))
                     }
-                    val started = SystemClock.uptimeMillis()
-                    val result = runCatching {
-                        val hardware = try {
-                            Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                        } finally { screenshot.hardwareBuffer.close() }
-                        val bitmap = try { hardware?.copy(Bitmap.Config.ARGB_8888, false) }
-                            finally { hardware?.recycle() }
-                        bitmap?.let(PlaybackDebugLog::saveScreenshot)
-                        PlaybackDebugLog.log("screenshot ${bitmap?.width}x${bitmap?.height} analyze start")
-                        try { bitmap?.let(ScreenRecognizer::fromBitmap) }
-                        finally { bitmap?.recycle() }
-                    }.onFailure {
-                        Log.w(TAG, "截图识别失败", it)
-                        PlaybackDebugLog.log("recognize failure: ${it.message}")
-                    }.getOrNull()
-                    PlaybackDebugLog.log("recognition elapsedMs=${SystemClock.uptimeMillis() - started}")
-                    PlaybackDebugLog.log(
-                        result?.let { r ->
-                            "recognized noteX=" + r.layout.noteX.joinToString(",") { v -> "%.3f".format(v) } +
-                                " noteY=" + "%.3f".format(r.layout.noteY) + " mode=" + r.mode + " half=" + r.halfTone
-                        } ?: "recognize returned null",
-                    )
-                    if (token != generation || playbackDisplay != displayState()) {
-                        done(false)
-                        return
-                    }
-                    if (result != null && PlaybackCoordinates.validLayout(result.layout)) {
-                        keys = result.layout
-                        ConfigStore.save(this@MusicAccessibilityService, result.layout)
-                        result.mode?.let { pitchMode = it }
-                        result.halfTone?.let { halfToneOn = it }
-                        Log.i(TAG, "按键识别成功 mode=${result.mode} half=${result.halfTone}")
-                        floating.refresh()
-                    }
-                    done(result != null && PlaybackCoordinates.validLayout(result.layout))
-                }
 
-                override fun onFailure(errorCode: Int) {
-                    PlaybackDebugLog.log("screenshot failure errorCode=$errorCode")
-                    Log.w(TAG, "截图失败 errorCode=$errorCode")
-                    done(false)
-                }
-            },
-        )
+                    override fun onFailure(errorCode: Int) {
+                        PlaybackDebugLog.log("screenshot failure errorCode=$errorCode")
+                        Log.w(TAG, "截图失败 errorCode=$errorCode")
+                        done(false)
+                    }
+                },
+            )
         } catch (failure: Exception) {
             Log.w(TAG, "无法请求截图", failure)
             done(false)
@@ -407,13 +441,26 @@ class MusicAccessibilityService : AccessibilityService() {
     val floatingVisible: Boolean
         get() = ::floating.isInitialized && floating.isVisible
 
+    /**
+     * 深色模式切换后让悬浮窗重绘一次。
+     *
+     * 悬浮窗是本服务里的独立系统窗口，不跟着 Activity 重组，
+     * 所以主题变更得显式通知它（见 `FloatingControls.refreshTheme`）。
+     */
+    fun refreshFloatingTheme() {
+        if (::floating.isInitialized) floating.refreshTheme()
+    }
+
     fun showFloating(enabled: Boolean) {
         repository.floatingEnabled = enabled
         if (enabled) {
             floating.show()
             runCatching {
-                if (Build.VERSION.SDK_INT >= 26) startForegroundService(Intent(this, PlaybackForegroundService::class.java))
-                else startService(Intent(this, PlaybackForegroundService::class.java))
+                if (Build.VERSION.SDK_INT >= 26) {
+                    startForegroundService(Intent(this, PlaybackForegroundService::class.java))
+                } else {
+                    startService(Intent(this, PlaybackForegroundService::class.java))
+                }
             }.onFailure { Log.w(TAG, "启动播放前台服务失败", it) }
         } else {
             floating.hide()
@@ -430,17 +477,18 @@ class MusicAccessibilityService : AccessibilityService() {
         return Rect(0, 0, width, height)
     }
 
-    fun diagnostics(): Diagnostics = Diagnostics(
-        serviceEnabled = isEnabled(this),
-        playing = playing,
-        preparing = preparing,
-        songTitle = if (::song.isInitialized) song.title else "未选择",
-        display = runCatching { displayState() }.getOrNull(),
-        error = error,
-        gestureFailure = gestureFailure,
-        playbackDisplay = playbackDisplay,
-        lastCoordinates = lastCoordinates,
-    )
+    fun diagnostics(): Diagnostics =
+        Diagnostics(
+            serviceEnabled = isEnabled(this),
+            playing = playing,
+            preparing = preparing,
+            songTitle = if (::song.isInitialized) song.title else "未选择",
+            display = runCatching { displayState() }.getOrNull(),
+            error = error,
+            gestureFailure = gestureFailure,
+            playbackDisplay = playbackDisplay,
+            lastCoordinates = lastCoordinates,
+        )
 
     private fun drive() {
         handler.removeCallbacks(next)
@@ -499,6 +547,7 @@ class MusicAccessibilityService : AccessibilityService() {
         done: (Boolean) -> Unit,
     ) {
         val token = generation
+
         fun half() {
             if (token != generation) return
             if (halfToneOn == note.halfTone) {
@@ -567,7 +616,9 @@ class MusicAccessibilityService : AccessibilityService() {
         val py = y * (bounds.height() - 1).coerceAtLeast(1)
         gestureFailure = null
         lastCoordinates = "ratio=($x,$y) px=($px,$py) display=$currentDisplay"
-        PlaybackDebugLog.log("press ratio=($x,$y) -> ${px.toInt()},${py.toInt()} bounds=${bounds.width()}x${bounds.height()} display=$currentDisplay duration=$duration")
+        PlaybackDebugLog.log(
+            "press ratio=($x,$y) -> ${px.toInt()},${py.toInt()} bounds=${bounds.width()}x${bounds.height()} display=$currentDisplay duration=$duration",
+        )
         val path = Path().apply { moveTo(px, py) }
         var completed = false
         val token = generation
@@ -588,33 +639,33 @@ class MusicAccessibilityService : AccessibilityService() {
         // by Android/OEM accessibility implementations and causes cancellation.
         val length = duration.coerceIn(1, GestureDescription.getMaxGestureDuration())
         try {
-        val stroke = GestureDescription.StrokeDescription(path, 0, length, false)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        val accepted =
-            dispatchGesture(
-                gesture,
-                object : GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription) {
-                        if (token != generation) return
-                        PlaybackDebugLog.log("gesture completed at ${px.toInt()},${py.toInt()}")
-                        floating.mark(px, py)
-                        finish(true)
-                    }
+            val stroke = GestureDescription.StrokeDescription(path, 0, length, false)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            val accepted =
+                dispatchGesture(
+                    gesture,
+                    object : GestureResultCallback() {
+                        override fun onCompleted(gestureDescription: GestureDescription) {
+                            if (token != generation) return
+                            PlaybackDebugLog.log("gesture completed at ${px.toInt()},${py.toInt()}")
+                            floating.mark(px, py)
+                            finish(true)
+                        }
 
-                    override fun onCancelled(gestureDescription: GestureDescription) {
-                        if (token != generation) return
-                        PlaybackDebugLog.log("gesture cancelled at ${px.toInt()},${py.toInt()}")
-                        gestureFailure = "手势被系统取消 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
-                        finish(false)
-                    }
-                },
-                handler,
-            )
-        if (!accepted) {
-            PlaybackDebugLog.log("gesture rejected by system at ${px.toInt()},${py.toInt()}")
-            gestureFailure = "系统拒绝手势 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
-            finish(false)
-        }
+                        override fun onCancelled(gestureDescription: GestureDescription) {
+                            if (token != generation) return
+                            PlaybackDebugLog.log("gesture cancelled at ${px.toInt()},${py.toInt()}")
+                            gestureFailure = "手势被系统取消 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
+                            finish(false)
+                        }
+                    },
+                    handler,
+                )
+            if (!accepted) {
+                PlaybackDebugLog.log("gesture rejected by system at ${px.toInt()},${py.toInt()}")
+                gestureFailure = "系统拒绝手势 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
+                finish(false)
+            }
         } catch (failure: Exception) {
             Log.w(TAG, "无法发送播放手势", failure)
             PlaybackDebugLog.log("dispatch exception: ${failure.message}")

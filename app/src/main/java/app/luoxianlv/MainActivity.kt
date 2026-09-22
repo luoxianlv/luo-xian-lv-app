@@ -7,6 +7,7 @@ import android.provider.Settings
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
@@ -65,9 +66,11 @@ class MainActivity : AppCompatActivity() {
         showOnboarding = isFirstLaunch() && !MusicAccessibilityService.isEnabled(this)
         setContent {
             val appearance by AppearanceStore.settings.collectAsState()
-            // 主题不再吃外观设置：容器半透明固定（见 Theme.kt），
-            // appearance 这里只驱动飘雪动效。
-            LuoXianLvTheme {
+            // 深浅色：偏好（跟随系统 / 浅色 / 深色）叠加系统设置算出最终结果。
+            // 主题只吃这一个入参；容器半透明固定，见 Theme.kt。
+            LuoXianLvTheme(
+                darkTheme = appearance.themeMode.isDark(isSystemInDarkTheme()),
+            ) {
                 if (!disclaimerAccepted) {
                     DisclaimerScreen(
                         text = disclaimerText,
@@ -227,7 +230,10 @@ private fun BatteryExemptionDialog(
 }
 
 @Composable
-private fun AutoStartDialog(onAllow: () -> Unit, onLater: () -> Unit) {
+private fun AutoStartDialog(
+    onAllow: () -> Unit,
+    onLater: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onLater,
         title = { Text("自启动设置") },

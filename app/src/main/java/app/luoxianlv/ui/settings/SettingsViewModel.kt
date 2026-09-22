@@ -8,6 +8,7 @@ import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.KeyLayout
 import app.luoxianlv.data.SessionStore
+import app.luoxianlv.data.ThemeMode
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.service.KeepAliveStatus
 import app.luoxianlv.service.MusicAccessibilityService
@@ -104,6 +105,20 @@ class SettingsViewModel(
         val next = _state.value.appearance.copy(snowEnabled = enabled)
         AppearanceStore.save(app, next)
         _state.update { it.copy(appearance = next) }
+    }
+
+    /**
+     * 切换深浅色模式。
+     *
+     * 只写偏好即可：`MainActivity` 收着 `AppearanceStore.settings` 这个 Flow，
+     * 存盘时发的值会直接驱动主题重组，不需要这里再通知 Activity。
+     */
+    fun setThemeMode(mode: ThemeMode) {
+        val next = _state.value.appearance.copy(themeMode = mode)
+        AppearanceStore.save(app, next)
+        _state.update { it.copy(appearance = next) }
+        // 悬浮窗是服务里的独立窗口，不像 Compose 那样跟着偏好流重组，单独通知一次。
+        MusicAccessibilityService.instance?.refreshFloatingTheme()
     }
 
     /** 开关自动检查更新：直接改偏好并落盘。 */

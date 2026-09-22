@@ -1,0 +1,24 @@
+<resources>
+    <!--
+      深色下重定义整个 AppTheme。
+
+      同名 style 在不同配置目录里是**整体替换**而不是逐项合并，
+      所以这里必须把 values/styles.xml 的每一项再写一遍，只把系统栏图标反过来。
+      别把这份删掉当成多余重复 —— 少了它，深色启动时状态栏会是「深底 + 黑图标」。
+    -->
+    <style name="AppTheme" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="colorPrimary">#0A84FF</item>
+        <item name="colorPrimaryVariant">#006EDB</item>
+        <item name="colorSecondary">#238C68</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="android:colorAccent">#007AFF</item>
+        <item name="android:windowBackground">@color/app_window_background</item>
+        <item name="android:navigationBarColor">@color/app_navigation_bar</item>
+        <item name="android:statusBarColor">@color/app_status_bar</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="shapeAppearanceSmallComponent">@style/PlayerShape</item>
+        <item name="shapeAppearanceMediumComponent">@style/PlayerShape</item>
+    </style>
+</resources>

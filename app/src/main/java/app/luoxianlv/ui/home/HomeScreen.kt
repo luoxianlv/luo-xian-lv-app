@@ -87,6 +87,7 @@ import app.luoxianlv.ui.components.SmallSwitch
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.components.decodeSampleSize
 import app.luoxianlv.ui.library.LibraryViewModel
+import app.luoxianlv.ui.theme.LocalBackdropPalette
 import app.luoxianlv.ui.theme.OnBackdropContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -164,11 +165,10 @@ fun HomeScreen(
             //
             // 内部再按参考实现的 HomeContentPanel 分配高度：
             // 插画按可用高度取比例，信息区至少拿到剩余高度，于是整列总被填满。
-            // 渐变三站 = 原插画渐变取值（深色主题下参考实现另有一套，我们只做浅色）。
-            val cardBrush =
-                Brush.linearGradient(
-                    listOf(Color(0xFF8FD8F7), Color(0xFFDCE6F2), Color(0xFFF4DDEB)),
-                )
+            // 渐变三站 = 原插画渐变取值，深浅各一套（见 theme/Backdrop.kt 的 heroBrush）：
+            // 深色版保留同一组「蓝 → 灰 → 粉」色相，只是压暗降饱和，
+            // 换主题时整张卡还是同一种光，而不是另一套设计。
+            val cardBrush = LocalBackdropPalette.current.heroBrush
             BoxWithConstraints(
                 modifier =
                     Modifier
@@ -590,13 +590,19 @@ private fun HomeOverview(
         Text(
             text = greeting,
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // 这两行与标题一样，直接坐在内容卡的渐变上，不是坐在容器里：
+            // 用「压在底上」的次级字色（OnBackdropContent 降一档），
+            // 而不是为容器准备的 onSurfaceVariant —— 后者在深色渐变上偏暗。
+            color = OnBackdropContent.copy(alpha = 0.72f),
         )
         Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = headline,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
+            // 必须显式给色：不指定时吃 LocalContentColor 的默认值（Color.Black），
+            // 深色下就是黑字压深卡，整句话直接消失。
+            color = OnBackdropContent,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -623,7 +629,7 @@ private fun HomeOverview(
                 Text(
                     text = statusText,
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = OnBackdropContent.copy(alpha = 0.72f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -706,7 +712,8 @@ private fun HomePageSettings(
     var editing by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { menu = true }) {
-            Icon(Icons.Filled.Tune, contentDescription = "首页设置")
+            // 同上：图标直接压在内容卡渐变上，不能吃默认的黑。
+            Icon(Icons.Filled.Tune, contentDescription = "首页设置", tint = OnBackdropContent)
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(
