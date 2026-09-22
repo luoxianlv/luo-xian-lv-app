@@ -28,6 +28,15 @@ import androidx.compose.ui.unit.dp
 import app.luoxianlv.ui.theme.containerElevation
 
 /**
+ * 分组卡的圆角。
+ *
+ * 单独抽成常量是因为「一张卡」不止一种拼法：[SettingsCard] 用 `Card` 的 shape 一次性画出来，
+ * 而惰性列表（见 `RemoteScoreList`）得按行拼 —— 首行给上圆角、末行给下圆角。
+ * 两种拼法必须用同一个值，否则同一页上的卡片圆角会对不齐。
+ */
+val GroupCardCornerRadius = 20.dp
+
+/**
  * 设置页分组卡：**一组一张白卡**，卡与卡之间的缝隙露出渐变底。
  *
  * QQ 设置的版面语言：图标行归拢进圆角白卡，组与组用留白分开，
@@ -45,7 +54,7 @@ fun SettingsCard(
 ) {
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(GroupCardCornerRadius),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = containerElevation(),
     ) {
