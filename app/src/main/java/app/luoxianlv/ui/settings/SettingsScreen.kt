@@ -43,7 +43,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,6 +73,7 @@ import app.luoxianlv.ui.components.PreferenceItem
 import app.luoxianlv.ui.components.PreferenceSwitchItem
 import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
+import kotlinx.coroutines.launch
 
 /**
  * 设置页：QQ 式分组 —— 一组一张白卡，组标题小灰字贴在卡上方，
@@ -228,7 +228,7 @@ fun SettingsScreen(
                         icon = Icons.Filled.SystemUpdate,
                         iconTint = IconUpdate,
                     )
-                    */
+                     */
                     PreferenceItem(
                         title = "关于落弦律",
                         icon = Icons.Filled.Info,
@@ -249,8 +249,10 @@ fun SettingsScreen(
                         icon = Icons.Filled.Person,
                         iconTint = IconPink,
                     ) {
-                        if (!openAuthor(context)) scope.launch {
-                            snackbarHostState.showSnackbar("无法打开主页，请在哔哩哔哩搜索 UID 498496565")
+                        if (!openAuthor(context)) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("无法打开主页，请在哔哩哔哩搜索 UID 498496565")
+                            }
                         }
                     }
                 }

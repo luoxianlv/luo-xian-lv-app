@@ -230,7 +230,10 @@ private fun BatteryExemptionDialog(
 }
 
 @Composable
-private fun AutoStartDialog(onAllow: () -> Unit, onLater: () -> Unit) {
+private fun AutoStartDialog(
+    onAllow: () -> Unit,
+    onLater: () -> Unit,
+) {
     AlertDialog(
         onDismissRequest = onLater,
         title = { Text("自启动设置") },
