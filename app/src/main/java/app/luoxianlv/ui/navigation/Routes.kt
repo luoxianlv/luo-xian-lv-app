@@ -13,7 +13,6 @@ object Routes {
     const val SEARCH = "search"
     const val PLATFORM = "platform"
     const val LOGIN = "login"
-    const val REGISTER = "register"
     const val ABOUT = "about"
     const val DIAGNOSTICS = "diagnostics"
 

@@ -153,29 +153,6 @@ class UpdateManager(
         }
     }
 
-    fun register(
-        username: String,
-        email: String,
-        password: String,
-        code: String,
-        nickname: String,
-        onResult: (Result<LoginResult>) -> Unit,
-    ) {
-        background(onResult) {
-            val body =
-                JSONObject()
-                    .put(
-                        "username",
-                        username,
-                    ).put("email", email)
-                    .put("password", password)
-                    .put("code", code)
-                    .put("nickname", nickname)
-            val root = JSONObject(postJson("$baseUrl/api/auth/register", body.toString()))
-            LoginResult(parseAccountSession(root))
-        }
-    }
-
     fun profile(
         accessToken: String,
         onResult: (Result<JSONObject>) -> Unit,

@@ -36,7 +36,6 @@ import app.luoxianlv.ui.importer.ImportScreen
 import app.luoxianlv.ui.library.LibraryScreen
 import app.luoxianlv.ui.settings.AboutScreen
 import app.luoxianlv.ui.settings.LoginScreen
-import app.luoxianlv.ui.settings.RegisterScreen
 import app.luoxianlv.ui.settings.SettingsScreen
 import app.luoxianlv.ui.settings.PlaybackDiagnosticsScreen
 import app.luoxianlv.ui.theme.GradientBackdrop
@@ -56,7 +55,7 @@ private val tabs = listOf(Routes.HOME, Routes.LIBRARY, Routes.DISCOVER, Routes.S
 
 /** 子页面（覆盖层，不参与手势滑动） */
 private val subPages =
-    listOf(Routes.SEARCH, Routes.PLATFORM, Routes.LOGIN, Routes.REGISTER, Routes.ABOUT, Routes.IMPORT, Routes.DIAGNOSTICS)
+    listOf(Routes.SEARCH, Routes.PLATFORM, Routes.LOGIN, Routes.ABOUT, Routes.IMPORT, Routes.DIAGNOSTICS)
 
 /** 「我的」在 [tabs] 中的下标：它显示时底部导航栏要隐藏。 */
 private val HOME_INDEX = tabs.indexOf(Routes.HOME)
@@ -214,17 +213,6 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                             }.onFailure {
                                                 android.widget.Toast.makeText(activity, "无法打开浏览器，请访问 luoxianlv.com 注册", android.widget.Toast.LENGTH_LONG).show()
                                             }
-                                        },
-                                        snackbarHostState = snackbarHostState,
-                                    )
-                                }
-
-                                Routes.REGISTER -> {
-                                    RegisterScreen(
-                                        onBack = { subPage = null },
-                                        onRegistered = {
-                                            subPage = null
-                                            goTab(Routes.DISCOVER)
                                         },
                                         snackbarHostState = snackbarHostState,
                                     )

@@ -24,8 +24,6 @@ data class SettingsUiState(
     val busy: Boolean = false,
     val error: String? = null,
     val message: String? = null,
-    /** 注册成功：触发跳转 + Snackbar */
-    val registered: Boolean = false,
     val appearance: AppearanceSettings = AppearanceSettings(),
     val keepAlive: KeepAliveStatus = KeepAliveStatus(false, false, true),
     /** 「自动检查更新」开关：默认开，读自 app_updates 存储。 */
@@ -76,31 +74,6 @@ class SettingsViewModel(
         sessionStore.clear()
         refresh()
     }
-
-    fun register(
-        username: String,
-        email: String,
-        password: String,
-        code: String,
-        nickname: String,
-    ) {
-        if (listOf(username, email, password, code).any(String::isBlank)) {
-            _state.update { it.copy(message = "请填写完整信息") }
-            return
-        }
-        _state.update { it.copy(busy = true) }
-        updater.register(username.trim(), email.trim(), password, code, nickname.trim()) { result ->
-            _state.update { it.copy(busy = false) }
-            result
-                .onSuccess { login ->
-                    sessionStore.save(login.session)
-                    refresh()
-                    _state.update { it.copy(registered = true, message = "注册成功") }
-                }.onFailure { e -> _state.update { it.copy(error = e.message ?: "注册失败") } }
-        }
-    }
-
-    fun ackRegistered() = _state.update { it.copy(registered = false) }
 
     /** 开关飘雪：直接改偏好并落盘。 */
     fun setSnowEnabled(enabled: Boolean) {
