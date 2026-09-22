@@ -1,8 +1,10 @@
 package app.luoxianlv.core
 
 import android.content.Context
+import android.os.Bundle
 import com.umeng.analytics.MobclickAgent
 import com.umeng.commonsdk.UMConfigure
+import com.umeng.umcrash.UMCrash
 
 /**
  * 友盟统计（U-App）启动开关。
@@ -25,6 +27,18 @@ object Analytics {
         synchronized(this) {
             if (initialized) return
             val app = context.applicationContext
+            // U-APM 性能监控配置：必须在 UMConfigure.init 之前调用。
+            // 放在这里（而非 Application.onCreate）是为了和统计一样等用户同意协议后再开启。
+            UMCrash.initConfig(
+                Bundle().apply {
+                    putBoolean(UMCrash.KEY_ENABLE_CRASH_JAVA, true)
+                    putBoolean(UMCrash.KEY_ENABLE_CRASH_NATIVE, true)
+                    putBoolean(UMCrash.KEY_ENABLE_ANR, true)
+                    putBoolean(UMCrash.KEY_ENABLE_LAUNCH, true)
+                    putBoolean(UMCrash.KEY_ENABLE_NET, true)
+                    putBoolean(UMCrash.KEY_ENABLE_MEM, true)
+                },
+            )
             // 隐私授权确认：友盟合规检查的显式授权 API，必须在 init 之前调用，
             // 否则上报被拦截（logcat 报「检测到未调用隐私授权API」）。
             UMConfigure.submitPolicyGrantResult(app, true)

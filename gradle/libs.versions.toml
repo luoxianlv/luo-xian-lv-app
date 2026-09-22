@@ -11,6 +11,8 @@ json = "20260814"
 fastkv = "3.0.1"
 umengCommon = "9.9.10"
 umengAsms = "1.8.7.2"
+umengUyumao = "1.1.4"
+umengApm = "2.1.0"
 
 [libraries]
 material = { module = "com.google.android.material:material", version.ref = "material" }
@@ -29,6 +31,8 @@ json = { module = "org.json:json", version.ref = "json" }
 fastkv = { module = "io.github.billywei01:fastkv", version.ref = "fastkv" }
 umeng-common = { module = "com.umeng.umsdk:common", version.ref = "umengCommon" }
 umeng-asms = { module = "com.umeng.umsdk:asms", version.ref = "umengAsms" }
+umeng-uyumao = { module = "com.umeng.umsdk:uyumao", version.ref = "umengUyumao" }
+umeng-apm = { module = "com.umeng.umsdk:apm", version.ref = "umengApm" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

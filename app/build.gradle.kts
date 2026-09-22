@@ -3,6 +3,9 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// 注：apm-plugin 2.0.0 与 AGP 9 不兼容（FeaturePlugin 继承自已 final 的 LibraryPlugin），
+// 暂不走字节码插桩，保留 SDK 级监控（崩溃/ANR/网络）；页面与启动耗时等插桩指标待插件更新。
+
 android {
     namespace = "app.luoxianlv"
     compileSdk = 37
@@ -84,6 +87,8 @@ dependencies {
     implementation(libs.fastkv)
     implementation(libs.umeng.common)
     implementation(libs.umeng.asms)
+    implementation(libs.umeng.uyumao)
+    implementation(libs.umeng.apm)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)

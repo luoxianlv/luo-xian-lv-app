@@ -3,6 +3,9 @@
 -keep class com.umeng.** {*;}
 -keep class org.repackage.** {*;}
 -keep class com.uyumao.** { *; }
+# U-APM 性能监控
+-keep class com.uc.** { *; }
+-keep class com.efs.** { *; }
 -keepclassmembers class * {
    public <init> (org.json.JSONObject);
 }
