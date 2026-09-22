@@ -18,6 +18,7 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.core.Analytics
 import app.luoxianlv.core.playback.PlaybackTimeline
 import app.luoxianlv.core.score.NoteEvent
 import app.luoxianlv.core.score.PlayMode
@@ -244,7 +245,15 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     fun toggle() {
-        if (playing || preparing) pause() else play()
+        when {
+            // 埋点：用户手动暂停演奏（seek/变速等内部调用 pause() 的路径不计）
+            playing -> {
+                Analytics.logEvent(this, "play_stop")
+                pause()
+            }
+            preparing -> pause()
+            else -> play()
+        }
     }
 
     fun play() {
@@ -297,6 +306,7 @@ class MusicAccessibilityService : AccessibilityService() {
 
     private fun startPlaying() {
         if (playing || timeline.events.isEmpty()) return
+        Analytics.logEvent(this, "play_start") // 埋点：开始演奏（识别/准备完成后真正起播）
         playing = true
         generation++
         anchor = SystemClock.uptimeMillis()
@@ -412,6 +422,8 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     fun stop() {
+        // 埋点：通知栏「停止并关闭悬浮窗」等显式停止（播放中才计，避免与 toggle 暂停重复）
+        if (playing) Analytics.logEvent(this, "play_stop")
         pause()
         baseMs = 0
         floating.refresh()

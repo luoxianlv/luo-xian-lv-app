@@ -3,6 +3,7 @@ package app.luoxianlv.ui.discover
 import android.app.Application
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
+import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.SessionStore
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.ui.AppEvents
@@ -222,6 +223,7 @@ class DiscoverViewModel(
                             // 下载会改变歌单，曲库页需要重新读取
                             AppEvents.notifyLibraryChanged()
                             _state.update { it.copy(downloaded = song.title) }
+                            Analytics.logEvent(getApplication(), "score_download") // 埋点：平台曲谱下载并入库成功
                         }.onFailure { e -> _state.update { it.copy(error = e.message ?: "未能完成") } }
                 }.onFailure { e -> _state.update { it.copy(error = e.message ?: "未能完成") } }
         }

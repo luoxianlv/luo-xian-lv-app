@@ -44,7 +44,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (project.hasProperty("releaseStoreFile")) {
                 signingConfig = signingConfigs.getByName("release")
             } else if (project.findProperty("useDebugSigning") == "true") {
@@ -82,6 +82,8 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.navigation.compose)
     implementation(libs.fastkv)
+    implementation(libs.umeng.common)
+    implementation(libs.umeng.asms)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)

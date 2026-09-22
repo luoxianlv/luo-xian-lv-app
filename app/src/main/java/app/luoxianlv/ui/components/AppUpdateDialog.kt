@@ -9,19 +9,26 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.core.Analytics
 import app.luoxianlv.update.AppUpdateState
 
 @Composable
 fun AppUpdateDialog(state: AppUpdateState, onDismiss: () -> Unit, onSource: (String) -> Unit, onDownload: () -> Unit, onInstall: () -> Unit) {
     val release = state.release ?: return
+    val context = LocalContext.current
+    // 埋点：更新弹窗展示。LaunchedEffect 以 versionCode 为 key，同一弹窗实例
+    // 反复重组只进入一次，不会重复上报；换新版本重新弹出会再计一次。
+    LaunchedEffect(release.versionCode) { Analytics.logEvent(context, "update_prompt_show") }
     val colors = MaterialTheme.colorScheme
     val dismissible = !release.mandatory && !state.downloading
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(dismissOnBackPress = dismissible, dismissOnClickOutside = dismissible)) {
@@ -53,10 +60,17 @@ fun AppUpdateDialog(state: AppUpdateState, onDismiss: () -> Unit, onSource: (Str
                     }
                     if (state.needsPermission) Text("请允许安装未知应用，返回后继续安装。", style = MaterialTheme.typography.bodySmall)
                     state.error?.let { Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall) }
-                    Button(onClick = if (state.ready) onInstall else onDownload, enabled = !state.downloading, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp)) {
+                    Button(onClick = {
+                        // 埋点：更新弹窗点「立即更新 / 重新下载 / 安装更新」
+                        Analytics.logEvent(context, "update_accept")
+                        if (state.ready) onInstall() else onDownload()
+                    }, enabled = !state.downloading, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp)) {
                         Text(when { state.downloading -> "正在下载…"; state.ready -> "安装更新"; state.error != null -> "重新下载"; else -> "立即更新" })
                     }
-                    if (dismissible) TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("稍后再说") }
+                    if (dismissible) TextButton(onClick = {
+                        Analytics.logEvent(context, "update_later") // 埋点：更新弹窗点「稍后再说」
+                        onDismiss()
+                    }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("稍后再说") }
                 }
             }
         }

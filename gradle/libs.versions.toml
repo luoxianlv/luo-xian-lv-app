@@ -9,6 +9,8 @@ navigationCompose = "2.10.1"
 junit = "4.13.2"
 json = "20260814"
 fastkv = "3.0.1"
+umengCommon = "9.9.10"
+umengAsms = "1.8.7.2"
 
 [libraries]
 material = { module = "com.google.android.material:material", version.ref = "material" }
@@ -25,6 +27,8 @@ navigation-compose = { module = "androidx.navigation:navigation-compose", versio
 junit = { module = "junit:junit", version.ref = "junit" }
 json = { module = "org.json:json", version.ref = "json" }
 fastkv = { module = "io.github.billywei01:fastkv", version.ref = "fastkv" }
+umeng-common = { module = "com.umeng.umsdk:common", version.ref = "umengCommon" }
+umeng-asms = { module = "com.umeng.umsdk:asms", version.ref = "umengAsms" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

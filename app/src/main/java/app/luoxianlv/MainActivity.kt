@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
+import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.data.DisclaimerStore
 import app.luoxianlv.data.Kv
@@ -61,6 +62,8 @@ class MainActivity : AppCompatActivity() {
         val disclaimerSha = DisclaimerStore.sha256(disclaimerText)
         disclaimerAccepted =
             disclaimerText.isNotEmpty() && DisclaimerStore(this).agreedSha() == disclaimerSha
+        // 同意过协议：本次启动直接初始化友盟统计（Application 里已 preInit）。
+        if (disclaimerAccepted) Analytics.initialize(this)
         // 权限引导只在首次启动弹一次，此后不再打扰；
         // 之后的运行时检查在「我的」页悬浮窗开关处（LibraryViewModel.setFloatingEnabled）
         showOnboarding = isFirstLaunch() && !MusicAccessibilityService.isEnabled(this)
@@ -77,6 +80,8 @@ class MainActivity : AppCompatActivity() {
                         onAgree = {
                             DisclaimerStore(this).markAgreed(disclaimerSha)
                             disclaimerAccepted = true
+                            Analytics.initialize(this)
+                            Analytics.logEvent(this, "disclaimer_agree") // 埋点：同意免责协议
                             checkUpdatesAfterDisclaimer()
                             requestBackgroundPermissionsOnce()
                         },
@@ -136,7 +141,10 @@ class MainActivity : AppCompatActivity() {
     private fun finishShushuIntent(intent: Intent) {
         if (intent.data?.scheme != "luoxianlv") return
         oauthUpdater.finishShushuLogin(intent) { result ->
-            result.onSuccess { SessionStore(this).save(it.session) }
+            result.onSuccess {
+                SessionStore(this).save(it.session)
+                Analytics.logEvent(this, "oauth_login_success") // 埋点：鼠鼠 OAuth 登录成功
+            }
         }
     }
 

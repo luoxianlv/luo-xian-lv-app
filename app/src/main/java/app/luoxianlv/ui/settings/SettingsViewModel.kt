@@ -2,6 +2,7 @@ package app.luoxianlv.ui.settings
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AccountSession
 import app.luoxianlv.data.AppearanceSettings
 import app.luoxianlv.data.AppearanceStore
@@ -64,6 +65,7 @@ class SettingsViewModel(
             result
                 .onSuccess { login ->
                     sessionStore.save(login.session)
+                    Analytics.logEvent(app, "login_success") // 埋点：邮箱登录成功
                     refresh()
                     _state.update { it.copy(message = "登录成功") }
                 }.onFailure { e -> _state.update { it.copy(error = e.message ?: "登录失败") } }
@@ -92,6 +94,7 @@ class SettingsViewModel(
             result
                 .onSuccess { login ->
                     sessionStore.save(login.session)
+                    Analytics.logEvent(app, "register_success") // 埋点：注册网站账号成功
                     refresh()
                     _state.update { it.copy(registered = true, message = "注册成功") }
                 }.onFailure { e -> _state.update { it.copy(error = e.message ?: "注册失败") } }
