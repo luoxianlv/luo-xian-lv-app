@@ -1,0 +1,12 @@
+<resources>
+    <!--
+      深色（系统处于深色模式）下的启动窗口与系统栏底色。
+
+      这几个值只在系统切到深色时生效：资源限定符跟的是「系统」配置，
+      应用内单独选的「深色」覆盖不到启动窗口（系统画的启动画面早于 onCreate）。
+      取值对齐 ui/theme 的 PlayerBgNight。
+    -->
+    <color name="app_window_background">#0F1420</color>
+    <color name="app_status_bar">#0F1420</color>
+    <color name="app_navigation_bar">#0F1420</color>
+</resources>

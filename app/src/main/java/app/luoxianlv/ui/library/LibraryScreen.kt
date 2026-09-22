@@ -44,8 +44,7 @@ import app.luoxianlv.ui.components.PageTitle
 import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.components.SongRow
-import app.luoxianlv.ui.theme.ON_BACKDROP_SURFACE_ALPHA
-import app.luoxianlv.ui.theme.OnBackdropContent
+import app.luoxianlv.ui.theme.LocalBackdropPalette
 
 /**
  * 曲库：谱面列表 + 筛选。
@@ -234,9 +233,11 @@ private fun SongFilterRow(
  * 三个都是被底色逼出来的选择：
  * 1. 未选中态必须给 surface 白底 —— Material 默认是透明色，
  *    透明容器直接压在渐变底上就只剩一圈细边框，看着像控件失效。
- * 2. 选中态用深藏青 [OnBackdropContent] 而不是 primaryContainer：
- *    primaryContainer 是 #EAF3FF 的浅蓝，压在同为蓝灰的渐变底上，
+ * 2. 选中态用主题的 [LocalBackdropPalette.segmentSelected] 而不是 primaryContainer：
+ *    primaryContainer 是浅蓝，压在同为蓝灰的渐变底上，
  *    和白底的未选中态几乎分不出来，选中的那一格会「消失」。
+ *    这个块深浅两套各给一个值：浅色是半透明深藏青，
+ *    深色反过来要比未选中的 surface 更亮才叫「选中」（见 Backdrop.kt）。
  * 3. 两态的边框全透明：outlineVariant 的灰框会让整行看起来像
  *    三个描边小盒拼在一起，和圆角卡片格格不入；去掉后整行融成
  *    一个圆角长条（选中格是唯一强调），分隔交给底色对比完成。
@@ -244,9 +245,7 @@ private fun SongFilterRow(
 @Composable
 private fun filterSegmentColors(): SegmentedButtonColors =
     SegmentedButtonDefaults.colors(
-        // 选中态同样留一点透明：它是压在渐变上的实心块，全不透明会显得闷。
-        // 0.78 的藏青叠在渐变上仍是中深石板色，和白底未选中态对比依旧明确。
-        activeContainerColor = OnBackdropContent.copy(alpha = ON_BACKDROP_SURFACE_ALPHA),
+        activeContainerColor = LocalBackdropPalette.current.segmentSelected,
         activeContentColor = Color.White,
         activeBorderColor = Color.Transparent,
         inactiveContainerColor = MaterialTheme.colorScheme.surface,

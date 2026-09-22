@@ -407,6 +407,16 @@ class MusicAccessibilityService : AccessibilityService() {
     val floatingVisible: Boolean
         get() = ::floating.isInitialized && floating.isVisible
 
+    /**
+     * 深色模式切换后让悬浮窗重绘一次。
+     *
+     * 悬浮窗是本服务里的独立系统窗口，不跟着 Activity 重组，
+     * 所以主题变更得显式通知它（见 `FloatingControls.refreshTheme`）。
+     */
+    fun refreshFloatingTheme() {
+        if (::floating.isInitialized) floating.refreshTheme()
+    }
+
     fun showFloating(enabled: Boolean) {
         repository.floatingEnabled = enabled
         if (enabled) {

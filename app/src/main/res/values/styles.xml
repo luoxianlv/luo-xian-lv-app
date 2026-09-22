@@ -6,9 +6,16 @@
         <item name="colorSecondary">#238C68</item>
         <item name="colorOnPrimary">#FFFFFF</item>
         <item name="android:colorAccent">#007AFF</item>
-        <item name="android:windowBackground">#F6F7FB</item>
-        <item name="android:navigationBarColor">#FFFFFF</item>
-        <item name="android:statusBarColor">#F6F7FB</item>
+        <!-- 窗口底色只在启动瞬间和系统栏底下露出来，页面自己铺渐变底。
+             取值走 @color 引用，深色版在 values-night/colors.xml。
+             注意这里指的是「系统」深色：应用内把模式选成深色而系统仍是浅色时，
+             启动窗口仍是浅色（系统画的启动画面在 onCreate 之前，管不到），
+             首帧 Compose 接管后就是深色了。 -->
+        <item name="android:windowBackground">@color/app_window_background</item>
+        <item name="android:navigationBarColor">@color/app_navigation_bar</item>
+        <item name="android:statusBarColor">@color/app_status_bar</item>
+        <!-- 系统栏图标明暗。这一项没有单独的 night 变体可用，
+             只能整套样式在 values-night/styles.xml 里覆盖一遍。 -->
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="shapeAppearanceSmallComponent">@style/PlayerShape</item>

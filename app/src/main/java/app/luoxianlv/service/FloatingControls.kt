@@ -16,6 +16,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import app.luoxianlv.PlayerUi
 import app.luoxianlv.PlayerUi.dp
+import app.luoxianlv.PlayerUiPalette
 import app.luoxianlv.R
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.SongRepository
@@ -27,9 +28,9 @@ import kotlin.math.roundToInt
 /**
  * 悬浮窗（无障碍 overlay）。
  *
- * 视觉对齐 App 浅色主题：白卡（92% 不透明 + 细描边 + 阴影）、品牌蓝主按钮、
- * 深藏青标题。两个形态：
- * - 收起：40dp 白底蓝音符气泡，可拖动；
+ * 视觉跟随 App 主题：白卡（92% 不透明 + 细描边 + 阴影）、品牌蓝主按钮、
+ * 深藏青标题；深色模式下白卡换成深石板蓝、字色反相（见 [palette]）。两个形态：
+ * - 收起：40dp 气泡（浅色白底 / 深色深蓝底）+ 蓝音符，可拖动；
  * - 展开：单行小胶囊（播放钮 + 曲名/状态 + 选歌 + 收起），底部 3dp 蓝色进度条，
  *   进度条区域可点按/拖动 seek。
  * 「选歌」开居中独立小窗，不再是贴面板下拉。
@@ -41,6 +42,16 @@ class FloatingControls(
     private val wm = service.getSystemService(WindowManager::class.java)
     private val prefs = Kv.of(service, "floating_position")
     private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * 当前配色。
+     *
+     * 悬浮窗是独立系统窗口，不跟着 Activity 重组，所以在每次 [render] / [showPlaylist]
+     * 开头重新取一次（读数开销很小），用户在设置里改了深色模式，下次重绘就是新配色；
+     * 想立即生效由 [refreshTheme] 触发。
+     */
+    private var palette: PlayerUiPalette = PlayerUi.palette(context)
+
     private var root: View? = null
     private var params: WindowManager.LayoutParams? = null
     private var popup: View? = null
@@ -114,6 +125,20 @@ class FloatingControls(
         if (root != null) render(expanded)
     }
 
+    /**
+     * 深色模式切换后调一次：重画当前显示的悬浮窗。
+     *
+     * 面板在显示就整个重建（配色是建视图时写进去的，改属性得逐个子视图追）；
+     * 选歌窗开着就关掉它，而关窗路径会自己带出面板重建。
+     */
+    fun refreshTheme() {
+        when {
+            root != null -> render(expanded)
+            popup != null -> dismissPlaylist()
+            else -> Unit
+        }
+    }
+
     private fun layout(
         width: Int,
         height: Int,
@@ -128,6 +153,7 @@ class FloatingControls(
 
     private fun render(open: Boolean) {
         if (!displayRequested) return
+        palette = PlayerUi.palette(context)
         // render 会先 hide() → dismissPlaylist()，先清标记避免在里面递归恢复面板。
         panelHiddenForPicker = false
         hide()
@@ -141,7 +167,7 @@ class FloatingControls(
             view =
                 ImageView(context).apply {
                     setImageResource(R.drawable.ic_music_note)
-                    background = PlayerUi.background(context, 0xf2ffffff.toInt(), 22, true)
+                    background = PlayerUi.background(context, palette.bubble, 22, true, palette.line)
                     imageTintList = ColorStateList.valueOf(PlayerUi.BLUE)
                     setPadding(context.dp(10), context.dp(10), context.dp(10), context.dp(10))
                     elevation = context.dp(3).toFloat()
@@ -186,7 +212,7 @@ class FloatingControls(
     private fun buildPanel(width: Int): View {
         val panel =
             android.widget.FrameLayout(context).apply {
-                background = PlayerUi.background(context, 0xebffffff.toInt(), 26, true)
+                background = PlayerUi.background(context, palette.panel, 26, true, palette.line)
                 elevation = context.dp(4).toFloat()
             }
         val row =
@@ -211,12 +237,12 @@ class FloatingControls(
                 setPadding(context.dp(8), 0, context.dp(4), 0)
             }
         title =
-            PlayerUi.text(context, service.song.title, 12f, PlayerUi.TEXT, bold = true).apply {
+            PlayerUi.text(context, service.song.title, 12f, palette.text, bold = true).apply {
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
             }
         info.addView(title, LinearLayout.LayoutParams(-1, -2))
-        status = PlayerUi.text(context, "", 10f, PlayerUi.MUTED)
+        status = PlayerUi.text(context, "", 10f, palette.muted)
         info.addView(status, LinearLayout.LayoutParams(-1, -2))
         row.addView(info, LinearLayout.LayoutParams(0, -2, 1f))
         attachDrag(info, false)
@@ -236,7 +262,7 @@ class FloatingControls(
             PlayerUi.button(context, "收起", iconOnly = true).apply {
                 text = "×"
                 backgroundTintList = ColorStateList.valueOf(0x00000000)
-                setTextColor(PlayerUi.MUTED)
+                setTextColor(palette.muted)
                 textSize = 16f
                 cornerRadius = context.dp(14)
                 setPadding(0, 0, 0, 0)
@@ -253,7 +279,7 @@ class FloatingControls(
             }
         val rail =
             View(context).apply {
-                background = PlayerUi.background(context, PlayerUi.LINE, 2, false)
+                background = PlayerUi.background(context, palette.line, 2, false)
             }
         track.addView(rail, LinearLayout.LayoutParams(-1, context.dp(3)))
         progressTrack = track
@@ -404,8 +430,9 @@ class FloatingControls(
         }
     }
 
-    /** 选歌：居中独立小窗（白卡 + 当前曲目蓝色高亮）。打开时面板退出，关闭后恢复。 */
+    /** 选歌：居中独立小窗（卡片 + 当前曲目蓝色高亮）。打开时面板退出，关闭后恢复。 */
     private fun showPlaylist() {
+        palette = PlayerUi.palette(context)
         if (root != null) {
             panelHiddenForPicker = true
             handler.removeCallbacks(tick)
@@ -415,20 +442,20 @@ class FloatingControls(
         val songs = SongRepository(service).songs()
         val card =
             PlayerUi.column(context).apply {
-                background = PlayerUi.background(context, 0xf5ffffff.toInt(), 20, true)
+                background = PlayerUi.background(context, palette.popup, 20, true, palette.line)
                 elevation = context.dp(6).toFloat()
                 setPadding(context.dp(14), context.dp(10), context.dp(14), context.dp(10))
             }
         val header = PlayerUi.row(context)
         header.addView(
-            PlayerUi.text(context, "选择谱子", 14f, PlayerUi.TEXT, bold = true),
+            PlayerUi.text(context, "选择谱子", 14f, palette.text, bold = true),
             LinearLayout.LayoutParams(0, -2, 1f),
         )
         val close =
             PlayerUi.button(context, "关闭", iconOnly = true).apply {
                 text = "×"
                 backgroundTintList = ColorStateList.valueOf(0x00000000)
-                setTextColor(PlayerUi.MUTED)
+                setTextColor(palette.muted)
                 textSize = 16f
                 cornerRadius = context.dp(14)
                 setPadding(0, 0, 0, 0)
@@ -440,7 +467,7 @@ class FloatingControls(
         val list = PlayerUi.column(context)
         if (songs.isEmpty()) {
             list.addView(
-                PlayerUi.text(context, "先去曲库添加谱子", 13f, PlayerUi.MUTED).apply {
+                PlayerUi.text(context, "先去曲库添加谱子", 13f, palette.muted).apply {
                     setPadding(0, context.dp(16), 0, context.dp(16))
                     gravity = Gravity.CENTER
                 },
@@ -450,7 +477,7 @@ class FloatingControls(
         songs.forEach { song ->
             val current = song.id == service.song.id
             val row =
-                PlayerUi.text(context, song.title, 13f, if (current) 0xffffffff.toInt() else PlayerUi.TEXT, bold = current).apply {
+                PlayerUi.text(context, song.title, 13f, if (current) 0xffffffff.toInt() else palette.text, bold = current).apply {
                     setPadding(context.dp(12), 0, context.dp(12), 0)
                     gravity = Gravity.CENTER_VERTICAL
                     maxLines = 1
@@ -512,7 +539,7 @@ class FloatingControls(
     ) {
         handler.removeCallbacks(removeMarker)
         if (marker == null) {
-            marker = View(context).apply { background = PlayerUi.background(context, 0x55007aff, 20, true) }
+            marker = View(context).apply { background = PlayerUi.background(context, 0x55007aff, 20, true, palette.line) }
             val p = layout(context.dp(20), context.dp(20)).apply { flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE }
             wm.addView(marker, p)
         }

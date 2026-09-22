@@ -66,6 +66,9 @@ val IconTeal = Color(0xFF2FA3A0)
 val IconGray = Color(0xFF7A8AA0)
 val IconUpdate = Color(0xFF5B8DEF)
 
+/** 「深色模式」专用：靖蓝，与旁边的飘雪青、账号蓝区分得开。 */
+val IconIndigo = Color(0xFF6C7BE0)
+
 /**
  * 分组标题：卡片上方的小灰字。
  *

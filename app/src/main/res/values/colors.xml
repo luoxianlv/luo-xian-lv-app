@@ -11,4 +11,10 @@
     <color name="player_progress_track">#DDE3F2</color>
     <color name="player_danger">#D95B67</color>
     <color name="player_white">#FFFFFF</color>
+
+    <!-- AppTheme 的窗口与系统栏底色（启动瞬间可见）。
+         与 ui/theme 的 PlayerBgNight / 渐变底同源，深色版在 values-night/colors.xml。 -->
+    <color name="app_window_background">#F6F7FB</color>
+    <color name="app_status_bar">#F6F7FB</color>
+    <color name="app_navigation_bar">#FFFFFF</color>
 </resources>

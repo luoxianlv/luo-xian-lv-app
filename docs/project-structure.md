@@ -32,7 +32,7 @@ app/src/main/
 │
 ├── java/app/luoxianlv/
 │   ├── MainActivity.kt            # Compose 单 Activity 入口：挂 UI 树 + 生命周期级服务/热更新对齐
-│   ├── PlayerUi.kt                # 悬浮窗等传统 View 的构建辅助（dp/text/column 工厂方法）
+│   ├── PlayerUi.kt                # 悬浮窗等传统 View 的构建辅助（dp/text/column 工厂方法 + 深浅两套悬浮窗配色）
 │   │
 │   ├── core/                      # 纯逻辑核心，不依赖 Android UI
 │   │   ├── harmonica/
@@ -44,7 +44,7 @@ app/src/main/
 │   │       └── ScoreParser.kt        # 文本谱解析：简谱文本 → NoteEvent 列表，含节拍解析
 │   │
 │   ├── data/                      # 持久化与曲库
-│   │   ├── AppearanceStore.kt        # 全局外观（目前只剩「飘雪」开关）
+│   │   ├── AppearanceStore.kt        # 全局外观：主题模式（跟随系统/浅色/深色）+ 飘雪 + 首页自定义
 │   │   ├── ConfigStore.kt            # 琴键布局 KeyLayout（8 键 X/Y + 4 调式按钮坐标）的读写
 │   │   ├── DisclaimerStore.kt        # 免责协议同意状态：存协议文本 SHA-256，文本更新即需重新同意
 │   │   ├── Kv.kt                     # 键值存储统一入口：FastKV 底层，对外仍返回 SharedPreferences 接口
@@ -114,10 +114,10 @@ app/src/main/
 │   │   │   ├── SettingsScreen.kt         # 设置主页：QQ 式分组（组标题小灰字 + 一张白卡一组）
 │   │   │   └── SettingsViewModel.kt      # 设置状态：会话/保活/外观/自动更新
 │   │   └── theme/                    # 视觉体系（改动前先读各文件头注释）
-│   │       ├── Backdrop.kt               # 顶级页面整屏渐变底：白卡浮在渐变上拉层次
-│   │       ├── Color.kt                  # 品牌色板（主蓝/QQ 蓝强调色/文字/危险色等）
-│   │       ├── Containers.kt             # 容器不透明度规则 ON_BACKDROP_SURFACE_ALPHA
-│   │       ├── Theme.kt                  # Material 3 主题：S+ 动态取色，低版本回退品牌色；浮层角色刻意不透明
+│   │       ├── Backdrop.kt               # 深浅两套渐变底与「压在底上」的字色（BackdropPalette + CompositionLocal）
+│   │       ├── Color.kt                  # 品牌色板：浅色 + 深色两套（主蓝/QQ 蓝强调色/文字/危险色等）
+│   │       ├── Containers.kt             # 容器不透明度规则：浅色 ON_BACKDROP_SURFACE_ALPHA / 深色 _DARK
+│   │       ├── Theme.kt                  # Material 3 主题：light 走 S+ 动态取色，dark 用固定品牌色板；浮层角色刻意不透明；同步系统栏图标明暗
 │   │       └── Type.kt                   # 字阶（沿用 M3 默认，品牌字体待定）
 │   │
 │   └── update/                      # 应用更新与平台 API
@@ -144,9 +144,12 @@ app/src/main/
     │   ├── ic_pause.xml
     │   └── ic_play.xml
     ├── values/
-    │   ├── colors.xml                    # 遗留品牌色板（Compose 色板见 ui/theme/Color.kt）
+    │   ├── colors.xml                    # 遗留品牌色板 + 启动窗口/系统栏底色（Compose 色板见 ui/theme/Color.kt）
     │   ├── strings.xml                   # 应用名等少量字符串
     │   └── styles.xml                    # 启动主题
+    ├── values-night/
+    │   ├── colors.xml                    # 深色下启动窗口与系统栏底色
+    │   └── styles.xml                    # 深色下整套 AppTheme（含系统栏图标反色）
     └── xml/
         ├── accessibility_service_config.xml  # 无障碍服务能力声明
         ├── network_security_config.xml       # 网络安全配置
@@ -157,6 +160,13 @@ app/src/main/
 
 - **连排列表语言**：列表内部零分隔线，整列一张卡；选中态染整行底色（见 `SongRow`）。
 - **半透明容器**：只作用于容器角色；对话框/菜单用的 `surfaceContainer*` 刻意不透明（见 `Theme.kt` 头注释）。
+- **深浅色**：主题只从 `MainActivity` 传入一个 `darkTheme: Boolean`（由 `AppearanceStore.themeMode` 叠系统设置算出），
+  切换不重建 Activity。渐变底、压在底上的字色、首页卡片渐变、分段按钮选中块这四样不属于 Material 色板，
+  统一从 `Backdrop.kt` 的 `BackdropPalette` 取；**新增这类颜色就加字段，不要在各页写死**。
+  压在渐变上、又没有容器兜着的 `Text`/`Icon` 必须显式给色 —— 不指定会吃到 `LocalContentColor` 的默认黑，
+  浅色下看着正常，深色下直接消失（曾经发生在首页标题与设置图标上）。
+  悬浮窗是独立系统窗口，拿不到 `MaterialTheme`，配色走 `PlayerUi.palette(context)`，
+  主题变更时由 `SettingsViewModel` → `MusicAccessibilityService.refreshFloatingTheme()` 通知重绘。
 - **状态共享**：跨页刷新走 `AppEvents` 事件；服务同步走 `ServiceSync`；不要在页面里直接调
   `MusicAccessibilityService.instance`。
 - **请求节流**：发现页数据有 5 分钟 TTL 缓存（`DiscoverViewModel`）；更新检查有独立节流（`UpdateAutoCheck`）。
