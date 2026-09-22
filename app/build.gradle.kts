@@ -11,8 +11,8 @@ android {
         applicationId = "app.luoxianlv"
         minSdk = 26
         targetSdk = 37
-        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 9
-        versionName = project.findProperty("appVersionName") as String? ?: "1.0.4"
+        versionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 10
+        versionName = project.findProperty("appVersionName") as String? ?: "1.0.5"
 
         // 本地模拟器构建指向宿主机上的 Rust 服务；
         // Release 构建用 -PupdateBaseUrl=https://... 覆盖
