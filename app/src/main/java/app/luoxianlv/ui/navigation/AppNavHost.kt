@@ -81,6 +81,15 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     // 子页面打开时拦截返回键：先退回主页面
     androidx.activity.compose.BackHandler(enabled = subPage != null) { subPage = null }
 
+    // 小窗/分屏下拖动窗口改变尺寸时，进行中的 Tab 切换动画可能被打断在半路，
+    // Pager 不会自行纠正（表现为两页各占半屏、内容点不动）。滚动停止后若不在整页就吸回去。
+    androidx.compose.runtime.LaunchedEffect(pagerState) {
+        androidx.compose.runtime.snapshotFlow { pagerState.isScrollInProgress to pagerState.currentPageOffsetFraction }
+            .collect { (scrolling, offset) ->
+                if (!scrolling && offset != 0f) pagerState.animateScrollToPage(pagerState.currentPage)
+            }
+    }
+
     // 连续页码（当前页 + 手势偏移）：导航胶囊用它跟手
     val position =
         (pagerState.currentPage + pagerState.currentPageOffsetFraction)
