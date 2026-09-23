@@ -2,6 +2,11 @@ package app.luoxianlv.core
 
 import android.content.Context
 import android.os.Bundle
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import app.luoxianlv.BuildConfig
 import com.umeng.analytics.MobclickAgent
 import com.umeng.commonsdk.UMConfigure
 import com.umeng.umcrash.UMCrash
@@ -22,11 +27,37 @@ object Analytics {
     @Volatile
     private var initialized = false
 
+    /** 诊断页展示的一条流水（事件/页面/唤起/SDK 状态）。 */
+    data class DiagEntry(
+        val time: Long,
+        val kind: String,
+        val detail: String,
+    )
+
+    /** 诊断流水：环形缓冲 100 条，Compose 可观察，debug 诊断页直接读。 */
+    val diagEntries = mutableStateListOf<DiagEntry>()
+
+    /** UMConfigure.init 完成的时间戳；null 表示 SDK 还没初始化。 */
+    var initAt: Long? by mutableStateOf(null)
+        private set
+
+    private fun record(
+        kind: String,
+        detail: String,
+    ) {
+        if (diagEntries.size >= 100) diagEntries.removeFirst()
+        diagEntries.add(DiagEntry(System.currentTimeMillis(), kind, detail))
+    }
+
+    /** 记录一次外部唤起（集成测试二维码 / OAuth 回调都走这里）。 */
+    fun recordScheme(dataString: String?) = record("唤起", dataString ?: "(无 data)")
+
     fun initialize(context: Context) {
         if (initialized) return
         synchronized(this) {
             if (initialized) return
             val app = context.applicationContext
+            record("SDK", "initialize 调用")
             // U-APM 性能监控配置：必须在 UMConfigure.init 之前调用。
             // 放在这里（而非 Application.onCreate）是为了和统计一样等用户同意协议后再开启。
             UMCrash.initConfig(
@@ -46,6 +77,8 @@ object Analytics {
             // 隐私授权确认：友盟合规检查的显式授权 API，必须在 init 之前调用，
             // 否则上报被拦截（logcat 报「检测到未调用隐私授权API」）。
             UMConfigure.submitPolicyGrantResult(app, true)
+            // debug 包打开 SDK 日志：集成测试排查（marker 接收、上报）全靠它，release 关闭。
+            if (BuildConfig.DEBUG) UMConfigure.setLogEnabled(true)
             UMConfigure.init(
                 app,
                 APP_KEY,
@@ -58,6 +91,8 @@ object Analytics {
             // MainActivity 页面。（U-APM 的页面分析是另一套，与此开关无关。）
             MobclickAgent.setPageCollectionMode(MobclickAgent.PageMode.MANUAL)
             initialized = true
+            initAt = System.currentTimeMillis()
+            record("SDK", "UMConfigure.init 完成")
         }
     }
 
@@ -70,6 +105,7 @@ object Analytics {
         context: Context,
         event: String,
     ) {
+        record("事件", if (initialized) event else "$event（未初始化，丢弃）")
         if (!initialized) return
         MobclickAgent.onEvent(context.applicationContext, event)
     }
@@ -82,11 +118,13 @@ object Analytics {
      * 必须成对调用，未同意免责协议时静默丢弃。
      */
     fun pageStart(page: String) {
+        record("页面+", page)
         if (!initialized) return
         MobclickAgent.onPageStart(page)
     }
 
     fun pageEnd(page: String) {
+        record("页面-", page)
         if (!initialized) return
         MobclickAgent.onPageEnd(page)
     }

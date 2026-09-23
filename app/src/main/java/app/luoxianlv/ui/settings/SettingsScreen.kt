@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
@@ -84,6 +85,7 @@ fun SettingsScreen(
     onLogin: () -> Unit,
     onAbout: () -> Unit,
     onDiagnostics: () -> Unit,
+    onAnalyticsDebug: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: SettingsViewModel = viewModel(),
 ) {
@@ -235,6 +237,15 @@ fun SettingsScreen(
                         iconTint = IconGray,
                         onClick = onAbout,
                     )
+                    if (app.luoxianlv.BuildConfig.DEBUG) {
+                        PreferenceItem(
+                            title = "统计诊断",
+                            summary = "友盟集成测试排障（仅 debug 包）",
+                            icon = Icons.Filled.BugReport,
+                            iconTint = IconOrange,
+                            onClick = onAnalyticsDebug,
+                        )
+                    }
                 }
             }
         }

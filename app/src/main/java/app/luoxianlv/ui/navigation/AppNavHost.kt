@@ -38,6 +38,7 @@ import app.luoxianlv.ui.home.HomeScreen
 import app.luoxianlv.ui.importer.ImportScreen
 import app.luoxianlv.ui.library.LibraryScreen
 import app.luoxianlv.ui.settings.AboutScreen
+import app.luoxianlv.ui.settings.AnalyticsDebugScreen
 import app.luoxianlv.ui.settings.LoginScreen
 import app.luoxianlv.ui.settings.PlaybackDiagnosticsScreen
 import app.luoxianlv.ui.settings.SettingsScreen
@@ -56,7 +57,7 @@ private val tabs = listOf(Routes.HOME, Routes.LIBRARY, Routes.DISCOVER, Routes.S
 
 /** 子页面（覆盖层，不参与手势滑动） */
 private val subPages =
-    listOf(Routes.SEARCH, Routes.PLATFORM, Routes.LOGIN, Routes.ABOUT, Routes.IMPORT, Routes.DIAGNOSTICS)
+    listOf(Routes.SEARCH, Routes.PLATFORM, Routes.LOGIN, Routes.ABOUT, Routes.IMPORT, Routes.DIAGNOSTICS, Routes.ANALYTICS_DEBUG)
 
 /** 「我的」在 [tabs] 中的下标：它显示时底部导航栏要隐藏。 */
 private val HOME_INDEX = tabs.indexOf(Routes.HOME)
@@ -178,6 +179,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                 onLogin = { subPage = Routes.LOGIN },
                                 onAbout = { subPage = Routes.ABOUT },
                                 onDiagnostics = { subPage = Routes.DIAGNOSTICS },
+                                onAnalyticsDebug = { subPage = Routes.ANALYTICS_DEBUG },
                                 snackbarHostState = snackbarHostState,
                             )
                         }
@@ -264,6 +266,10 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                         onBack = { subPage = null },
                                         snackbarHostState = snackbarHostState,
                                     )
+                                }
+
+                                Routes.ANALYTICS_DEBUG -> {
+                                    AnalyticsDebugScreen(onBack = { subPage = null })
                                 }
                             }
                         }

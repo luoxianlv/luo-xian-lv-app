@@ -131,12 +131,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
         finishShushuIntent(intent)
+        Analytics.recordScheme(intent.dataString)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         finishShushuIntent(intent)
+        Analytics.recordScheme(intent.dataString)
     }
 
     private fun finishShushuIntent(intent: Intent) {

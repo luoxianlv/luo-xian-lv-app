@@ -16,6 +16,9 @@ object Routes {
     const val ABOUT = "about"
     const val DIAGNOSTICS = "diagnostics"
 
+    /** 统计诊断：友盟集成测试排障页（仅 debug 包可见入口）。 */
+    const val ANALYTICS_DEBUG = "analyticsDebug"
+
     /** 导入：从顶级 Tab 降为「曲库」里的子页面。 */
     const val IMPORT = "import"
 }
