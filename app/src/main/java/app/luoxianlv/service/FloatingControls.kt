@@ -4,12 +4,18 @@ import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -464,33 +470,92 @@ class FloatingControls(
         header.addView(close, LinearLayout.LayoutParams(context.dp(28), context.dp(28)))
         card.addView(header)
 
+        // 搜索：只过滤已经读进内存的 songs，纯本地字符串匹配，不发网络请求。
+        val search =
+            EditText(context).apply {
+                hint = "搜索谱子"
+                textSize = 13f
+                setTextColor(palette.text)
+                setHintTextColor(palette.muted)
+                isSingleLine = true
+                inputType = InputType.TYPE_CLASS_TEXT
+                imeOptions = EditorInfo.IME_ACTION_SEARCH
+                includeFontPadding = false
+                gravity = Gravity.CENTER_VERTICAL or Gravity.START
+                setPadding(context.dp(10), 0, context.dp(10), 0)
+                background = PlayerUi.background(context, 0x00000000, 10, true, palette.line)
+            }
+        card.addView(
+            search,
+            LinearLayout.LayoutParams(-1, context.dp(34)).apply { topMargin = context.dp(6) },
+        )
+
         val list = PlayerUi.column(context)
-        if (songs.isEmpty()) {
-            list.addView(
-                PlayerUi.text(context, "先去曲库添加谱子", 13f, palette.muted).apply {
-                    setPadding(0, context.dp(16), 0, context.dp(16))
-                    gravity = Gravity.CENTER
-                },
-                LinearLayout.LayoutParams(-1, -2),
-            )
-        }
-        songs.forEach { song ->
-            val current = song.id == service.song.id
-            val row =
-                PlayerUi.text(context, song.title, 13f, if (current) 0xffffffff.toInt() else palette.text, bold = current).apply {
-                    setPadding(context.dp(12), 0, context.dp(12), 0)
-                    gravity = Gravity.CENTER_VERTICAL
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    background = PlayerUi.background(context, if (current) PlayerUi.BLUE else 0x00000000, 10, false)
-                    setOnClickListener {
-                        service.select(song)
-                        dismissPlaylist()
-                        refresh()
-                    }
+
+        /** 按关键词重建列表：关键词为空就是全部曲目，匹配不到给一句说明。 */
+        fun fillList(query: String) {
+            list.removeAllViews()
+            val keyword = query.trim()
+            val matched =
+                if (keyword.isEmpty()) {
+                    songs
+                } else {
+                    songs.filter { it.title.contains(keyword, ignoreCase = true) }
                 }
-            list.addView(row, LinearLayout.LayoutParams(-1, context.dp(40)))
+            if (matched.isEmpty()) {
+                list.addView(
+                    PlayerUi
+                        .text(
+                            context,
+                            if (songs.isEmpty()) "先去曲库添加谱子" else "没有匹配的谱子",
+                            13f,
+                            palette.muted,
+                        ).apply {
+                            setPadding(0, context.dp(16), 0, context.dp(16))
+                            gravity = Gravity.CENTER
+                        },
+                    LinearLayout.LayoutParams(-1, -2),
+                )
+                return
+            }
+            matched.forEach { song ->
+                val current = song.id == service.song.id
+                val row =
+                    PlayerUi.text(context, song.title, 13f, if (current) 0xffffffff.toInt() else palette.text, bold = current).apply {
+                        setPadding(context.dp(12), 0, context.dp(12), 0)
+                        gravity = Gravity.CENTER_VERTICAL
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        background = PlayerUi.background(context, if (current) PlayerUi.BLUE else 0x00000000, 10, false)
+                        setOnClickListener {
+                            service.select(song)
+                            dismissPlaylist()
+                            refresh()
+                        }
+                    }
+                list.addView(row, LinearLayout.LayoutParams(-1, context.dp(40)))
+            }
         }
+        fillList("")
+        search.addTextChangedListener(
+            object : TextWatcher {
+                override fun beforeTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    count: Int,
+                    after: Int,
+                ) = Unit
+
+                override fun onTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    before: Int,
+                    count: Int,
+                ) = Unit
+
+                override fun afterTextChanged(s: Editable?) = fillList(s?.toString().orEmpty())
+            },
+        )
         val bounds = service.screenBounds()
         val maxHeight = minOf(context.dp(300), bounds.height() / 2)
         val scroll =
@@ -514,18 +579,42 @@ class FloatingControls(
             View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST),
         )
         val height = minOf(card.measuredHeight, maxHeight)
+        val centeredY = ((bounds.height() - height) / 2).coerceAtLeast(0)
         val p =
             layout(context.dp(264), height).apply {
-                flags = flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+                // 搜索框要收键盘：overlay 窗口默认带 FLAG_NOT_FOCUSABLE，键盘挂不上来，
+                // 去掉它才能获焦。不追加 FLAG_NOT_TOUCH_MODAL：窗口外的点按继续被本窗口
+                // 吞掉，否则会穿到下面的游戏里去。
+                flags =
+                    (flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH) and
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
                 x = ((bounds.width() - context.dp(264)) / 2).coerceAtLeast(0)
-                y = ((bounds.height() - height) / 2).coerceAtLeast(0)
+                y = centeredY
             }
         popup = card
+        // overlay 窗口拿不到 IME 的 insets，键盘弹起时不会自动上移：
+        // 搜索框获得焦点就把面板挪到屏幕上方，否则列表下半截会被键盘盖住。
+        search.setOnFocusChangeListener { _, hasFocus ->
+            val lp = popup?.layoutParams as? WindowManager.LayoutParams ?: return@setOnFocusChangeListener
+            lp.y = if (hasFocus) (bounds.height() / 8).coerceAtLeast(0) else centeredY
+            runCatching { popup?.let { wm.updateViewLayout(it, lp) } }
+        }
+        // 点一下就把键盘叫出来：overlay 窗口的 EditText 不一定会自动弹输入法。
+        // 第二参传 0（SHOW_IMPLICIT 已废弃，语义相同）。
+        search.setOnClickListener {
+            (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.showSoftInput(search, 0)
+        }
         wm.addView(card, p)
     }
 
     private fun dismissPlaylist() {
-        popup?.let { wm.removeView(it) }
+        popup?.let { view ->
+            // 搜索框可能还开着键盘：窗口移除前主动收一次，避免键盘留在游戏画面上。
+            (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                ?.hideSoftInputFromWindow(view.windowToken, 0)
+            wm.removeView(view)
+        }
         popup = null
         if (panelHiddenForPicker) {
             panelHiddenForPicker = false
