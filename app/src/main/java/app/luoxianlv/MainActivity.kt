@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
+import app.luoxianlv.BuildConfig
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.data.DisclaimerStore
@@ -186,6 +187,8 @@ class MainActivity : AppCompatActivity() {
         // 启动绕过六小时节流，但不显示手动检查的结果提示。
         if (!UpdateAutoCheck.isEnabled(this)) return
         updateCheckOnOpenDone = true
+        // Debug 包不触发启动检测更新；回前台节流检查与手动「检查新版本」不受影响。
+        if (BuildConfig.DEBUG) return
         appUpdates.check(force = true)
     }
 
