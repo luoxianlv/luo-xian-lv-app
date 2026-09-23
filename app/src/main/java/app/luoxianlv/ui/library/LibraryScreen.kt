@@ -91,6 +91,14 @@ fun LibraryScreen(
             onSelect = vm::setFilter,
             modifier = Modifier.padding(start = 20.dp, end = 20.dp),
         )
+        if (state.hiddenBuiltInCount > 0) {
+            // 内置谱面随包发布，删除只是记进隐藏清单；给一条找回入口，
+            // 否则误删之后只能清除应用数据才能恢复。
+            TextButton(
+                onClick = vm::restoreBuiltIns,
+                modifier = Modifier.padding(start = 12.dp),
+            ) { Text("恢复内置示例（${state.hiddenBuiltInCount}）") }
+        }
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding =
@@ -122,7 +130,7 @@ fun LibraryScreen(
                                     selected = song.id == state.highlightedSongId,
                                     onClick = { vm.select(song) },
                                     onEdit = { editing = song },
-                                    onDelete = if (song.builtIn) null else ({ deleting = song }),
+                                    onDelete = { deleting = song },
                                 )
                             }
                         }
@@ -145,6 +153,12 @@ fun LibraryScreen(
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("删除 ${song.title}？") },
+            text =
+                if (song.builtIn) {
+                    { Text("这是随包发布的内置示例谱面，删除后可用列表上方的「恢复内置示例」找回。") }
+                } else {
+                    null
+                },
             confirmButton = {
                 TextButton(
                     onClick = {

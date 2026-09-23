@@ -18,7 +18,19 @@ data class Song(
     val contentVersion: Long = 0L,
     val synced: Boolean = false,
 ) {
-    val events: List<NoteEvent> by lazy { ScoreParser.parse(score) }
+    /**
+     * 谱面事件：解析失败退化为空谱面，**绝不向上抛**。
+     *
+     * 解析是惰性的，而列表行渲染要读 [durationMs]（→ 这里），[ScoreParser] 对不合法
+     * 谱面抛 IllegalArgumentException；一旦抛在组合期，整个曲库页直接闪退。
+     * 坏谱面（导入时未校验的 MIDI 编译结果、热更下发、旧版本写入的旧格式）
+     * 以后只表现为「0:00、播放不起来」，不再把 App 带崩。
+     *
+     * 空事件在播放侧是安全的：[PlaybackTimeline] 的 offsets 恒有 events.size + 1
+     * 个元素（durationMs 为 0），MusicAccessibilityService.play() 也会在
+     * events 为空时早退。
+     */
+    val events: List<NoteEvent> by lazy { runCatching { ScoreParser.parse(score) }.getOrDefault(emptyList()) }
     val durationMs: Long get() = (events.sumOf { it.beats } * 60000 / bpm).toLong()
     val noteCount: Int get() = events.count { !it.rest }
 
@@ -80,7 +92,9 @@ class SongRepository(
     fun songs(): List<Song> {
         val saved = runCatching { JSONArray(prefs.getString("songs", "[]")) }.getOrDefault(JSONArray())
         val merged = linkedMapOf<String, Song>()
-        builtIns.forEach { merged[it.id] = it }
+        // 用户删掉的内置谱面只是记进隐藏清单：内容随包发布，删不掉文件。
+        val hidden = hiddenBuiltIns()
+        builtIns.filterNot { it.id in hidden }.forEach { merged[it.id] = it }
         hotSongs().forEach { merged[it.id] = it }
         syncedSongs().forEach { merged[it.id] = it }
         val loaded =
@@ -219,6 +233,9 @@ class SongRepository(
     }
 
     fun remove(id: String) {
+        // 内置谱面不在 prefs 的歌单里，写回歌单对它无效，必须单独记一条删除意图，
+        // 否则 songs() 下次合并又会把它带回来。
+        if (builtIns.any { it.id == id }) setHiddenBuiltIns(hiddenBuiltIns() + id)
         val synced = runCatching { JSONArray(prefs.getString("synced_songs", "[]")) }.getOrDefault(JSONArray())
         val remainingSynced = JSONArray()
         (0 until synced.length()).forEach { index ->
@@ -275,6 +292,21 @@ class SongRepository(
         }
     }
 
+    /** 被用户删除的内置谱面 id。内置内容随包发布，删除只能表达为「隐藏」。 */
+    private fun hiddenBuiltIns(): Set<String> = parseHiddenBuiltIns(prefs.getString("hidden_builtins", "[]"))
+
+    private fun setHiddenBuiltIns(ids: Set<String>) {
+        prefs.edit().putString("hidden_builtins", hiddenBuiltInsJson(ids)).apply()
+    }
+
+    /** 已删除的内置谱面数量：界面据此决定是否显示「恢复内置示例」。 */
+    fun hiddenBuiltInCount(): Int = builtIns.count { it.id in hiddenBuiltIns() }
+
+    /** 恢复全部被删除的内置谱面。 */
+    fun restoreBuiltIns() {
+        prefs.edit().putString("hidden_builtins", "[]").apply()
+    }
+
     var selectedId: String
         get() = prefs.getString("selected", "rain") ?: "rain"
         set(value) {
@@ -291,7 +323,31 @@ class SongRepository(
             prefs.edit().putFloat("speed", value.coerceIn(.5f, 2f)).apply()
         }
 
-    fun selected(): Song = songs().firstOrNull { it.id == selectedId } ?: builtIns.first()
+    fun selected(): Song {
+        val visible = songs()
+        // 兜底时优先取仍然可见的曲目：内置谱面可能已被用户删除，
+        // 直接回退 builtIns.first() 会把已删除的谱面重新载入服务。
+        return visible.firstOrNull { it.id == selectedId } ?: visible.firstOrNull() ?: builtIns.first()
+    }
+}
+
+/**
+ * 内置谱面隐藏清单的编解码。
+ *
+ * 抽成文件级纯函数是为了能单测：清单存在 prefs 里，写坏一次就等于
+ * 内置示例谱面一起消失，或者删掉的又回来。
+ */
+fun parseHiddenBuiltIns(raw: String?): Set<String> {
+    val array = runCatching { JSONArray(raw ?: "[]") }.getOrDefault(JSONArray())
+    return (0 until array.length())
+        .mapNotNull { index -> array.optString(index).takeIf(String::isNotBlank) }
+        .toSet()
+}
+
+fun hiddenBuiltInsJson(ids: Set<String>): String {
+    val array = JSONArray()
+    ids.forEach(array::put)
+    return array.toString()
 }
 
 fun timeLabel(milliseconds: Long): String {

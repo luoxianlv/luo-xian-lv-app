@@ -69,6 +69,8 @@ data class LibraryUiState(
     val error: String? = null,
     /** 一次性提示（删除 / 另存为结果），消费后置空 */
     val notice: String? = null,
+    /** 已被删除的内置示例谱面数量：> 0 时曲库显示「恢复内置示例」入口。 */
+    val hiddenBuiltInCount: Int = 0,
 ) {
     /** 当前筛选下的曲目：筛选逻辑属于状态，界面只负责渲染。 */
     val visibleSongs: List<Song> get() = songs.filter(filter::matches)
@@ -130,6 +132,7 @@ class LibraryViewModel(
                 songs = repository.songs(),
                 persistedSelectedId = repository.selectedId,
                 floatingEnabled = repository.floatingEnabled,
+                hiddenBuiltInCount = repository.hiddenBuiltInCount(),
             ),
         )
 
@@ -187,6 +190,7 @@ class LibraryViewModel(
                 songs = repository.songs(),
                 persistedSelectedId = repository.selectedId,
                 floatingEnabled = repository.floatingEnabled,
+                hiddenBuiltInCount = repository.hiddenBuiltInCount(),
             )
         }
 
@@ -241,7 +245,25 @@ class LibraryViewModel(
         if (repository.selectedId == song.id) {
             remaining.firstOrNull()?.let(::select)
         }
-        _local.update { it.copy(songs = remaining, notice = "已删除《${song.title}》") }
+        _local.update {
+            it.copy(
+                songs = remaining,
+                notice = "已删除《${song.title}》",
+                hiddenBuiltInCount = repository.hiddenBuiltInCount(),
+            )
+        }
+    }
+
+    /** 恢复被删除的内置示例谱面。 */
+    fun restoreBuiltIns() {
+        repository.restoreBuiltIns()
+        _local.update {
+            it.copy(
+                songs = repository.songs(),
+                hiddenBuiltInCount = repository.hiddenBuiltInCount(),
+                notice = "已恢复内置示例谱面",
+            )
+        }
     }
 
     /** 「另存为」：校验失败时把错误交给对话框展示，返回是否保存成功。 */
