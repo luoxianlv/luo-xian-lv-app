@@ -16,3 +16,8 @@
 # U-APM 网络监控引用 okhttp3，但 SDK 不强制打包（无 okhttp 时该模块不工作），R8 报缺失类
 -dontwarn okhttp3.**
 -dontwarn okio.**
+
+# 崩溃/卡顿栈还原：保留行号与源文件名属性，配合上传到 U-APM 符号表的 mapping.txt 使用。
+# 不保留这两项时，混淆后的堆栈连行号都没有，mapping 也救不回来。
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile

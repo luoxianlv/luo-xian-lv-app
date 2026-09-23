@@ -17,6 +17,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,8 +25,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
+import app.luoxianlv.core.Analytics
 import app.luoxianlv.ui.components.FloatingNavBar
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.discover.DiscoverScreen
@@ -36,13 +39,11 @@ import app.luoxianlv.ui.importer.ImportScreen
 import app.luoxianlv.ui.library.LibraryScreen
 import app.luoxianlv.ui.settings.AboutScreen
 import app.luoxianlv.ui.settings.LoginScreen
-import app.luoxianlv.ui.settings.SettingsScreen
 import app.luoxianlv.ui.settings.PlaybackDiagnosticsScreen
+import app.luoxianlv.ui.settings.SettingsScreen
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.update.AppUpdateViewModel
 import app.luoxianlv.update.UpdateManager
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.launch
 
 /**
@@ -87,6 +88,13 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     val updateState by appUpdates.state.collectAsState()
     val activity = LocalContext.current as android.app.Activity
     val updater = remember { UpdateManager(activity) }
+    // U-App 页面统计：单 Activity + Compose 只能手动按页面名打点（U-APM 的页面维度是 Activity）。
+    // 顶级 Tab 是跟手切换的 Pager、子页面是覆盖层，这里统一按当前页面名成对上报开始/结束。
+    val currentPage = subPage ?: tabs.getOrNull(pagerState.currentPage) ?: Routes.HOME
+    androidx.compose.runtime.DisposableEffect(currentPage) {
+        Analytics.pageStart(currentPage)
+        onDispose { Analytics.pageEnd(currentPage) }
+    }
     androidx.compose.runtime.LaunchedEffect(updateState.message) {
         updateState.message?.let {
             snackbarHostState.showSnackbar(it)
@@ -98,20 +106,24 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     if (app.luoxianlv.BuildConfig.DEBUG) {
         val context = LocalContext.current
         androidx.compose.runtime.DisposableEffect(Unit) {
-            val receiver = object : android.content.BroadcastReceiver() {
-                override fun onReceive(c: android.content.Context, i: android.content.Intent) {
-                    appUpdates.debugTriggerUpdate()
+            val receiver =
+                object : android.content.BroadcastReceiver() {
+                    override fun onReceive(
+                        c: android.content.Context,
+                        i: android.content.Intent,
+                    ) {
+                        appUpdates.debugTriggerUpdate()
+                    }
                 }
-            }
             androidx.core.content.ContextCompat.registerReceiver(
-                context, receiver,
+                context,
+                receiver,
                 android.content.IntentFilter("app.luoxianlv.DEBUG_TRIGGER_UPDATE"),
                 androidx.core.content.ContextCompat.RECEIVER_EXPORTED,
             )
             onDispose { runCatching { context.unregisterReceiver(receiver) } }
         }
     }
-
 
     Scaffold(
         // 顶级 Tab 页面容器透明：全局背景在 MainActivity 最底层铺开，这里不能把它盖住。
@@ -208,10 +220,19 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                         onShushuLogin = { updater.startShushuLogin(activity) },
                                         onRegister = {
                                             runCatching {
-                                                activity.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
-                                                    android.net.Uri.parse("https://luoxianlv.com/login?mode=register")))
+                                                activity.startActivity(
+                                                    android.content.Intent(
+                                                        android.content.Intent.ACTION_VIEW,
+                                                        android.net.Uri.parse("https://luoxianlv.com/login?mode=register"),
+                                                    ),
+                                                )
                                             }.onFailure {
-                                                android.widget.Toast.makeText(activity, "无法打开浏览器，请访问 luoxianlv.com 注册", android.widget.Toast.LENGTH_LONG).show()
+                                                android.widget.Toast
+                                                    .makeText(
+                                                        activity,
+                                                        "无法打开浏览器，请访问 luoxianlv.com 注册",
+                                                        android.widget.Toast.LENGTH_LONG,
+                                                    ).show()
                                             }
                                         },
                                         snackbarHostState = snackbarHostState,
@@ -237,10 +258,13 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                         snackbarHostState = snackbarHostState,
                                     )
                                 }
-                                Routes.DIAGNOSTICS -> PlaybackDiagnosticsScreen(
-                                    onBack = { subPage = null },
-                                    snackbarHostState = snackbarHostState,
-                                )
+
+                                Routes.DIAGNOSTICS -> {
+                                    PlaybackDiagnosticsScreen(
+                                        onBack = { subPage = null },
+                                        snackbarHostState = snackbarHostState,
+                                    )
+                                }
                             }
                         }
                     }
@@ -262,10 +286,12 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
             }
 
             app.luoxianlv.ui.components.AppUpdateDialog(
-                state = updateState, onDismiss = appUpdates::dismiss, onSource = appUpdates::selectSource,
-                onDownload = appUpdates::download, onInstall = { appUpdates.install(activity) },
+                state = updateState,
+                onDismiss = appUpdates::dismiss,
+                onSource = appUpdates::selectSource,
+                onDownload = appUpdates::download,
+                onInstall = { appUpdates.install(activity) },
             )
-
         }
     }
 }
