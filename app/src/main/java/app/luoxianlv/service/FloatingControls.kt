@@ -72,6 +72,7 @@ class FloatingControls(
     private var seeking = false
     private var displayRequested = false
     private var showRetries = 0
+    private var destroyed = false
 
     // 选歌窗打开时面板先退出，关闭后恢复（两者不共存）。
     private var panelHiddenForPicker = false
@@ -100,6 +101,7 @@ class FloatingControls(
     val isVisible: Boolean get() = displayRequested
 
     fun show() {
+        destroyed = false
         displayRequested = true
         showRetries = 0
         if (root != null) return
@@ -123,6 +125,7 @@ class FloatingControls(
     }
 
     fun destroy() {
+        destroyed = true
         hide()
         handler.removeCallbacksAndMessages(null)
         removeMarker.run()
@@ -159,7 +162,7 @@ class FloatingControls(
         ).apply { gravity = Gravity.TOP or Gravity.START }
 
     private fun render(open: Boolean) {
-        if (!displayRequested) return
+        if (destroyed || !displayRequested || !MusicAccessibilityService.isEnabled(service)) return
         if (!open) speedControlsVisible = false
         palette = PlayerUi.palette(context)
         // render 会先 hide() → dismissPlaylist()，先清标记避免在里面递归恢复面板。
@@ -391,7 +394,7 @@ class FloatingControls(
     }
 
     private fun retryShow() {
-        if (++showRetries <= 3) {
+        if (!destroyed && displayRequested && MusicAccessibilityService.isEnabled(service) && ++showRetries <= 3) {
             handler.postDelayed({ if (displayRequested && root == null) render(expanded) }, 500)
         } else {
             // 重试也没挂上：认输并把显示意图清掉，
@@ -655,7 +658,15 @@ class FloatingControls(
             (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
                 ?.showSoftInput(search, 0)
         }
-        wm.addView(card, p)
+        try {
+            wm.addView(card, p)
+        } catch (_: WindowManager.BadTokenException) {
+            popup = null
+            panelHiddenForPicker = false
+        } catch (_: IllegalStateException) {
+            popup = null
+            panelHiddenForPicker = false
+        }
     }
 
     private fun dismissPlaylist() {
@@ -680,7 +691,15 @@ class FloatingControls(
         if (marker == null) {
             marker = View(context).apply { background = PlayerUi.background(context, 0x55007aff, 20, true, palette.line) }
             val p = layout(context.dp(20), context.dp(20)).apply { flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE }
-            wm.addView(marker, p)
+            try {
+                wm.addView(marker, p)
+            } catch (_: WindowManager.BadTokenException) {
+                marker = null
+                return
+            } catch (_: IllegalStateException) {
+                marker = null
+                return
+            }
         }
         val p = marker!!.layoutParams as WindowManager.LayoutParams
         p.x = x.toInt() - context.dp(10)
