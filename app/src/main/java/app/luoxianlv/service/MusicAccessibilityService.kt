@@ -28,6 +28,7 @@ import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.PlaybackDebugLog
 import app.luoxianlv.profile.ScreenRecognizer
+import app.luoxianlv.update.MidiCoreFixer
 
 class MusicAccessibilityService : AccessibilityService() {
     data class Diagnostics(
@@ -83,6 +84,8 @@ class MusicAccessibilityService : AccessibilityService() {
     private var lastCoordinates: String? = null
     private var halfToneOn = false
     private var pitchMode = PlayMode.NATURAL
+    /** 当前选中曲目是否已经尝试过播放前自动修复（每次选中重置，避免内部 resume 反复重试）。 */
+    private var fixAttemptedForSong = false
     private var playbackDisplay: Triple<Int, Int, Int>? = null
     private var recoveringDisplay = false
     private var recoveryAttempts = 0
@@ -237,6 +240,7 @@ class MusicAccessibilityService : AccessibilityService() {
     fun select(selected: Song) {
         pause()
         song = selected
+        fixAttemptedForSong = false
         repository.selectedId = selected.id
         timeline = PlaybackTimeline(selected.events, selected.bpm)
         baseMs = 0
@@ -259,6 +263,13 @@ class MusicAccessibilityService : AccessibilityService() {
     fun play() {
         if (playing || preparing || recoveringDisplay || timeline.events.isEmpty()) return
         if (baseMs >= durationMs) baseMs = 0
+        // 标记 needsFix 的歌：播放前先自动尝试一次远端重编（每选中一次只试一次），
+        // 失败给出提示，引导回 App 内曲库手动修复；没有 remoteId 的只能靠播放兜底修剪。
+        if (song.needsFix && song.remoteId.isNotBlank() && !fixAttemptedForSong) {
+            fixAttemptedForSong = true
+            attemptRemoteFixThenPlay()
+            return
+        }
         error = null
         // Sync with the real screen once before the first note: locate the
         // keyboard by image recognition (stored ratios break on tablets and
@@ -301,6 +312,33 @@ class MusicAccessibilityService : AccessibilityService() {
             }
         } else {
             startPlaying()
+        }
+    }
+
+    /**
+     * needsFix 歌曲的播放前自动修复：远端重编成功就换新谱面继续播放；
+     * 失败留在当前页并提示回 App 内修复。全程在后台线程跑，不阻塞手势主循环。
+     */
+    private fun attemptRemoteFixThenPlay() {
+        preparing = true
+        error = "正在修复谱面…"
+        floating.refresh()
+        MidiCoreFixer.fixSong(this, song) { ok ->
+            handler.post {
+                preparing = false
+                if (!ok) {
+                    error = "谱面修复失败，请到 App 内曲库中修复该谱子"
+                    floating.refresh()
+                    return@post
+                }
+                // 重新载入该曲（updateCompiled 已覆盖缓存并清除 needsFix），再正常起播。
+                runCatching {
+                    SongRepository(this).songs().first { it.id == song.id }
+                }.getOrNull()?.let { updated ->
+                    if (updated.id == song.id && updated.score != song.score) select(updated)
+                }
+                play()
+            }
         }
     }
 

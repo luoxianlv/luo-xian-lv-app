@@ -213,11 +213,21 @@ class DiscoverViewModel(
 
     fun download(remote: PlatformScore) {
         _state.update { it.copy(downloading = it.downloading + remote.id) }
-        updater.downloadPublicScore(remote.id) { result ->
+        updater.downloadPublicScoreCompiled(remote.id) { result ->
             _state.update { it.copy(downloading = it.downloading - remote.id) }
             result
-                .onSuccess { notation ->
-                    runCatching { repository.add(remote.title, notation, remote.bpm, "平台下载") }
+                .onSuccess { compiled ->
+                    runCatching {
+                        // 入库即带 remoteId 与编译核心版本：后续批量重编靠它们回源比对。
+                        repository.add(
+                            remote.title,
+                            compiled.score,
+                            compiled.bpm,
+"平台下载",
+                            remoteId = remote.id,
+                            coreVersion = compiled.midiCoreVersion,
+                        )
+                    }
                         .onSuccess { song ->
                             syncSelectionToService(song)
                             // 下载会改变歌单，曲库页需要重新读取

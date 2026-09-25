@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Base64
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.core.harmonica.RustCompiledMidi
 import app.luoxianlv.core.harmonica.RustMidiCompiler
 import app.luoxianlv.data.AccountSession
 import app.luoxianlv.data.Kv
@@ -211,6 +212,15 @@ class UpdateManager(
         }
     }
 
+    /** 服务端 MIDI 编译核心版本：变化意味着本地缓存的编译结果需要批量重编。 */
+    fun fetchMidiCoreVersion(onResult: (Result<String>) -> Unit) {
+        background(onResult) {
+            JSONObject(get("$baseUrl/api/midi-core-version"))
+                .optString("midiCoreVersion")
+                .ifBlank { error("服务端未返回编译核心版本") }
+        }
+    }
+
     /** Read public scores from the local platform without requiring SSO. */
     fun fetchPublicScores(
         query: String = "",
@@ -272,6 +282,13 @@ class UpdateManager(
     fun downloadPublicScore(
         id: String,
         onResult: (Result<String>) -> Unit,
+    ) = downloadPublicScoreCompiled(id) { result -> onResult(result.map { it.score }) }
+
+    /** 与 [downloadPublicScore] 相同，但保留完整编译结果（含 bpm 与编译核心版本），
+     *  供下载入库与批量重编使用。简谱文本没有 MIDI 编译过程，midiCoreVersion 为空串。 */
+    fun downloadPublicScoreCompiled(
+        id: String,
+        onResult: (Result<RustCompiledMidi>) -> Unit,
     ) {
         background(onResult) {
             val bytes = requestBytes("$baseUrl/api/scores/${java.net.URLEncoder.encode(id, "UTF-8")}/download", null)
@@ -280,15 +297,17 @@ class UpdateManager(
                 val license = root.optJSONObject("data") ?: root
                 val midi = decryptLicensedMidi(license)
                 // 解密得到的 MIDI 只在内存里编译，不落到磁盘。
-                RustMidiCompiler.compile(compileToken(), midi, melody = true).score
+                RustMidiCompiler.compile(compileToken(), midi, melody = true)
             } else if (bytes.startsWithMidi()) {
-                RustMidiCompiler.compile(compileToken(), bytes, melody = true).score
+                RustMidiCompiler.compile(compileToken(), bytes, melody = true)
             } else {
-                bytes
-                    .toString(Charsets.UTF_8)
-                    .removePrefix("\uFEFF")
-                    .trim()
-                    .also { require(it.any(Char::isDigit)) { "谱面内容为空" } }
+                val text =
+                    bytes
+                        .toString(Charsets.UTF_8)
+                        .removePrefix("﻿")
+                        .trim()
+                        .also { require(it.any(Char::isDigit)) { "谱面内容为空" } }
+                RustCompiledMidi(text, app.luoxianlv.core.score.ScoreParser.tempo(text, 120), 0)
             }
         }
     }

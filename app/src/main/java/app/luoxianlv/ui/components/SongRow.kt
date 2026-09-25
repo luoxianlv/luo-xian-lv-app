@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +49,8 @@ fun SongRow(
     onEdit: () -> Unit,
     onDelete: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    fixing: Boolean = false,
+    onFix: (() -> Unit)? = null,
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -84,12 +87,28 @@ fun SongRow(
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             )
-            Text(
-                "${song.source} · ${timeLabel(song.durationMs)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                Text(
+                    "${song.source} · ${timeLabel(song.durationMs)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // 远端重编连续失败：标出来并给手动重试入口，否则用户只能干等自动任务。
+                if (song.needsFix) {
+                    Text(
+                        "需要修复",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+        }
+        if (song.needsFix && onFix != null) {
+            TextButton(onClick = onFix, enabled = !fixing) {
+                Text(if (fixing) "修复中…" else "修复")
+            }
         }
         Box {
             IconButton(onClick = { menu = true }) {

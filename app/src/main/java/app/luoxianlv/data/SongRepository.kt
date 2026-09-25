@@ -17,6 +17,12 @@ data class Song(
     val builtIn: Boolean = false,
     val contentVersion: Long = 0L,
     val synced: Boolean = false,
+    /** 平台曲库 id（/api/scores/latest 里的 id）：批量重编靠它回源取 MIDI。 */
+    val remoteId: String = "",
+    /** 编译该曲时服务端 MIDI 核心的版本号（如 "1.0.0"）；非 MIDI 来源为空串。 */
+    val coreVersion: String = "",
+    /** 远端重编连续失败（已达重试上限）：列表显示「需要修复」，播放前会先尝试自动修复。 */
+    val needsFix: Boolean = false,
 ) {
     /**
      * 谱面事件：解析失败退化为空谱面，**绝不向上抛**。
@@ -30,7 +36,7 @@ data class Song(
      * 个元素（durationMs 为 0），MusicAccessibilityService.play() 也会在
      * events 为空时早退。
      */
-    val events: List<NoteEvent> by lazy { runCatching { ScoreParser.parse(score) }.getOrDefault(emptyList()) }
+    val events: List<NoteEvent> by lazy { runCatching { trimLeadIn(ScoreParser.parse(score), bpm) }.getOrDefault(emptyList()) }
     val durationMs: Long get() = (events.sumOf { it.beats } * 60000 / bpm).toLong()
     val noteCount: Int get() = events.count { !it.rest }
 
@@ -107,6 +113,10 @@ class SongRepository(
                         s.getString("score"),
                         s.optInt("bpm", 120).coerceIn(1, 999),
                         s.optString("source", "简谱"),
+                        remoteId = s.optString("remoteId", ""),
+                        contentVersion = s.optLong("contentVersion", 0L),
+                        coreVersion = s.optString("coreVersion", ""),
+                        needsFix = s.optBoolean("needsFix", false),
                     )
                 }.getOrNull()
             }
@@ -198,8 +208,10 @@ class SongRepository(
         score: String,
         bpm: Int,
         source: String,
+        remoteId: String = "",
+        coreVersion: String = "",
     ): Song {
-        val song = Song(UUID.randomUUID().toString(), title, score, bpm, source)
+        val song = Song(UUID.randomUUID().toString(), title, score, bpm, source, remoteId = remoteId, coreVersion = coreVersion)
         require(song.events.isNotEmpty()) { "乐谱没有音符" }
         write(songs().filterNot { it.builtIn } + song)
         selectedId = song.id
@@ -266,10 +278,76 @@ class SongRepository(
                     ).put(
                         "source",
                         s.source,
-                    ),
+                    ).apply {
+                        // 老记录没有这些字段：只写非默认值，保持 JSON 精简且向后兼容。
+                        if (s.remoteId.isNotBlank()) put("remoteId", s.remoteId)
+                        if (s.contentVersion > 0) put("contentVersion", s.contentVersion)
+                        if (s.coreVersion.isNotBlank()) put("coreVersion", s.coreVersion)
+                        if (s.needsFix) put("needsFix", true)
+                    },
             )
         }
         check(prefs.edit().putString("songs", json.toString()).commit()) { "保存歌单失败" }
+    }
+
+    /**
+     * 用新版编译结果覆盖本地缓存（批量重编 / 手动修复共用）。
+     * 只动「本地歌单」里的记录；内置、热更、平台同步的谱面不走这条路。
+     * 返回是否找到了对应记录。
+     */
+    fun updateCompiled(
+        id: String,
+        score: String,
+        bpm: Int,
+        coreVersion: String,
+    ): Boolean = mutateSong(id) { item ->
+        item.put("score", score)
+        item.put("bpm", bpm.coerceIn(1, 999))
+        if (coreVersion.isNotBlank()) item.put("coreVersion", coreVersion)
+        item.put("needsFix", false)
+    }
+
+    /** 标记 / 清除「需要修复」；批量重编连续失败时置 true，修复成功后由 [updateCompiled] 清除。 */
+    fun markNeedsFix(
+        id: String,
+        needsFix: Boolean,
+    ): Boolean = mutateSong(id) { item -> item.put("needsFix", needsFix) }
+
+    /** 按标题给缺 remoteId 的老记录补填平台 id（匹配不到的跳过，播放兜底已覆盖）。返回补填条数。 */
+    fun backfillRemoteIds(candidates: Map<String, String>): Int {
+        val array = runCatching { JSONArray(prefs.getString("songs", "[]")) }.getOrDefault(JSONArray())
+        var filled = 0
+        (0 until array.length()).forEach { index ->
+            val item = array.optJSONObject(index) ?: return@forEach
+            if (item.optString("remoteId").isNotBlank()) return@forEach
+            val remoteId = candidates[item.optString("title").trim()] ?: return@forEach
+            item.put("remoteId", remoteId)
+            filled++
+        }
+        if (filled > 0) {
+            check(prefs.edit().putString("songs", array.toString()).commit()) { "保存歌单失败" }
+        }
+        return filled
+    }
+
+    /** 定位并改写「本地歌单」里的一条记录，整条数组原子写回。 */
+    private fun mutateSong(
+        id: String,
+        mutate: (JSONObject) -> Unit,
+    ): Boolean {
+        val array = runCatching { JSONArray(prefs.getString("songs", "[]")) }.getOrDefault(JSONArray())
+        var found = false
+        (0 until array.length()).forEach { index ->
+            val item = array.optJSONObject(index)
+            if (item != null && item.optString("id") == id) {
+                mutate(item)
+                found = true
+            }
+        }
+        if (found) {
+            check(prefs.edit().putString("songs", array.toString()).commit()) { "保存歌单失败" }
+        }
+        return found
     }
 
     private fun syncedSongs(): List<Song> {
@@ -348,6 +426,27 @@ fun hiddenBuiltInsJson(ids: Set<String>): String {
     val array = JSONArray()
     ids.forEach(array::put)
     return array.toString()
+}
+
+/**
+ * 老缓存播放兜底：旧版服务端编译不剪 MIDI 开头空白，坏结果已经以「前导休止符」
+ * 固化在本地缓存的谱面文本里。播放/显示时长前把超过 [MAX_LEAD_IN_MS] 的前导
+ * 休止整段剪掉（与 [app.luoxianlv.core.harmonica.MAX_LEAD_IN_US] 同一阈值），
+ * 重编完成前的过渡期用户不必干等几十秒空白。
+ */
+private const val MAX_LEAD_IN_MS = 5_000L
+
+internal fun trimLeadIn(
+    events: List<NoteEvent>,
+    bpm: Int,
+): List<NoteEvent> {
+    var leadMs = 0L
+    var index = 0
+    while (index < events.size && events[index].rest) {
+        leadMs += (events[index].beats * 60000 / bpm.coerceAtLeast(1)).toLong()
+        index++
+    }
+    return if (index > 0 && leadMs > MAX_LEAD_IN_MS) events.drop(index) else events
 }
 
 fun timeLabel(milliseconds: Long): String {

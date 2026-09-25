@@ -131,6 +131,8 @@ fun LibraryScreen(
                                     onClick = { vm.select(song) },
                                     onEdit = { editing = song },
                                     onDelete = { deleting = song },
+                                    fixing = song.id in state.fixingIds,
+                                    onFix = { vm.fixSong(song) },
                                 )
                             }
                         }

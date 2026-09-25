@@ -1,6 +1,8 @@
 package app.luoxianlv.ui.library
 
 import android.app.Application
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.luoxianlv.core.score.ScoreParser
@@ -9,6 +11,7 @@ import app.luoxianlv.data.SongRepository
 import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.AppEvents
 import app.luoxianlv.ui.syncSelectionToService
+import app.luoxianlv.update.MidiCoreFixer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -71,6 +74,8 @@ data class LibraryUiState(
     val notice: String? = null,
     /** 已被删除的内置示例谱面数量：> 0 时曲库显示「恢复内置示例」入口。 */
     val hiddenBuiltInCount: Int = 0,
+    /** 正在执行手动修复的曲目 id：按钮据此显示「修复中…」并防重复点击。 */
+    val fixingIds: Set<String> = emptySet(),
 ) {
     /** 当前筛选下的曲目：筛选逻辑属于状态，界面只负责渲染。 */
     val visibleSongs: List<Song> get() = songs.filter(filter::matches)
@@ -119,6 +124,7 @@ class LibraryViewModel(
     app: Application,
 ) : AndroidViewModel(app) {
     private val repository = SongRepository(app)
+    private val main = Handler(Looper.getMainLooper())
 
     /**
      * 曲库数据与界面状态。
@@ -263,6 +269,33 @@ class LibraryViewModel(
                 hiddenBuiltInCount = repository.hiddenBuiltInCount(),
                 notice = "已恢复内置示例谱面",
             )
+        }
+    }
+
+    /**
+     * 曲库「修复」按钮：重置计数，完整重试一遍远端重编流程。
+     * 后台线程执行，结果回到主线程更新列表与提示。
+     */
+    fun fixSong(song: Song) {
+        if (song.id in _local.value.fixingIds) return
+        _local.update { it.copy(fixingIds = it.fixingIds + song.id) }
+        MidiCoreFixer.fixSong(getApplication(), song) { ok ->
+            // 回调在后台线程：服务 select 会碰悬浮窗视图，回主线程执行
+            main.post {
+                // 服务可能持有旧 Song 实例，修好后让它也重新载入
+                if (ok) {
+                    MusicAccessibilityService.instance?.let { service ->
+                        runCatching { service.select(repository.songs().first { it.id == song.id }) }
+                    }
+                }
+                _local.update {
+                    it.copy(
+                        fixingIds = it.fixingIds - song.id,
+                        songs = repository.songs(),
+                        notice = if (ok) "已修复《${song.title}》" else "《${song.title}》修复失败，请稍后重试",
+                    )
+                }
+            }
         }
     }
 

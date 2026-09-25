@@ -35,6 +35,7 @@ import app.luoxianlv.ui.components.Snowfall
 import app.luoxianlv.ui.navigation.AppNavHost
 import app.luoxianlv.ui.theme.LuoXianLvTheme
 import app.luoxianlv.update.AppUpdateViewModel
+import app.luoxianlv.update.MidiCoreFixer
 import app.luoxianlv.update.UpdateAutoCheck
 import app.luoxianlv.update.UpdateManager
 
@@ -162,6 +163,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // MIDI 编译核心版本检查 + remoteId 回填 + 批量重编：内部有 5 分钟节流，
+        // 启动和每次回前台都调用即可，离线时静默失败。
+        MidiCoreFixer.kick(this)
         if (android.os.Build.VERSION.SDK_INT >= 33 && repository.floatingEnabled &&
             appPrefs.getBoolean("auto_start_asked", false) &&
             MusicAccessibilityService.isEnabled(this) &&
