@@ -19,6 +19,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import app.luoxianlv.PlayerUi
 import app.luoxianlv.PlayerUi.dp
@@ -37,8 +38,7 @@ import kotlin.math.roundToInt
  * 视觉跟随 App 主题：白卡（92% 不透明 + 细描边 + 阴影）、品牌蓝主按钮、
  * 深藏青标题；深色模式下白卡换成深石板蓝、字色反相（见 [palette]）。两个形态：
  * - 收起：40dp 气泡（浅色白底 / 深色深蓝底）+ 蓝音符，可拖动；
- * - 展开：单行小胶囊（播放钮 + 曲名/状态 + 选歌 + 收起），底部 3dp 蓝色进度条，
- *   进度条区域可点按/拖动 seek。
+ * - 展开：播放控制、倍速滑动条和底部播放进度条；播放进度条可点按/拖动 seek。
  * 「选歌」开居中独立小窗，不再是贴面板下拉。
  */
 class FloatingControls(
@@ -63,6 +63,7 @@ class FloatingControls(
     private var popup: View? = null
     private var marker: View? = null
     private var expanded = false
+    private var speedControlsVisible = false
     private var title: TextView? = null
     private var status: TextView? = null
     private var play: ImageView? = null
@@ -159,6 +160,7 @@ class FloatingControls(
 
     private fun render(open: Boolean) {
         if (!displayRequested) return
+        if (!open) speedControlsVisible = false
         palette = PlayerUi.palette(context)
         // render 会先 hide() → dismissPlaylist()，先清标记避免在里面递归恢复面板。
         panelHiddenForPicker = false
@@ -214,7 +216,7 @@ class FloatingControls(
         }
     }
 
-    /** 展开态：单行小胶囊，进度条叠在胶囊底部边缘（不占额外高度，内容才居中）。 */
+    /** 展开态：播放控制和倍速滑动条，播放进度条叠在胶囊底部边缘。 */
     private fun buildPanel(width: Int): View {
         val panel =
             android.widget.FrameLayout(context).apply {
@@ -263,6 +265,19 @@ class FloatingControls(
                 setOnClickListener { if (popup == null) showPlaylist() else dismissPlaylist() }
             }
         row.addView(picker, LinearLayout.LayoutParams(context.dp(32), context.dp(32)))
+        val speedToggle =
+            ImageView(context).apply {
+                setImageResource(R.drawable.ic_expand_more)
+                imageTintList = ColorStateList.valueOf(PlayerUi.BLUE)
+                rotation = if (speedControlsVisible) 180f else 0f
+                setPadding(context.dp(4), context.dp(4), context.dp(4), context.dp(4))
+                contentDescription = if (speedControlsVisible) "收起倍速设置" else "展开倍速设置"
+                setOnClickListener {
+                    speedControlsVisible = !speedControlsVisible
+                    render(true)
+                }
+            }
+        row.addView(speedToggle, LinearLayout.LayoutParams(context.dp(28), context.dp(32)))
         // 收起
         val collapse =
             PlayerUi.button(context, "收起", iconOnly = true).apply {
@@ -275,6 +290,34 @@ class FloatingControls(
                 setOnClickListener { render(false) }
             }
         row.addView(collapse, LinearLayout.LayoutParams(context.dp(28), context.dp(32)))
+        val speedLabel = PlayerUi.text(context, "", 11f, palette.muted)
+        val speedSlider =
+            SeekBar(context).apply {
+                max = 30 // 0.5x～2.0x，每格 0.05x
+                progressTintList = ColorStateList.valueOf(PlayerUi.BLUE)
+                progressBackgroundTintList = ColorStateList.valueOf(palette.line)
+                thumbTintList = ColorStateList.valueOf(PlayerUi.BLUE)
+                progress = ((service.speed.coerceIn(.5f, 2f) - .5f) * 20).roundToInt()
+                contentDescription = "播放速度"
+                setOnSeekBarChangeListener(
+                    object : SeekBar.OnSeekBarChangeListener {
+                        override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                            val speed = .5f + progress * .05f
+                            speedLabel.text = "倍速 %.2f×".format(speed)
+                        }
+
+                        override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+
+                        override fun onStopTrackingTouch(seekBar: SeekBar) {
+                            service.setSpeed(.5f + seekBar.progress * .05f)
+                        }
+                    },
+                )
+                speedLabel.text = "倍速 %.2f×".format(.5f + progress * .05f)
+            }
+        val speedRow = PlayerUi.row(context).apply { setPadding(context.dp(12), 0, context.dp(12), 0) }
+        speedRow.addView(speedLabel, LinearLayout.LayoutParams(context.dp(78), -2))
+        speedRow.addView(speedSlider, LinearLayout.LayoutParams(0, context.dp(32), 1f))
         // 底部进度条：3dp 蓝条，区域可点按/拖动 seek
         val track =
             object : LinearLayout(context) {
@@ -331,12 +374,19 @@ class FloatingControls(
                 }
             }
         }
-        // 内容行固定 46dp，进度条叠在底部 10dp 内，胶囊整体 46dp 高。
+        // 播放控制 46dp，倍速滑动条 32dp，底部 10dp 留给播放进度条。
         panel.addView(row, android.widget.FrameLayout.LayoutParams(-1, context.dp(46)))
+        if (speedControlsVisible) {
+            panel.addView(
+                speedRow,
+                android.widget.FrameLayout.LayoutParams(-1, context.dp(32)).apply { topMargin = context.dp(46) },
+            )
+        }
         panel.addView(
             strip,
             android.widget.FrameLayout.LayoutParams(-1, context.dp(10), Gravity.BOTTOM),
         )
+        panel.minimumHeight = context.dp(if (speedControlsVisible) 88 else 46)
         return panel
     }
 
