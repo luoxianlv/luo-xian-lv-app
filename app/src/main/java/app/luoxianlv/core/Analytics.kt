@@ -45,7 +45,7 @@ object Analytics {
         kind: String,
         detail: String,
     ) {
-        if (diagEntries.size >= 100) diagEntries.removeFirst()
+        if (diagEntries.size >= 100) diagEntries.removeAt(0)
         diagEntries.add(DiagEntry(System.currentTimeMillis(), kind, detail))
     }
 

@@ -15,6 +15,10 @@ import app.luoxianlv.data.SongRepository
 class PlaybackForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
+        promoteToForeground()
+    }
+
+    private fun promoteToForeground() {
         if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java)
             .createNotificationChannel(NotificationChannel(CHANNEL, "落弦律播放控制", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) })
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
