@@ -45,6 +45,7 @@ object Analytics {
         kind: String,
         detail: String,
     ) {
+        // List.removeFirst() 需要 Android 15；诊断记录满 100 条时也必须兼容旧系统。
         if (diagEntries.size >= 100) diagEntries.removeAt(0)
         diagEntries.add(DiagEntry(System.currentTimeMillis(), kind, detail))
     }
