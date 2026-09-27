@@ -86,6 +86,9 @@ android {
 // 等价于官方文档里 efs { enable = true; whiteList = ["app.luoxianlv"] } 的效果。
 // 帧计算模式与插件自身保持一致（注入方法调用后需要重算帧）。
 androidComponents {
+    beforeVariants(selector().withBuildType("release")) {
+        it.hostTests[com.android.build.api.variant.HostTestBuilder.UNIT_TEST_TYPE]?.enable = true
+    }
     onVariants(selector().withBuildType("release")) { variant ->
         variant.instrumentation.setAsmFramesComputationMode(
             FramesComputationMode.COMPUTE_FRAMES_FOR_INSTRUMENTED_METHODS,
