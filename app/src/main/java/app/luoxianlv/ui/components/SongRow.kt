@@ -37,9 +37,7 @@ import app.luoxianlv.data.timeLabel
 /**
  * 曲目行：连排列表里的一行，**不带卡片外壳**。
  *
- * 整列曲目由曲库页包成一张连续卡片（见 LibraryScreen），行与行之间
- * 只有居中悬浮细线 —— 每首一张圆角卡时，列表越长边缘越碎；
- * 连成一张后内部零边界，选中态用整行底色表达。
+ * 整列曲目由曲库页包成一张连续卡片（见 LibraryScreen），行与行之间 只有居中悬浮细线 —— 每首一张圆角卡时，列表越长边缘越碎； 连成一张后内部零边界，选中态用整行底色表达。
  */
 @Composable
 fun SongRow(
@@ -59,7 +57,9 @@ fun SongRow(
                 .fillMaxWidth()
                 // 选中行铺满整行的浅蓝底：连续列表里的选中态是「一行被染色」，
                 // 而不是某张卡变色。
-                .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+                )
                 .clickable(onClick = onClick)
                 .heightIn(min = 64.dp)
                 .padding(start = 12.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
@@ -67,10 +67,10 @@ fun SongRow(
     ) {
         Box(
             modifier =
-                Modifier
-                    .size(40.dp)
+                Modifier.size(40.dp)
                     .background(
-                        if (selected) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant,
+                        if (selected) MaterialTheme.colorScheme.surface
+                        else MaterialTheme.colorScheme.surfaceVariant,
                         RoundedCornerShape(10.dp),
                     ),
             contentAlignment = Alignment.Center,
@@ -78,7 +78,9 @@ fun SongRow(
             Icon(
                 if (song.isMidi) Icons.Filled.Folder else Icons.Filled.MusicNote,
                 contentDescription = null,
-                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint =
+                    if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Column(modifier = Modifier.weight(1f).padding(start = 12.dp, end = 4.dp)) {
@@ -87,7 +89,10 @@ fun SongRow(
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             )
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
                 Text(
                     "${song.source} · ${timeLabel(song.durationMs)}",
                     style = MaterialTheme.typography.bodySmall,

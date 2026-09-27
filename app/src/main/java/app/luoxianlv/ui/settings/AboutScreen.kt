@@ -1,6 +1,5 @@
 package app.luoxianlv.ui.settings
 
-import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,7 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -24,9 +22,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,10 +52,9 @@ fun AboutScreen(
     // 导航栏是叠层，自行留出它占的高度，否则页脚文案会被胶囊盖住
     Column(
         modifier =
-            Modifier
-                .fillMaxSize()
+            Modifier.fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = NavBarClearance),
+                .padding(bottom = NavBarClearance)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -80,9 +75,11 @@ fun AboutScreen(
             ) {
                 Box(
                     modifier =
-                        Modifier
-                            .size(64.dp)
-                            .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(16.dp)),
+                        Modifier.size(64.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primaryContainer,
+                                RoundedCornerShape(16.dp),
+                            ),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -111,7 +108,10 @@ fun AboutScreen(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 16.dp, end = 20.dp),
         ) {
             Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(if (checkingUpdate) "正在检查…" else "检查新版本", modifier = Modifier.padding(start = 6.dp))
+            Text(
+                if (checkingUpdate) "正在检查…" else "检查新版本",
+                modifier = Modifier.padding(start = 6.dp),
+            )
         }
         Text(
             "落弦律 · 游戏口琴自动演奏",

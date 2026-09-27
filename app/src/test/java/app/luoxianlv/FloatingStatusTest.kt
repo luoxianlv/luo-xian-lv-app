@@ -10,8 +10,7 @@ import org.junit.Test
 /**
  * 悬浮窗运行状态与状态胶囊文案的回归测试。
  *
- * 「我的」页点「启动」后文字不变成「运行中」、也没法用同一个按钮再点回去关掉，
- * 根因是把持久化偏好（用户意图）当成了运行状态：服务被回收后偏好仍是 true，
+ * 「我的」页点「启动」后文字不变成「运行中」、也没法用同一个按钮再点回去关掉， 根因是把持久化偏好（用户意图）当成了运行状态：服务被回收后偏好仍是 true，
  * 界面就谎报运行中/已关闭，点击分支也跟着走错。
  *
  * 这里锁住两件事：运行状态只认「服务在线 **且** 窗口可见」；四种情况各有对应文案。
@@ -22,15 +21,16 @@ class FloatingStatusTest {
         accessibilityEnabled: Boolean = true,
         floatingVisible: Boolean = false,
         error: String? = null,
-    ) = LibraryUiState(
-        service =
-            ServiceStatus(
-                connected = connected,
-                accessibilityEnabled = accessibilityEnabled,
-                floatingVisible = floatingVisible,
-                error = error,
-            ),
-    )
+    ) =
+        LibraryUiState(
+            service =
+                ServiceStatus(
+                    connected = connected,
+                    accessibilityEnabled = accessibilityEnabled,
+                    floatingVisible = floatingVisible,
+                    error = error,
+                )
+        )
 
     @Test
     fun `只有服务在线且窗口可见才算运行中`() {
@@ -83,7 +83,8 @@ class FloatingStatusTest {
     fun `无障碍没开优先于服务未就绪`() {
         assertEquals(
             "无障碍未开启 · 点击去开启",
-            state(connected = false, accessibilityEnabled = false, floatingVisible = true).statusText,
+            state(connected = false, accessibilityEnabled = false, floatingVisible = true)
+                .statusText,
         )
     }
 }

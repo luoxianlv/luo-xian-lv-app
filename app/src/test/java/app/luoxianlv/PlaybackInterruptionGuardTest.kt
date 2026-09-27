@@ -5,7 +5,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlaybackInterruptionGuardTest {
-    @Test fun ignoresOnlyStartsInTheInterruptionWindow() {
+    @Test
+    fun ignoresOnlyStartsInTheInterruptionWindow() {
         val guard = PlaybackInterruptionGuard()
         assertTrue(guard.canStart(0))
         guard.interrupted(1000)

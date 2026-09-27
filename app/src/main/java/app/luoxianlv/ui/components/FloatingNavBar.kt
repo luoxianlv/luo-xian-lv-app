@@ -46,11 +46,7 @@ private data class NavItem(
     val icon: ImageVector,
 )
 
-/**
- * 顺序与 [tabs] 一致：我的-曲库-发现-设置。
- * 「我的」是首页式页面，它自己的左侧导航栏指向另外三个；
- * 其余三个页面仍用这条底部导航栏。
- */
+/** 顺序与 [tabs] 一致：我的-曲库-发现-设置。 「我的」是首页式页面，它自己的左侧导航栏指向另外三个； 其余三个页面仍用这条底部导航栏。 */
 private val items =
     listOf(
         NavItem(Routes.HOME, "我的", Icons.Filled.Home),
@@ -62,21 +58,17 @@ private val items =
 /**
  * 底部导航栏叠在页面内容之上所占的额外高度。
  *
- * 导航栏是浮层，**不参与 Scaffold 的布局**：一旦放进 `bottomBar` 插槽，
- * Scaffold 的内容内边距就会跟着它的显隐动画一起变化，
+ * 导航栏是浮层，**不参与 Scaffold 的布局**：一旦放进 `bottomBar` 插槽， Scaffold 的内容内边距就会跟着它的显隐动画一起变化，
  * 「我的」这种按可用高度分配空间的页面会因此每帧重算而回流。
  *
- * 代价是可滚动页面要自己留出这段距离，否则最后一个条目会被胶囊盖住 ——
- * 各页的底部内容内边距直接用它。
+ * 代价是可滚动页面要自己留出这段距离，否则最后一个条目会被胶囊盖住 —— 各页的底部内容内边距直接用它。
  *
  * = 4dp（上外边距）+ 54dp（胶囊）+ 8dp（下外边距）+ 8dp（余量）
  */
 val NavBarClearance: Dp = 74.dp
 
 /**
- * 浮空底部导航栏：圆角胶囊悬浮于内容之上。
- * [position] 是带手势偏移的选中位置（页码 + 偏移分数，0..3）：
- * 滑动页面时胶囊随手指实时移动，位移越大胶囊横向拉伸越明显；
+ * 浮空底部导航栏：圆角胶囊悬浮于内容之上。 [position] 是带手势偏移的选中位置（页码 + 偏移分数，0..3）： 滑动页面时胶囊随手指实时移动，位移越大胶囊横向拉伸越明显；
  * 选中态胶囊完整覆盖「图标 + 文字」。
  */
 @Composable
@@ -90,8 +82,7 @@ fun FloatingNavBar(
     // 省掉阴影也无妨 —— 白胶囊叠在蓝灰渐变上，轮廓本来就够清楚。
     Surface(
         modifier =
-            Modifier
-                .fillMaxWidth()
+            Modifier.fillMaxWidth()
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp),
         shape = RoundedCornerShape(28.dp),
@@ -100,49 +91,44 @@ fun FloatingNavBar(
         shadowElevation = 0.dp,
     ) {
         val selectedIndex = position.roundToInt().coerceIn(0, items.size - 1)
-        BoxWithConstraints(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(54.dp)
-                    .padding(5.dp),
-        ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(54.dp).padding(5.dp)) {
             val itemWidth = maxWidth / items.size
             // 手势位移驱动横向拉伸：滑到两页中间时胶囊最长，停下收回
             val dragFraction = abs(position - position.roundToInt())
             val stretch = (dragFraction * 0.44f).coerceIn(0f, 0.22f)
             Box(
                 modifier =
-                    Modifier
-                        .offset(x = itemWidth * position - itemWidth * stretch / 2)
+                    Modifier.offset(x = itemWidth * position - itemWidth * stretch / 2)
                         .width(itemWidth * (1 + stretch))
                         .fillMaxHeight()
                         .background(
                             MaterialTheme.colorScheme.primaryContainer,
                             RoundedCornerShape(24.dp),
-                        ),
+                        )
             )
             Row(modifier = Modifier.fillMaxSize()) {
                 items.forEachIndexed { index, item ->
-                    val tint by animateColorAsState(
-                        targetValue =
-                            if (index == selectedIndex) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        label = "nav-item-tint",
-                    )
+                    val tint by
+                        animateColorAsState(
+                            targetValue =
+                                if (index == selectedIndex) {
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            label = "nav-item-tint",
+                        )
                     Column(
                         modifier =
-                            Modifier
-                                .weight(1f)
+                            Modifier.weight(1f)
                                 .fillMaxHeight()
                                 .clip(RoundedCornerShape(24.dp))
                                 .clickable(
                                     role = Role.Tab,
                                     onClickLabel = item.label,
-                                ) { onNavigate(item.route) },
+                                ) {
+                                    onNavigate(item.route)
+                                },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {

@@ -35,10 +35,8 @@ private val LightColors =
 /**
  * 深色品牌色板。
  *
- * 与浅色不同，深色**不接 Android 12+ 动态取色**：页面底色始终是
- * [DarkBackdrop] 那支固定的深藏青渐变（底是我们自己定的，不是 Material 的 surface），
- * 动态取色会拿来一套紫灰的强调色，压在藏青底上不自洽。
- * 浅色那边保留动态取色是历史行为，这次不动。
+ * 与浅色不同，深色**不接 Android 12+ 动态取色**：页面底色始终是 [DarkBackdrop] 那支固定的深藏青渐变（底是我们自己定的，不是 Material 的
+ * surface）， 动态取色会拿来一套紫灰的强调色，压在藏青底上不自洽。 浅色那边保留动态取色是历史行为，这次不动。
  */
 private val DarkColors =
     darkColorScheme(
@@ -65,12 +63,10 @@ private val DarkColors =
 /**
  * 落弦律 Material 3 主题：Android 12+ 动态取色（仅浅色），低版本回退品牌色。
  *
- * 页面底色由 `Backdrop.kt` 的渐变底承担；容器半透明固定为
- * [ON_BACKDROP_SURFACE_ALPHA]（深色下 [ON_BACKDROP_SURFACE_ALPHA_DARK]），
- * 文字与强调色保持不透明 —— 半透明容器要是连文字一起透，可读性会明显下降。
+ * 页面底色由 `Backdrop.kt` 的渐变底承担；容器半透明固定为 [ON_BACKDROP_SURFACE_ALPHA]（深色下
+ * [ON_BACKDROP_SURFACE_ALPHA_DARK]）， 文字与强调色保持不透明 —— 半透明容器要是连文字一起透，可读性会明显下降。
  *
- * @param darkTheme 是否深色。调用方（`MainActivity`）按用户的「深色模式」偏好
- *   与系统设置算出结果传进来，不在这里自己读偏好，
+ * @param darkTheme 是否深色。调用方（`MainActivity`）按用户的「深色模式」偏好 与系统设置算出结果传进来，不在这里自己读偏好，
  *   这样预览和测试可以直接控制主题而不用造存储。
  */
 @Composable
@@ -127,10 +123,8 @@ fun LuoXianLvTheme(
 /**
  * 让状态栏 / 手势条的图标跟着主题反色。
  *
- * `enableEdgeToEdge()` 的自动判定只认系统深色设置，用户在应用内选了「深色」
- * 而系统仍是浅色时，它会把深色底的图标继续画成黑。这里按最终结果显式覆盖一次：
- * 主题一变就重跑（`darkTheme` 在 `SideEffect` 的闭包里），
- * 系统设置变化时 [isSystemInDarkTheme] 也会触发重组。
+ * `enableEdgeToEdge()` 的自动判定只认系统深色设置，用户在应用内选了「深色」 而系统仍是浅色时，它会把深色底的图标继续画成黑。这里按最终结果显式覆盖一次：
+ * 主题一变就重跑（`darkTheme` 在 `SideEffect` 的闭包里）， 系统设置变化时 [isSystemInDarkTheme] 也会触发重组。
  */
 @Composable
 private fun SystemBarsAppearance(darkTheme: Boolean) {

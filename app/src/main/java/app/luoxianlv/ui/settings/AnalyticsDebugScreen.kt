@@ -41,10 +41,7 @@ import app.luoxianlv.ui.components.SettingsCard
 import java.text.SimpleDateFormat
 import java.util.Locale
 
-/**
- * 统计诊断页（仅 debug 包）：排查友盟「集成测试 / 实时日志」扫码唤起后无数据的问题。
- * 展示 SDK 是否初始化、扫码唤起是否到达 MainActivity、以及埋点流水。
- */
+/** 统计诊断页（仅 debug 包）：排查友盟「集成测试 / 实时日志」扫码唤起后无数据的问题。 展示 SDK 是否初始化、扫码唤起是否到达 MainActivity、以及埋点流水。 */
 @Composable
 fun AnalyticsDebugScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -66,7 +63,8 @@ fun AnalyticsDebugScreen(onBack: () -> Unit) {
         }
         LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance),
+            contentPadding =
+                PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
@@ -94,7 +92,8 @@ fun AnalyticsDebugScreen(onBack: () -> Unit) {
                         )
                         PreferenceItem(
                             title = "版本",
-                            summary = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})${if (BuildConfig.DEBUG) " · debug" else ""}",
+                            summary =
+                                "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})${if (BuildConfig.DEBUG) " · debug" else ""}",
                             icon = Icons.Filled.DeveloperBoard,
                             iconTint = IconTeal,
                         )
@@ -158,8 +157,7 @@ fun AnalyticsDebugScreen(onBack: () -> Unit) {
             }
             item {
                 Text(
-                    "判断方法：唤起记录里出现 um.6ab2… 的完整链接，说明二维码已到达 App；" +
-                        "若实时日志仍无数据，则是 SDK 侧标记或上报问题。",
+                    "判断方法：唤起记录里出现 um.6ab2… 的完整链接，说明二维码已到达 App；" + "若实时日志仍无数据，则是 SDK 侧标记或上报问题。",
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Default,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

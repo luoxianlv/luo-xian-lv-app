@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.core.Analytics
+import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.ui.components.FloatingNavBar
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.discover.DiscoverScreen
@@ -44,28 +45,31 @@ import app.luoxianlv.ui.settings.PlaybackDiagnosticsScreen
 import app.luoxianlv.ui.settings.SettingsScreen
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.update.AppUpdateViewModel
-import app.luoxianlv.update.UpdateManager
 import kotlinx.coroutines.launch
 
 /**
  * 顶级 Tab：我的-曲库-发现-设置。
  *
- * 「我的」是首页式页面（无曲目列表），它的左侧导航栏指向另外三个；
- * 「导入」从顶级 Tab 降为「曲库」内的子页面。
+ * 「我的」是首页式页面（无曲目列表），它的左侧导航栏指向另外三个； 「导入」从顶级 Tab 降为「曲库」内的子页面。
  */
 private val tabs = listOf(Routes.HOME, Routes.LIBRARY, Routes.DISCOVER, Routes.SETTINGS)
 
 /** 子页面（覆盖层，不参与手势滑动） */
 private val subPages =
-    listOf(Routes.SEARCH, Routes.PLATFORM, Routes.LOGIN, Routes.ABOUT, Routes.IMPORT, Routes.DIAGNOSTICS, Routes.ANALYTICS_DEBUG)
+    listOf(
+        Routes.SEARCH,
+        Routes.PLATFORM,
+        Routes.LOGIN,
+        Routes.ABOUT,
+        Routes.IMPORT,
+        Routes.DIAGNOSTICS,
+        Routes.ANALYTICS_DEBUG,
+    )
 
 /** 「我的」在 [tabs] 中的下标：它显示时底部导航栏要隐藏。 */
 private val HOME_INDEX = tabs.indexOf(Routes.HOME)
 
-/**
- * 微信式导航骨架：四个顶级 Tab 用 HorizontalPager 承载，左右滑动切换；
- * 子页面以覆盖层形式滑入；浮空导航栏的胶囊跟随滑动进度。
- */
+/** 微信式导航骨架：四个顶级 Tab 用 HorizontalPager 承载，左右滑动切换； 子页面以覆盖层形式滑入；浮空导航栏的胶囊跟随滑动进度。 */
 @Composable
 fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -84,20 +88,24 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     // 小窗/分屏下拖动窗口改变尺寸时，进行中的 Tab 切换动画可能被打断在半路，
     // Pager 不会自行纠正（表现为两页各占半屏、内容点不动）。滚动停止后若不在整页就吸回去。
     androidx.compose.runtime.LaunchedEffect(pagerState) {
-        androidx.compose.runtime.snapshotFlow { pagerState.isScrollInProgress to pagerState.currentPageOffsetFraction }
+        androidx.compose.runtime
+            .snapshotFlow { pagerState.isScrollInProgress to pagerState.currentPageOffsetFraction }
             .collect { (scrolling, offset) ->
-                if (!scrolling && offset != 0f) pagerState.animateScrollToPage(pagerState.currentPage)
+                if (!scrolling && offset != 0f)
+                    pagerState.animateScrollToPage(pagerState.currentPage)
             }
     }
 
     // 连续页码（当前页 + 手势偏移）：导航胶囊用它跟手
     val position =
-        (pagerState.currentPage + pagerState.currentPageOffsetFraction)
-            .coerceIn(0f, (tabs.size - 1).toFloat())
+        (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(
+            0f,
+            (tabs.size - 1).toFloat(),
+        )
     val libraryActive = pagerState.currentPage == HOME_INDEX
     val updateState by appUpdates.state.collectAsState()
     val activity = LocalContext.current as android.app.Activity
-    val updater = remember { UpdateManager(activity) }
+    val updater = remember { PlatformClient(activity) }
     // U-App 页面统计：单 Activity + Compose 只能手动按页面名打点（U-APM 的页面维度是 Activity）。
     // 顶级 Tab 是跟手切换的 Pager、子页面是覆盖层，这里统一按当前页面名成对上报开始/结束。
     val currentPage = subPage ?: tabs.getOrNull(pagerState.currentPage) ?: Routes.HOME
@@ -164,7 +172,14 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                             HomeScreen(
                                 onLibrary = { goTab(Routes.LIBRARY) },
                                 onDiscover = { goTab(Routes.DISCOVER) },
-                                onPractice = { activity.startActivity(android.content.Intent(activity, app.luoxianlv.ui.practice.PracticeActivity::class.java)) },
+                                onPractice = {
+                                    activity.startActivity(
+                                        android.content.Intent(
+                                            activity,
+                                            app.luoxianlv.ui.practice.PracticeActivity::class.java,
+                                        )
+                                    )
+                                },
                                 onSettings = { goTab(Routes.SETTINGS) },
                                 snackbarHostState = snackbarHostState,
                             )
@@ -235,17 +250,20 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                                 activity.startActivity(
                                                     android.content.Intent(
                                                         android.content.Intent.ACTION_VIEW,
-                                                        android.net.Uri.parse("https://luoxianlv.com/login?mode=register"),
-                                                    ),
+                                                        android.net.Uri.parse(
+                                                            "https://luoxianlv.com/login?mode=register"
+                                                        ),
+                                                    )
                                                 )
-                                            }.onFailure {
-                                                android.widget.Toast
-                                                    .makeText(
-                                                        activity,
-                                                        "无法打开浏览器，请访问 luoxianlv.com 注册",
-                                                        android.widget.Toast.LENGTH_LONG,
-                                                    ).show()
                                             }
+                                                .onFailure {
+                                                    android.widget.Toast.makeText(
+                                                            activity,
+                                                            "无法打开浏览器，请访问 luoxianlv.com 注册",
+                                                            android.widget.Toast.LENGTH_LONG,
+                                                        )
+                                                        .show()
+                                                }
                                         },
                                         snackbarHostState = snackbarHostState,
                                     )

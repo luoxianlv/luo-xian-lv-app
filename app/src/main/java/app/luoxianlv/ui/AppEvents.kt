@@ -6,9 +6,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 /**
  * 跨页面轻量事件总线。
  *
- * 曲库数据会被导入页 / 发现页改动，曲库页必须重新读取；
- * 而 HorizontalPager 会销毁离屏页面，不能指望「回到该页时重组」来刷新。
- * 统一从这里发通知，避免每个改动点自己想办法。
+ * 曲库数据会被导入页 / 发现页改动，曲库页必须重新读取； 而 HorizontalPager 会销毁离屏页面，不能指望「回到该页时重组」来刷新。 统一从这里发通知，避免每个改动点自己想办法。
  */
 object AppEvents {
     private val _libraryChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)

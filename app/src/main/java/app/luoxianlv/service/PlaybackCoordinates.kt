@@ -1,13 +1,16 @@
 package app.luoxianlv.service
 
-import app.luoxianlv.data.KeyLayout
 import app.luoxianlv.core.score.PlayMode
+import app.luoxianlv.data.KeyLayout
 
 internal object PlaybackCoordinates {
     data class Frame(val width: Int, val height: Int) {
-        init { require(width > 0 && height > 0) }
+        init {
+            require(width > 0 && height > 0)
+        }
+
         fun point(x: Float, y: Float): Pair<Float, Float> {
-            require(validPoint(x,y))
+            require(validPoint(x, y))
             // Recognizer divides positions by full image dimensions; use that exact inverse.
             return (x * width).coerceAtMost((width - 1).toFloat()) to
                 (y * height).coerceAtMost((height - 1).toFloat())

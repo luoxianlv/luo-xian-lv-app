@@ -10,10 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import app.luoxianlv.ui.theme.OnBackdropContent
 
-/**
- * 顶级页面大标题：标题 + 可选右侧计数/说明。
- * 我的 / 曲库 / 发现 / 设置共用同一套排版，避免各写一遍字号与对齐。
- */
+/** 顶级页面大标题：标题 + 可选右侧计数/说明。 我的 / 曲库 / 发现 / 设置共用同一套排版，避免各写一遍字号与对齐。 */
 @Composable
 fun PageTitle(
     title: String,

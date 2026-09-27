@@ -10,13 +10,12 @@ import org.junit.Test
 /**
  * 曲库归类规则回归测试。
  *
- * 「MIDI / 简谱」的判断原本在界面里重复实现两次
- * （列表筛选 `filter == 1 == source.startsWith("MIDI")` 与卡片图标），
- * 现已收敛为 [Song.isMidi] + [SongFilter]。这里锁住 source 取值与归类语义，
- * 以后谁改了 source 文案而忘了归类会直接挂测试。
+ * 「MIDI / 简谱」的判断原本在界面里重复实现两次 （列表筛选 `filter == 1 == source.startsWith("MIDI")` 与卡片图标）， 现已收敛为
+ * [Song.isMidi] + [SongFilter]。这里锁住 source 取值与归类语义， 以后谁改了 source 文案而忘了归类会直接挂测试。
  */
 class SongFilterTest {
-    private fun song(source: String) = Song(id = source, title = source, score = "", bpm = 120, source = source)
+    private fun song(source: String) =
+        Song(id = source, title = source, score = "", bpm = 120, source = source)
 
     /** SongRepository 里实际会写入的全部 source 取值。 */
     private val midiSources = listOf("MIDI · Rust 编译", "MIDI · 引擎编译")

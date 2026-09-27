@@ -42,7 +42,9 @@ object ScoreParser {
         val matches = tokens.findAll(source).toList()
         var end = 0
         matches.forEachIndexed { index, match ->
-            require(source.substring(end, match.range.first).isBlank()) { "无法识别谱面：${source.substring(end, match.range.first).take(20)}" }
+            require(source.substring(end, match.range.first).isBlank()) {
+                "无法识别谱面：${source.substring(end, match.range.first).take(20)}"
+            }
             end = match.range.last + 1
             val t = match.value.lowercase()
             when {
@@ -88,12 +90,15 @@ object ScoreParser {
 
                 t == "'" || t == "," -> {
                     require(out.isNotEmpty()) { "高低音标记前缺少音符" }
-                    out[out.lastIndex] = out.last().copy(mode = if (t == "'") PlayMode.RAISE else PlayMode.LOWER)
+                    out[out.lastIndex] =
+                        out.last().copy(mode = if (t == "'") PlayMode.RAISE else PlayMode.LOWER)
                 }
 
                 t == "~" || t == "-" -> {
                     val next = matches.getOrNull(index + 1)
-                    if (t == "-" && next?.range?.first == end && next.value.first() in "12345678iI#") {
+                    if (
+                        t == "-" && next?.range?.first == end && next.value.first() in "12345678iI#"
+                    ) {
                         pending = PlayMode.LOWER
                     } else {
                         require(out.isNotEmpty()) { "延音前缺少音符" }
@@ -115,7 +120,14 @@ object ScoreParser {
                         } else {
                             t.toInt() - 1
                         }
-                    out += NoteEvent(key, pending ?: groups.peek() ?: PlayMode.NATURAL, unit, rest, !rest && half)
+                    out +=
+                        NoteEvent(
+                            key,
+                            pending ?: groups.peek() ?: PlayMode.NATURAL,
+                            unit,
+                            rest,
+                            !rest && half,
+                        )
                     pending = null
                     half = false
                 }
@@ -135,7 +147,10 @@ object ScoreParser {
             events.chunked(12).joinToString("\n") { line ->
                 line.joinToString(" ") { e ->
                     val value = BigDecimal.valueOf(e.beats).stripTrailingZeros().toPlainString()
-                    val note = (if (e.halfTone) "#" else "") + (if (e.keyIndex == 7) "i" else (e.keyIndex + 1).toString()) + ":$value"
+                    val note =
+                        (if (e.halfTone) "#" else "") +
+                            (if (e.keyIndex == 7) "i" else (e.keyIndex + 1).toString()) +
+                            ":$value"
                     when {
                         e.rest -> "0:$value"
                         e.mode == PlayMode.RAISE -> "[$note]"

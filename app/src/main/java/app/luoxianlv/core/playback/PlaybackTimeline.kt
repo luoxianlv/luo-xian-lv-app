@@ -1,4 +1,5 @@
 package app.luoxianlv.core.playback
+
 import app.luoxianlv.core.score.NoteEvent
 
 class PlaybackTimeline(
@@ -11,7 +12,8 @@ class PlaybackTimeline(
         events.forEachIndexed { i, e -> offsets[i + 1] = offsets[i] + e.beats * 60000 / bpm }
     }
 
-    val durationMs get() = offsets.last().toLong()
+    val durationMs
+        get() = offsets.last().toLong()
 
     fun indexAt(milliseconds: Long): Int {
         val found = offsets.binarySearch(milliseconds.toDouble())

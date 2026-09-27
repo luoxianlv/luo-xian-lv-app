@@ -30,22 +30,18 @@ import app.luoxianlv.ui.theme.containerElevation
 /**
  * 分组卡的圆角。
  *
- * 单独抽成常量是因为「一张卡」不止一种拼法：[SettingsCard] 用 `Card` 的 shape 一次性画出来，
- * 而惰性列表（见 `RemoteScoreList`）得按行拼 —— 首行给上圆角、末行给下圆角。
- * 两种拼法必须用同一个值，否则同一页上的卡片圆角会对不齐。
+ * 单独抽成常量是因为「一张卡」不止一种拼法：[SettingsCard] 用 `Card` 的 shape 一次性画出来， 而惰性列表（见 `RemoteScoreList`）得按行拼 ——
+ * 首行给上圆角、末行给下圆角。 两种拼法必须用同一个值，否则同一页上的卡片圆角会对不齐。
  */
 val GroupCardCornerRadius = 20.dp
 
 /**
  * 设置页分组卡：**一组一张白卡**，卡与卡之间的缝隙露出渐变底。
  *
- * QQ 设置的版面语言：图标行归拢进圆角白卡，组与组用留白分开，
- * 而不是整页一张大卡再用小标题切分 —— 那样标题和行挤在一起，
- * 组的边界反而不清楚。卡片自身半透明（见 `theme/Theme.kt`），
- * 压在渐变底上不会像死白的板子。
+ * QQ 设置的版面语言：图标行归拢进圆角白卡，组与组用留白分开， 而不是整页一张大卡再用小标题切分 —— 那样标题和行挤在一起， 组的边界反而不清楚。卡片自身半透明（见
+ * `theme/Theme.kt`）， 压在渐变底上不会像死白的板子。
  *
- * 刻意不加描边：半透明卡片在亮渐变上的边界已经够柔，
- * 再加一圈灰线会把「浮在渐变上的毛玻璃」切成「贴在屏幕上的纸片」。
+ * 刻意不加描边：半透明卡片在亮渐变上的边界已经够柔， 再加一圈灰线会把「浮在渐变上的毛玻璃」切成「贴在屏幕上的纸片」。
  */
 @Composable
 fun SettingsCard(
@@ -62,10 +58,7 @@ fun SettingsCard(
     }
 }
 
-/**
- * 设置项图标色板：QQ 设置的标志之一就是一组高饱和但不刺眼的彩色图标，
- * 给每一项固定一个色相，用户扫颜色就能定位功能。
- */
+/** 设置项图标色板：QQ 设置的标志之一就是一组高饱和但不刺眼的彩色图标， 给每一项固定一个色相，用户扫颜色就能定位功能。 */
 val IconBlue = Color(0xFF3E7BE0)
 val IconCyan = Color(0xFF3FA8C9)
 val IconOrange = Color(0xFFE8862E)
@@ -81,9 +74,7 @@ val IconIndigo = Color(0xFF6C7BE0)
 /**
  * 分组标题：卡片上方的小灰字。
  *
- * 配合「一组一张卡」用：标题在卡外贴着卡顶，组内各行不再另带标题，
- * 版面才是 QQ 那种「标题 + 白卡」的上下关系。设置主界面、播放诊断页
- * 都遵循这个语言。
+ * 配合「一组一张卡」用：标题在卡外贴着卡顶，组内各行不再另带标题， 版面才是 QQ 那种「标题 + 白卡」的上下关系。设置主界面、播放诊断页 都遵循这个语言。
  */
 @Composable
 fun PreferenceGroupCaption(
@@ -110,8 +101,7 @@ private fun PreferenceIconChip(
 ) {
     Box(
         modifier =
-            Modifier
-                .size(36.dp)
+            Modifier.size(36.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(tint.copy(alpha = 0.12f)),
         contentAlignment = Alignment.Center,
@@ -128,8 +118,7 @@ private fun PreferenceIconChip(
 /**
  * 偏好项：图标（可选）+ 标题 + 可选摘要 + 右侧箭头。
  *
- * [onClick] 传 null 表示只读行（如播放诊断的状态读出）：
- * 整行不可点击、无箭头，避免点了没反应的假入口。
+ * [onClick] 传 null 表示只读行（如播放诊断的状态读出）： 整行不可点击、无箭头，避免点了没反应的假入口。
  */
 @Composable
 fun PreferenceItem(
@@ -141,8 +130,7 @@ fun PreferenceItem(
 ) {
     Row(
         modifier =
-            Modifier
-                .fillMaxWidth()
+            Modifier.fillMaxWidth()
                 .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -184,8 +172,7 @@ fun PreferenceSwitchItem(
 ) {
     Row(
         modifier =
-            Modifier
-                .fillMaxWidth()
+            Modifier.fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .clickable { onCheckedChange(!checked) }
                 .padding(horizontal = 16.dp, vertical = 12.dp),

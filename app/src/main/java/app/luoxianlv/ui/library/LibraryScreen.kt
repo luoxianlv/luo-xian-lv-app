@@ -49,8 +49,7 @@ import app.luoxianlv.ui.theme.LocalBackdropPalette
 /**
  * 曲库：谱面列表 + 筛选。
  *
- * 这个列表原本在「我的」页，「我的」改成首页式布局后移到这里，
- * 由「我的」左侧导航栏的「曲库」入口进入。导入入口也随之回到本页。
+ * 这个列表原本在「我的」页，「我的」改成首页式布局后移到这里， 由「我的」左侧导航栏的「曲库」入口进入。导入入口也随之回到本页。
  */
 @Composable
 fun LibraryScreen(
@@ -97,7 +96,9 @@ fun LibraryScreen(
             TextButton(
                 onClick = vm::restoreBuiltIns,
                 modifier = Modifier.padding(start = 12.dp),
-            ) { Text("恢复内置示例（${state.hiddenBuiltInCount}）") }
+            ) {
+                Text("恢复内置示例（${state.hiddenBuiltInCount}）")
+            }
         }
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -166,8 +167,10 @@ fun LibraryScreen(
                     onClick = {
                         vm.removeSong(song)
                         deleting = null
-                    },
-                ) { Text("删除") }
+                    }
+                ) {
+                    Text("删除")
+                }
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("取消") } },
         )
@@ -214,8 +217,7 @@ private fun EditSongDialog(
 /**
  * 谱面筛选：三种归类用 Material 的分段按钮。
  *
- * 原来用 `TabRow`：它是给页面级导航用的控件（自带指示条 + 一条贯穿整屏的分隔线），
- * 拿来做列表筛选既不是 Material 的用法，视觉上也与圆角卡片格格不入。
+ * 原来用 `TabRow`：它是给页面级导航用的控件（自带指示条 + 一条贯穿整屏的分隔线）， 拿来做列表筛选既不是 Material 的用法，视觉上也与圆角卡片格格不入。
  */
 @Composable
 private fun SongFilterRow(
@@ -238,7 +240,9 @@ private fun SongFilterRow(
                 modifier = Modifier.weight(1f),
                 // 不显示默认的对勾：它会改变分段宽度，切换选中时整行会跳一下
                 icon = {},
-            ) { Text(filter.label) }
+            ) {
+                Text(filter.label)
+            }
         }
     }
 }
@@ -247,16 +251,11 @@ private fun SongFilterRow(
  * 分段按钮配色。
  *
  * 三个都是被底色逼出来的选择：
- * 1. 未选中态必须给 surface 白底 —— Material 默认是透明色，
- *    透明容器直接压在渐变底上就只剩一圈细边框，看着像控件失效。
- * 2. 选中态用主题的 [LocalBackdropPalette.segmentSelected] 而不是 primaryContainer：
- *    primaryContainer 是浅蓝，压在同为蓝灰的渐变底上，
- *    和白底的未选中态几乎分不出来，选中的那一格会「消失」。
- *    这个块深浅两套各给一个值：浅色是半透明深藏青，
- *    深色反过来要比未选中的 surface 更亮才叫「选中」（见 Backdrop.kt）。
- * 3. 两态的边框全透明：outlineVariant 的灰框会让整行看起来像
- *    三个描边小盒拼在一起，和圆角卡片格格不入；去掉后整行融成
- *    一个圆角长条（选中格是唯一强调），分隔交给底色对比完成。
+ * 1. 未选中态必须给 surface 白底 —— Material 默认是透明色， 透明容器直接压在渐变底上就只剩一圈细边框，看着像控件失效。
+ * 2. 选中态用主题的 [LocalBackdropPalette.segmentSelected] 而不是 primaryContainer： primaryContainer
+ *    是浅蓝，压在同为蓝灰的渐变底上， 和白底的未选中态几乎分不出来，选中的那一格会「消失」。 这个块深浅两套各给一个值：浅色是半透明深藏青， 深色反过来要比未选中的 surface
+ *    更亮才叫「选中」（见 Backdrop.kt）。
+ * 3. 两态的边框全透明：outlineVariant 的灰框会让整行看起来像 三个描边小盒拼在一起，和圆角卡片格格不入；去掉后整行融成 一个圆角长条（选中格是唯一强调），分隔交给底色对比完成。
  */
 @Composable
 private fun filterSegmentColors(): SegmentedButtonColors =

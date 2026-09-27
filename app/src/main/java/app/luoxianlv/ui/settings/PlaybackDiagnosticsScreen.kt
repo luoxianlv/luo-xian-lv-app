@@ -55,10 +55,7 @@ import app.luoxianlv.ui.components.PreferenceItem
 import app.luoxianlv.ui.components.SettingsCard
 import kotlinx.coroutines.launch
 
-/**
- * 播放诊断页：与设置主页同一套 QQ 分组语言 —— 组标题小灰字贴在卡上方，
- * 每项彩色圆角方块图标 + 标题 + 摘要；只读状态行不带箭头（可点项才有）。
- */
+/** 播放诊断页：与设置主页同一套 QQ 分组语言 —— 组标题小灰字贴在卡上方， 每项彩色圆角方块图标 + 标题 + 摘要；只读状态行不带箭头（可点项才有）。 */
 @Composable
 fun PlaybackDiagnosticsScreen(
     onBack: () -> Unit,
@@ -87,7 +84,8 @@ fun PlaybackDiagnosticsScreen(
         }
         LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance),
+            contentPadding =
+                PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             // 组标题 + 白卡是一个视觉单元，放进同一个 item，组间留白交给 spacedBy。
@@ -128,7 +126,10 @@ fun PlaybackDiagnosticsScreen(
                     PreferenceGroupCaption("屏幕与手势")
                     Spacer(modifier = Modifier.height(6.dp))
                     SettingsCard {
-                        val display = d?.display?.let { "${it.first} × ${it.second} · 旋转 ${it.third * 90}°" } ?: "暂无"
+                        val display =
+                            d?.display?.let {
+                                "${it.width} × ${it.height} · 旋转 ${it.rotation * 90}°"
+                            } ?: "暂无"
                         PreferenceItem(
                             title = "当前屏幕",
                             summary = display,
@@ -137,7 +138,10 @@ fun PlaybackDiagnosticsScreen(
                         )
                         PreferenceItem(
                             title = "播放时屏幕",
-                            summary = d?.playbackDisplay?.let { "${it.first} × ${it.second} · 旋转 ${it.third * 90}°" } ?: "暂无",
+                            summary =
+                                d?.playbackDisplay?.let {
+                                    "${it.width} × ${it.height} · 旋转 ${it.rotation * 90}°"
+                                } ?: "暂无",
                             icon = Icons.Filled.MusicVideo,
                             iconTint = IconCyan,
                         )
@@ -207,7 +211,9 @@ fun PlaybackDiagnosticsScreen(
                                     exporting = true
                                     val ok = DebugExport.exportAndShare(context.applicationContext)
                                     exporting = false
-                                    snackbarHostState.showSnackbar(if (ok) "已打开分享面板" else "导出失败，请稍后重试")
+                                    snackbarHostState.showSnackbar(
+                                        if (ok) "已打开分享面板" else "导出失败，请稍后重试"
+                                    )
                                 }
                             }
                         }

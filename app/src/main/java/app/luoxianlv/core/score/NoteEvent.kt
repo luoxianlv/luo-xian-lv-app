@@ -1,8 +1,6 @@
 package app.luoxianlv.core.score
 
-enum class PlayMode(
-    val label: String,
-) {
+enum class PlayMode(val label: String) {
     NATURAL("自然音"),
     SEMITONE("半音"),
     RAISE("升调"),

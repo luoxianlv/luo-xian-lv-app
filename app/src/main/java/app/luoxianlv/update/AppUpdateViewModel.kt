@@ -13,6 +13,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.data.Kv
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
@@ -22,11 +27,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
-import kotlin.coroutines.coroutineContext
 
 data class AppUpdateState(
     val release: AppRelease? = null,
@@ -42,9 +42,7 @@ data class AppUpdateState(
 )
 
 /** Activity-scoped state shared by foreground checks, About and the single dialog host. */
-class AppUpdateViewModel(
-    private val app: Application,
-) : AndroidViewModel(app) {
+class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
     private val prefs = Kv.of(app, "app_updates")
     private val _state = MutableStateFlow(AppUpdateState())
     val state = _state.asStateFlow()
@@ -72,9 +70,14 @@ class AppUpdateViewModel(
             try {
                 val release =
                     withContext(Dispatchers.IO) {
-                        val connection = open("$baseUrl/api/update/stable?versionCode=${BuildConfig.VERSION_CODE}")
+                        val connection =
+                            open(
+                                "$baseUrl/api/update/stable?versionCode=${BuildConfig.VERSION_CODE}"
+                            )
                         try {
-                            check(connection.responseCode == 200) { "更新服务暂时不可用 (${connection.responseCode})" }
+                            check(connection.responseCode == 200) {
+                                "更新服务暂时不可用 (${connection.responseCode})"
+                            }
                             val text =
                                 connection.inputStream.use { input ->
                                     val output = java.io.ByteArrayOutputStream()
@@ -104,13 +107,19 @@ class AppUpdateViewModel(
                         release = release,
                         checking = false,
                         ready = false,
-                        selectedSource = release?.sources?.firstOrNull()?.id ?: BuildConfig.UPDATE_SOURCE,
+                        selectedSource =
+                            release?.sources?.firstOrNull()?.id ?: BuildConfig.UPDATE_SOURCE,
                         message = if (manual && release == null) "已是最新版本" else null,
                     )
                 }
             } catch (e: Exception) {
                 coroutineContext.ensureActive()
-                _state.update { it.copy(checking = false, message = if (manual) e.message ?: "检查更新失败，请重试" else null) }
+                _state.update {
+                    it.copy(
+                        checking = false,
+                        message = if (manual) e.message ?: "检查更新失败，请重试" else null,
+                    )
+                }
             }
         }
     }
@@ -125,35 +134,38 @@ class AppUpdateViewModel(
         val selected = _state.value.selectedSource
         _state.update { it.copy(downloading = true, error = null, progress = 0f, ready = false) }
         cleanupCache()
-        job =
-            viewModelScope.launch {
-                try {
-                    withContext(Dispatchers.IO) {
-                        val sources = release.sources.sortedBy { if (it.id == selected) 0 else 1 }
-                        var failure: Exception? = null
-                        for (source in sources) {
+        job = viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val sources = release.sources.sortedBy { if (it.id == selected) 0 else 1 }
+                    var failure: Exception? = null
+                    for (source in sources) {
+                        coroutineContext.ensureActive()
+                        val target = apk(release, source)
+                        if (
+                            target.exists() &&
+                                runCatching { verify(target, release, source) }.isSuccess
+                        )
+                            return@withContext
+                        if (target.exists()) check(target.delete()) { "无法清理失效的更新包，请重试" }
+                        _state.update { it.copy(source = source.label, progress = 0f) }
+                        try {
+                            downloadFile(source.url, target, release, source)
+                            return@withContext
+                        } catch (e: Exception) {
                             coroutineContext.ensureActive()
-                            val target = apk(release, source)
-                            if (target.exists() && runCatching { verify(target, release, source) }.isSuccess) return@withContext
-                            if (target.exists()) check(target.delete()) { "无法清理失效的更新包，请重试" }
-                            _state.update { it.copy(source = source.label, progress = 0f) }
-                            try {
-                                downloadFile(source.url, target, release, source)
-                                return@withContext
-                            } catch (e: Exception) {
-                                coroutineContext.ensureActive()
-                                target.delete()
-                                failure = e
-                            }
+                            target.delete()
+                            failure = e
                         }
-                        throw failure ?: IllegalStateException("没有可用下载源")
                     }
-                    _state.update { it.copy(downloading = false, ready = true, progress = 1f) }
-                } catch (e: Exception) {
-                    coroutineContext.ensureActive()
-                    _state.update { it.copy(downloading = false, error = e.message ?: "下载失败，请重试") }
+                    throw failure ?: IllegalStateException("没有可用下载源")
                 }
+                _state.update { it.copy(downloading = false, ready = true, progress = 1f) }
+            } catch (e: Exception) {
+                coroutineContext.ensureActive()
+                _state.update { it.copy(downloading = false, error = e.message ?: "下载失败，请重试") }
             }
+        }
     }
 
     private suspend fun downloadFile(
@@ -180,7 +192,10 @@ class AppUpdateViewModel(
             }
             val active = requireNotNull(connection)
             check(active.responseCode == 200) { "下载失败 (${active.responseCode})，请重试或切换下载源" }
-            val length = source.size.takeIf { it > 0 } ?: release.size.takeIf { it > 0 } ?: active.contentLengthLong
+            val length =
+                source.size.takeIf { it > 0 }
+                    ?: release.size.takeIf { it > 0 }
+                    ?: active.contentLengthLong
             active.inputStream.use { input ->
                 partial.outputStream().use { output ->
                     val bytes = ByteArray(64 * 1024)
@@ -192,7 +207,10 @@ class AppUpdateViewModel(
                         total += count
                         require(total <= 512L * 1024 * 1024) { "安装包大小超出限制" }
                         output.write(bytes, 0, count)
-                        if (length > 0) _state.update { it.copy(progress = (total.toFloat() / length).coerceIn(0f, 1f)) }
+                        if (length > 0)
+                            _state.update {
+                                it.copy(progress = (total.toFloat() / length).coerceIn(0f, 1f))
+                            }
                     }
                 }
             }
@@ -218,8 +236,11 @@ class AppUpdateViewModel(
                 app.packageManager.getPackageArchiveInfo(file.path, it)
             } ?: error("更新文件不是有效 APK")
         require(info.packageName == app.packageName) { "安装包不属于落弦律" }
-        val code = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-        require(code == release.versionCode.toLong() && code > BuildConfig.VERSION_CODE) { "安装包版本与更新信息不一致" }
+        val code =
+            if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+        require(code == release.versionCode.toLong() && code > BuildConfig.VERSION_CODE) {
+            "安装包版本与更新信息不一致"
+        }
         val incoming = signerDigests { pm, flags -> pm.getPackageArchiveInfo(file.path, flags) }
         val current = signerDigests { pm, flags -> pm.getPackageInfo(app.packageName, flags) }
         require(incoming != null && current != null && incoming == current) {
@@ -241,7 +262,8 @@ class AppUpdateViewModel(
             val signers =
                 query(app.packageManager, flags)?.let { archive ->
                     if (Build.VERSION.SDK_INT >= 28) {
-                        archive.signingInfo?.apkContentsSigners?.takeIf { it.isNotEmpty() } ?: archive.signatures
+                        archive.signingInfo?.apkContentsSigners?.takeIf { it.isNotEmpty() }
+                            ?: archive.signatures
                     } else {
                         archive.signatures
                     }
@@ -277,9 +299,8 @@ class AppUpdateViewModel(
                 .listFiles()
                 ?.filter { it.extension == "apk" }
                 ?.sortedByDescending { it.lastModified() }
-                ?.drop(
-                    2,
-                )?.forEach { it.delete() }
+                ?.drop(2)
+                ?.forEach { it.delete() }
         }
     }
 
@@ -289,15 +310,23 @@ class AppUpdateViewModel(
         try {
             if (!activity.packageManager.canRequestPackageInstalls()) {
                 _state.update { it.copy(needsPermission = true) }
-                activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${app.packageName}")))
+                activity.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${app.packageName}"),
+                    )
+                )
                 return
             }
-            val source = release.sources.firstOrNull { it.id == _state.value.selectedSource } ?: release.sources.first()
-            val uri = FileProvider.getUriForFile(app, "${app.packageName}.updates", apk(release, source))
+            val source =
+                release.sources.firstOrNull { it.id == _state.value.selectedSource }
+                    ?: release.sources.first()
+            val uri =
+                FileProvider.getUriForFile(app, "${app.packageName}.updates", apk(release, source))
             activity.startActivity(
                 Intent(Intent.ACTION_VIEW)
                     .setDataAndType(uri, "application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             )
             _state.update { it.copy(needsPermission = false, error = null) }
         } catch (e: Exception) {
@@ -316,7 +345,9 @@ class AppUpdateViewModel(
 
     fun dismiss() {
         if (_state.value.release?.mandatory == true || _state.value.downloading) return
-        _state.update { it.copy(release = null, error = null, ready = false, needsPermission = false) }
+        _state.update {
+            it.copy(release = null, error = null, ready = false, needsPermission = false)
+        }
     }
 
     fun consumeMessage() = _state.update { it.copy(message = null) }
@@ -334,9 +365,16 @@ class AppUpdateViewModel(
                         versionName = "${BuildConfig.VERSION_NAME}-demo",
                         sha256 = "0".repeat(64),
                         size = 22L * 1024 * 1024,
-                        notes = listOf(ReleaseNoteSection("演示更新", listOf("谱面同步更稳定", "优化 MIDI 渲染性能", "修复已知问题"))),
+                        notes =
+                            listOf(
+                                ReleaseNoteSection(
+                                    "演示更新",
+                                    listOf("谱面同步更稳定", "优化 MIDI 渲染性能", "修复已知问题"),
+                                )
+                            ),
                         mandatory = false,
-                        sources = listOf(UpdateSource("oss", "https://luoxianlv.com/app-release.apk")),
+                        sources =
+                            listOf(UpdateSource("oss", "https://luoxianlv.com/app-release.apk")),
                     ),
                 selectedSource = "oss",
             )
@@ -344,11 +382,13 @@ class AppUpdateViewModel(
     }
 
     private fun open(url: String): HttpURLConnection =
-        (URL(validatedUpdateUrl(url, baseUrl, BuildConfig.DEBUG)).openConnection() as HttpURLConnection).apply {
-            ClientVersion.attach(this)
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            instanceFollowRedirects = false
-            setRequestProperty("User-Agent", "Luoxianlv/${BuildConfig.VERSION_NAME}")
-        }
+        (URL(validatedUpdateUrl(url, baseUrl, BuildConfig.DEBUG)).openConnection()
+                as HttpURLConnection)
+            .apply {
+                ClientVersion.attach(this)
+                connectTimeout = 15_000
+                readTimeout = 30_000
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "Luoxianlv/${BuildConfig.VERSION_NAME}")
+            }
 }

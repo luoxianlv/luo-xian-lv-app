@@ -7,14 +7,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiagnosticRetentionTest {
-    @Test fun capsCombinedFilesOldestFirstWithoutDeletingApks() {
+    @Test
+    fun capsCombinedFilesOldestFirstWithoutDeletingApks() {
         val root = Files.createTempDirectory("diagnostic-retention").toFile()
         try {
             val logs = File(root, "logs").apply { mkdirs() }
             val exports = File(root, "updates").apply { mkdirs() }
-            val old = File(logs, "old.jpg").apply { writeBytes(ByteArray(60)); setLastModified(1000) }
-            val current = File(logs, "play-debug.log").apply { writeBytes(ByteArray(20)); setLastModified(2000) }
-            val zip = File(exports, "luoxianlv-debug-new.zip").apply { writeBytes(ByteArray(60)); setLastModified(3000) }
+            val old =
+                File(logs, "old.jpg").apply {
+                    writeBytes(ByteArray(60))
+                    setLastModified(1000)
+                }
+            val current =
+                File(logs, "play-debug.log").apply {
+                    writeBytes(ByteArray(20))
+                    setLastModified(2000)
+                }
+            val zip =
+                File(exports, "luoxianlv-debug-new.zip").apply {
+                    writeBytes(ByteArray(60))
+                    setLastModified(3000)
+                }
             val apk = File(exports, "update.apk").apply { writeBytes(ByteArray(200)) }
             DiagnosticRetention.trim(logs, exports, 100)
             assertFalse(old.exists())
@@ -25,6 +38,8 @@ class DiagnosticRetentionTest {
             assertFalse(current.exists())
             assertFalse(zip.exists())
             assertTrue(apk.exists())
-        } finally { root.deleteRecursively() }
+        } finally {
+            root.deleteRecursively()
+        }
     }
 }

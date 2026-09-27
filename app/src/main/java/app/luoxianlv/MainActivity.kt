@@ -20,13 +20,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
-import app.luoxianlv.BuildConfig
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.data.DisclaimerStore
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.SessionStore
 import app.luoxianlv.data.SongRepository
+import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.components.DisclaimerScreen
@@ -37,12 +37,11 @@ import app.luoxianlv.ui.theme.LuoXianLvTheme
 import app.luoxianlv.update.AppUpdateViewModel
 import app.luoxianlv.update.MidiCoreFixer
 import app.luoxianlv.update.UpdateAutoCheck
-import app.luoxianlv.update.UpdateManager
 
 /** Compose 单 Activity 入口：只负责挂 UI 树与生命周期级的服务/热更新对齐。 */
 class MainActivity : AppCompatActivity() {
     private lateinit var repository: SongRepository
-    private val oauthUpdater by lazy { UpdateManager(this) }
+    private val oauthUpdater by lazy { PlatformClient(this) }
     private lateinit var appUpdates: AppUpdateViewModel
     private var showOnboarding by mutableStateOf(false)
     private var showBatteryPrompt by mutableStateOf(false)
@@ -60,22 +59,24 @@ class MainActivity : AppCompatActivity() {
         // 免责协议是启动第一道门：已同意文本的 SHA-256 与当前 assets 里的协议不一致
         // （首次使用或协议更新后）就拦截在协议页，同意前不渲染正常 App。
         // 读不到协议文件时不拦截，避免资源缺失把用户挡在门外。
-        disclaimerText = if (BuildConfig.DEBUG) "" else runCatching { DisclaimerStore.readAsset(this) }.getOrElse { "" }
+        disclaimerText =
+            if (BuildConfig.DEBUG) ""
+            else runCatching { DisclaimerStore.readAsset(this) }.getOrElse { "" }
         val disclaimerSha = DisclaimerStore.sha256(disclaimerText)
         disclaimerAccepted =
-            BuildConfig.DEBUG || (disclaimerText.isNotEmpty() && DisclaimerStore(this).agreedSha() == disclaimerSha)
+            BuildConfig.DEBUG ||
+                (disclaimerText.isNotEmpty() && DisclaimerStore(this).agreedSha() == disclaimerSha)
         // 同意过协议：本次启动直接初始化友盟统计（Application 里已 preInit）。
         if (disclaimerAccepted) Analytics.initialize(this)
         // 权限引导只在首次启动弹一次，此后不再打扰；
         // 之后的运行时检查在「我的」页悬浮窗开关处（LibraryViewModel.setFloatingEnabled）
-        showOnboarding = !BuildConfig.DEBUG && isFirstLaunch() && !MusicAccessibilityService.isEnabled(this)
+        showOnboarding =
+            !BuildConfig.DEBUG && isFirstLaunch() && !MusicAccessibilityService.isEnabled(this)
         setContent {
             val appearance by AppearanceStore.settings.collectAsState()
             // 深浅色：偏好（跟随系统 / 浅色 / 深色）叠加系统设置算出最终结果。
             // 主题只吃这一个入参；容器半透明固定，见 Theme.kt。
-            LuoXianLvTheme(
-                darkTheme = appearance.themeMode.isDark(isSystemInDarkTheme()),
-            ) {
+            LuoXianLvTheme(darkTheme = appearance.themeMode.isDark(isSystemInDarkTheme())) {
                 if (!disclaimerAccepted) {
                     DisclaimerScreen(
                         text = disclaimerText,
@@ -166,11 +167,15 @@ class MainActivity : AppCompatActivity() {
         // MIDI 编译核心版本检查 + remoteId 回填 + 批量重编：内部有 5 分钟节流，
         // 启动和每次回前台都调用即可，离线时静默失败。
         MidiCoreFixer.kick(this)
-        if (!BuildConfig.DEBUG && android.os.Build.VERSION.SDK_INT >= 33 && repository.floatingEnabled &&
-            appPrefs.getBoolean("auto_start_asked", false) &&
-            MusicAccessibilityService.isEnabled(this) &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
-            !appPrefs.getBoolean("notification_permission_asked", false)
+        if (
+            !BuildConfig.DEBUG &&
+                android.os.Build.VERSION.SDK_INT >= 33 &&
+                repository.floatingEnabled &&
+                appPrefs.getBoolean("auto_start_asked", false) &&
+                MusicAccessibilityService.isEnabled(this) &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                !appPrefs.getBoolean("notification_permission_asked", false)
         ) {
             appPrefs.edit().putBoolean("notification_permission_asked", true).apply()
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1201)
@@ -200,10 +205,20 @@ class MainActivity : AppCompatActivity() {
 
     /** 每项引导仅显示一次；展示前保存记录，返回设置、重开无障碍或应用都不重复。 */
     private fun requestBackgroundPermissionsOnce() {
-        if (BuildConfig.DEBUG || !disclaimerAccepted || showOnboarding || showBatteryPrompt || showAutoStartPrompt) return
+        if (
+            BuildConfig.DEBUG ||
+                !disclaimerAccepted ||
+                showOnboarding ||
+                showBatteryPrompt ||
+                showAutoStartPrompt
+        )
+            return
         if (!MusicAccessibilityService.isEnabled(this)) return
         val pm = getSystemService(PowerManager::class.java) ?: return
-        if (!pm.isIgnoringBatteryOptimizations(packageName) && !appPrefs.getBoolean("battery_exemption_asked", false)) {
+        if (
+            !pm.isIgnoringBatteryOptimizations(packageName) &&
+                !appPrefs.getBoolean("battery_exemption_asked", false)
+        ) {
             appPrefs.edit().putBoolean("battery_exemption_asked", true).commit()
             showBatteryPrompt = true
         } else if (!appPrefs.getBoolean("auto_start_asked", false)) {
@@ -233,9 +248,7 @@ private fun BatteryExemptionDialog(
         onDismissRequest = onLater,
         title = { Text("防止后台被清理") },
         text = {
-            Text(
-                "请允许忽略电池优化，减少后台播放中断和悬浮窗消失。",
-            )
+            Text("请允许忽略电池优化，减少后台播放中断和悬浮窗消失。")
         },
         confirmButton = {
             TextButton(onClick = onAllow) { Text("去允许") }

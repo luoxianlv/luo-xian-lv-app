@@ -1,9 +1,7 @@
 package app.luoxianlv.ui.settings
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
-import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
@@ -29,7 +26,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -54,7 +50,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import app.luoxianlv.data.AccountSession
 import app.luoxianlv.data.ThemeMode
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.ui.components.ErrorDialogHost
@@ -66,7 +61,6 @@ import app.luoxianlv.ui.components.IconIndigo
 import app.luoxianlv.ui.components.IconOrange
 import app.luoxianlv.ui.components.IconPink
 import app.luoxianlv.ui.components.IconTeal
-import app.luoxianlv.ui.components.IconUpdate
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.PageTitle
 import app.luoxianlv.ui.components.PreferenceGroupCaption
@@ -76,10 +70,7 @@ import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
 import kotlinx.coroutines.launch
 
-/**
- * 设置页：QQ 式分组 —— 一组一张白卡，组标题小灰字贴在卡上方，
- * 每项一个彩色圆角方块图标 + 标题 + 摘要 + 右侧箭头；网站登录在对话框中完成。
- */
+/** 设置页：QQ 式分组 —— 一组一张白卡，组标题小灰字贴在卡上方， 每项一个彩色圆角方块图标 + 标题 + 摘要 + 右侧箭头；网站登录在对话框中完成。 */
 @Composable
 fun SettingsScreen(
     onLogin: () -> Unit,
@@ -94,9 +85,7 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var showThemePicker by remember { mutableStateOf(false) }
     val notificationPermission =
-        rememberLauncherForActivityResult(
-            ActivityResultContracts.RequestPermission(),
-        ) { granted ->
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             vm.refresh()
             if (!granted) KeepAlive.openNotificationSettings(context)
         }
@@ -105,10 +94,9 @@ fun SettingsScreen(
     // 从系统授权页返回时刷新保活状态（电池白名单 / 通知权限都在系统页里改）
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        val observer =
-            LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_RESUME) vm.refresh()
-            }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) vm.refresh()
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
@@ -136,7 +124,9 @@ fun SettingsScreen(
                             } ?: "未登录",
                         icon = Icons.Filled.Person,
                         iconTint = IconBlue,
-                    ) { onLogin() }
+                    ) {
+                        onLogin()
+                    }
                 }
             }
         }
@@ -151,7 +141,9 @@ fun SettingsScreen(
                         summary = state.appearance.themeMode.label(),
                         icon = Icons.Filled.DarkMode,
                         iconTint = IconIndigo,
-                    ) { showThemePicker = true }
+                    ) {
+                        showThemePicker = true
+                    }
                     PreferenceSwitchItem(
                         title = "飘雪",
                         checked = state.appearance.snowEnabled,
@@ -186,7 +178,9 @@ fun SettingsScreen(
                             },
                         icon = Icons.Filled.BatterySaver,
                         iconTint = IconGreen,
-                    ) { KeepAlive.requestBatteryExemption(context) }
+                    ) {
+                        KeepAlive.requestBatteryExemption(context)
+                    }
                     PreferenceItem(
                         title = "播放通知",
                         summary =
@@ -198,8 +192,11 @@ fun SettingsScreen(
                         icon = Icons.Filled.Notifications,
                         iconTint = IconPink,
                     ) {
-                        if (Build.VERSION.SDK_INT >= 33 &&
-                            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                        if (
+                            Build.VERSION.SDK_INT >= 33 &&
+                                context.checkSelfPermission(
+                                    Manifest.permission.POST_NOTIFICATIONS
+                                ) != PackageManager.PERMISSION_GRANTED
                         ) {
                             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         } else {
@@ -211,7 +208,9 @@ fun SettingsScreen(
                         summary = "在系统设置中允许落弦律自启动",
                         icon = Icons.Filled.RocketLaunch,
                         iconTint = IconTeal,
-                    ) { KeepAlive.openAutoStartSettings(context) }
+                    ) {
+                        KeepAlive.openAutoStartSettings(context)
+                    }
                 }
             }
         }
@@ -237,7 +236,6 @@ fun SettingsScreen(
                         iconTint = IconGray,
                         onClick = onAbout,
                     )
-
                 }
             }
         }
@@ -295,8 +293,7 @@ private fun ThemeMode.summary(): String =
 /**
  * 深浅色选择。
  *
- * 用对话框而不是把三态控件直接摊在卡片里：设置卡一直是「一行一件事」的密度，
- * 塞进一个分段控件会把这一行撑高，和上下各行不成比例。
+ * 用对话框而不是把三态控件直接摊在卡片里：设置卡一直是「一行一件事」的密度， 塞进一个分段控件会把这一行撑高，和上下各行不成比例。
  * 选项只有三个，对话框里一眼看全，选中即生效并关闭（不再要一次「确定」）。
  */
 @Composable
@@ -313,8 +310,7 @@ private fun ThemeModeDialog(
                 ThemeMode.entries.forEach { mode ->
                     Row(
                         modifier =
-                            Modifier
-                                .fillMaxWidth()
+                            Modifier.fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
                                 .clickable { onSelect(mode) }
                                 .padding(horizontal = 4.dp, vertical = 6.dp),

@@ -1,4 +1,4 @@
-package app.luoxianlv.ui.practice
+package app.luoxianlv.ui.wallpaper
 
 import android.content.Intent
 import androidx.compose.material.icons.Icons
@@ -7,11 +7,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import app.luoxianlv.ui.practice.WallpaperPickerActivity
 
 @Composable
 fun WallpaperButton() {
     val context = LocalContext.current
-    IconButton(onClick = { context.startActivity(Intent(context,WallpaperPickerActivity::class.java)) }) {
-        Icon(Icons.Default.Wallpaper,contentDescription = "选择演练场壁纸")
+    IconButton(
+        onClick = { context.startActivity(Intent(context, WallpaperPickerActivity::class.java)) }
+    ) {
+        Icon(Icons.Default.Wallpaper, contentDescription = "选择演练场壁纸")
     }
 }

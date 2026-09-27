@@ -21,10 +21,7 @@ private const val SNOW_FRAME_INTERVAL_MS = 33L
 
 private const val TWO_PI = (2 * PI).toFloat()
 
-/**
- * 单片雪花的状态。全部字段在创建时定下来，飘出底部后按相位回到顶部循环，
- * 不需要维护“存活”标志或对象池。
- */
+/** 单片雪花的状态。全部字段在创建时定下来，飘出底部后按相位回到顶部循环， 不需要维护“存活”标志或对象池。 */
 private data class Snowflake(
     /** 横向基准位置，0..1 的屏宽比例 */
     val xFraction: Float,
@@ -58,14 +55,11 @@ private fun snowflakeAt(index: Int): Snowflake {
 /**
  * 从屏幕上方飘落的微小雪花。
  *
- * 纯绘制实现，不依赖任何图片资源。白色、半透明、半径 0.6–2.2dp，
- * 落在蓝灰渐变底上刚好是若隐若现的效果；飘到内容卡上会自然淡掉。
+ * 纯绘制实现，不依赖任何图片资源。白色、半透明、半径 0.6–2.2dp， 落在蓝灰渐变底上刚好是若隐若现的效果；飘到内容卡上会自然淡掉。
  *
  * 两点实现取舍：
- * - 时间从 [withFrameMillis] 取，并按 [SNOW_FRAME_INTERVAL_MS] 节流，
- *   避免为了一个装饰效果跑满刷新率。
- * - 时间写在 snapshot state 里、且**只在绘制 lambda 里读**，
- *   所以每帧只触发重绘（draw 失效），不会触发重组。
+ * - 时间从 [withFrameMillis] 取，并按 [SNOW_FRAME_INTERVAL_MS] 节流， 避免为了一个装饰效果跑满刷新率。
+ * - 时间写在 snapshot state 里、且**只在绘制 lambda 里读**， 所以每帧只触发重绘（draw 失效），不会触发重组。
  *
  * [enabled] 为 false 时整棵子树不参与组合，零开销。
  */

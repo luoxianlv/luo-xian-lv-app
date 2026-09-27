@@ -13,8 +13,7 @@ import com.umeng.umcrash.UMCrash
 /**
  * 友盟统计（U-App）启动开关。
  *
- * 合规两步走：Application.onCreate 里只做 preInit（不采集不上报）；
- * 用户同意免责协议后调用 [initialize]，此时 SDK 才真正采集并上报。
+ * 合规两步走：Application.onCreate 里只做 preInit（不采集不上报）； 用户同意免责协议后调用 [initialize]，此时 SDK 才真正采集并上报。
  */
 object Analytics {
     /** 友盟后台「落弦律」应用的 AppKey。 */
@@ -23,8 +22,7 @@ object Analytics {
     /** 分发渠道标识，官网直链为 official。 */
     const val CHANNEL = "official"
 
-    @Volatile
-    private var initialized = false
+    @Volatile private var initialized = false
 
     /** 诊断页展示的一条流水（事件/页面/唤起/SDK 状态）。 */
     data class DiagEntry(
@@ -76,7 +74,7 @@ object Analytics {
                     // PageManger/PA 调用不会产生上报（默认不开）。
                     putBoolean(UMCrash.KEY_ENABLE_PAGE, true)
                     putBoolean(UMCrash.KEY_ENABLE_PA, true)
-                },
+                }
             )
             // 隐私授权确认：友盟合规检查的显式授权 API，必须在 init 之前调用，
             // 否则上报被拦截（logcat 报「检测到未调用隐私授权API」）。
@@ -115,9 +113,8 @@ object Analytics {
     /**
      * U-App 页面统计（页面访问次数/停留时长/访问路径）。
      *
-     * 本应用是单 Activity + Compose，而 U-APM 的页面维度是 Activity（PageManger 的
-     * 第二个参数是阶段名不是页面名），所以按路由分页面只能走 U-App 这套 [pageStart]/[pageEnd]。
-     * 必须成对调用，未同意免责协议时静默丢弃。
+     * 本应用是单 Activity + Compose，而 U-APM 的页面维度是 Activity（PageManger 的 第二个参数是阶段名不是页面名），所以按路由分页面只能走
+     * U-App 这套 [pageStart]/[pageEnd]。 必须成对调用，未同意免责协议时静默丢弃。
      */
     fun pageStart(page: String) {
         record("页面+", page)

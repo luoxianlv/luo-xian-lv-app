@@ -1,9 +1,9 @@
 package app.luoxianlv.data
 
 import android.content.Context
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.File
 
 /**
  * 主题模式：跟随系统 / 强制浅色 / 强制深色。
@@ -13,8 +13,7 @@ import java.io.File
 enum class ThemeMode {
     SYSTEM,
     LIGHT,
-    DARK,
-    ;
+    DARK;
 
     /** 把「系统当前是否深色」折算成「本应用此刻是否深色」。 */
     fun isDark(systemDark: Boolean): Boolean =
@@ -32,8 +31,7 @@ enum class ThemeMode {
 /**
  * 全局外观设置：主题模式、飘雪动效与「我的」页的两项自定义（一言文案、左侧竖栏开关）。
  *
- * 页面底色由 `ui/theme/Backdrop.kt` 的渐变底承担（深浅各一套），
- * 控件容器的半透明由主题固定（见 `theme/Containers.kt` 的两个 alpha 常量）。
+ * 页面底色由 `ui/theme/Backdrop.kt` 的渐变底承担（深浅各一套）， 控件容器的半透明由主题固定（见 `theme/Containers.kt` 的两个 alpha 常量）。
  * 原先可调的全局背景 / 控件透明度已整体移除。
  */
 data class AppearanceSettings(
@@ -82,8 +80,7 @@ object AppearanceStore {
         context: Context,
         settings: AppearanceSettings,
     ) {
-        Kv
-            .of(context, NAME)
+        Kv.of(context, NAME)
             .edit()
             .putString(KEY_THEME_MODE, settings.themeMode.name)
             .putBoolean(KEY_SNOW, settings.snowEnabled)

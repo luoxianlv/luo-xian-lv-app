@@ -4,9 +4,21 @@ package app.luoxianlv.ui.practice
 object PracticePlaybackGate {
     var active = false
         private set
+
     var ready = false
         private set
-    fun enter() { active = true; ready = false }
-    fun setReady(value: Boolean) { ready = value }
-    fun leave() { ready = false; active = false }
+
+    fun enter() {
+        active = true
+        ready = false
+    }
+
+    fun setReady(value: Boolean) {
+        ready = value
+    }
+
+    fun leave() {
+        ready = false
+        active = false
+    }
 }

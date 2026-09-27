@@ -70,10 +70,12 @@ fun ImportScreen(
         ) {
             Box(
                 modifier =
-                    Modifier
-                        .padding(top = 24.dp)
+                    Modifier.padding(top = 24.dp)
                         .size(88.dp)
-                        .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(18.dp)),
+                        .background(
+                            MaterialTheme.colorScheme.primaryContainer,
+                            RoundedCornerShape(18.dp),
+                        ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -97,16 +99,33 @@ fun ImportScreen(
                 textAlign = TextAlign.Center,
             )
             Button(
-                onClick = { launcher.launch(arrayOf("audio/midi", "audio/x-midi", "audio/mid", "application/x-midi", "application/octet-stream")) },
+                onClick = {
+                    launcher.launch(
+                        arrayOf(
+                            "audio/midi",
+                            "audio/x-midi",
+                            "audio/mid",
+                            "application/x-midi",
+                            "application/octet-stream",
+                        )
+                    )
+                },
                 enabled = !state.importing,
                 modifier = Modifier.fillMaxWidth().padding(top = 30.dp),
             ) {
                 if (state.importing) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 } else {
-                    Icon(Icons.Filled.FileUpload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(
+                        Icons.Filled.FileUpload,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
-                Text(if (state.importing) "导入中…" else "选择文件", modifier = Modifier.padding(start = 6.dp))
+                Text(
+                    if (state.importing) "导入中…" else "选择文件",
+                    modifier = Modifier.padding(start = 6.dp),
+                )
             }
         }
     }

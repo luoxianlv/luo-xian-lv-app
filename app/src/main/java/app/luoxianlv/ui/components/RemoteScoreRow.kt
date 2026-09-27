@@ -18,16 +18,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.platform.PlatformScore
 import app.luoxianlv.ui.theme.PlayerQqBlue
-import app.luoxianlv.update.PlatformScore
 
 /**
  * 平台乐谱行：发现 / 搜索 / 平台三个页面共用的连排列表行，**不带卡片外壳**。
  *
- * 整列由各自页面包成一张连续卡片（与曲库歌曲列表同一套语言），
- * 行与行直接相邻，靠行高与内容自然分格。
- * 行高与节奏对齐曲库 SongRow（64dp / 上下 8dp），
- * 尾部只留一枚 QQ 蓝下载图标（设置开关同款强调色），下载中换成转圈。
+ * 整列由各自页面包成一张连续卡片（与曲库歌曲列表同一套语言）， 行与行直接相邻，靠行高与内容自然分格。 行高与节奏对齐曲库 SongRow（64dp / 上下 8dp）， 尾部只留一枚 QQ
+ * 蓝下载图标（设置开关同款强调色），下载中换成转圈。
  */
 @Composable
 fun RemoteScoreRow(
@@ -45,7 +43,11 @@ fun RemoteScoreRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-            Text(remote.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                remote.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
             Text(
                 "${remote.author} · ${remote.bpm} BPM",
                 style = MaterialTheme.typography.bodySmall,
@@ -55,7 +57,11 @@ fun RemoteScoreRow(
         }
         IconButton(onClick = onDownload, enabled = !downloading) {
             if (downloading) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = PlayerQqBlue)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                    color = PlayerQqBlue,
+                )
             } else {
                 Icon(
                     Icons.Filled.Download,

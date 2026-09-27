@@ -1,4 +1,5 @@
 package app.luoxianlv.data
+
 import android.content.Context
 import app.luoxianlv.core.score.PlayMode
 import org.json.JSONObject
@@ -17,22 +18,29 @@ object ConfigStore {
         val xs = floatArrayOf(.189f, .278f, .367f, .456f, .545f, .633f, .722f, .810f)
         val modes =
             mapOf(
-                PlayMode.SEMITONE to .364f,
-                PlayMode.RAISE to .464f,
-                PlayMode.NATURAL to .552f,
-                PlayMode.LOWER to .639f,
-            ).mapValues { (mode, x) ->
-                floatArrayOf(prefs.getFloat(mode.name + "X", x), prefs.getFloat(mode.name + "Y", .425f))
-            }
-        return KeyLayout(FloatArray(8) { prefs.getFloat("noteX$it", xs[it]) }, prefs.getFloat("noteY", .608f), modes)
+                    PlayMode.SEMITONE to .364f,
+                    PlayMode.RAISE to .464f,
+                    PlayMode.NATURAL to .552f,
+                    PlayMode.LOWER to .639f,
+                )
+                .mapValues { (mode, x) ->
+                    floatArrayOf(
+                        prefs.getFloat(mode.name + "X", x),
+                        prefs.getFloat(mode.name + "Y", .425f),
+                    )
+                }
+        return KeyLayout(
+            FloatArray(8) { prefs.getFloat("noteX$it", xs[it]) },
+            prefs.getFloat("noteY", .608f),
+            modes,
+        )
     }
 
     fun save(
         context: Context,
         layout: KeyLayout,
     ) {
-        Kv
-            .of(context, NAME)
+        Kv.of(context, NAME)
             .edit()
             .apply {
                 layout.noteX.forEachIndexed { index, x -> putFloat("noteX$index", x) }
@@ -41,7 +49,8 @@ object ConfigStore {
                     putFloat(mode.name + "X", point[0])
                     putFloat(mode.name + "Y", point[1])
                 }
-            }.apply()
+            }
+            .apply()
     }
 
     fun applyHotLayout(
@@ -51,9 +60,10 @@ object ConfigStore {
         val current = load(context)
         val xs =
             json.optJSONArray("noteX")?.let { array ->
-                FloatArray(8) { array.optDouble(it, current.noteX.getOrElse(it) { .5f }.toDouble()).toFloat() }
-            }
-                ?: current.noteX
+                FloatArray(8) {
+                    array.optDouble(it, current.noteX.getOrElse(it) { .5f }.toDouble()).toFloat()
+                }
+            } ?: current.noteX
         val modes = current.modes.toMutableMap()
         val modeJson = json.optJSONObject("modes")
         modes.keys.forEach { mode ->
@@ -64,6 +74,9 @@ object ConfigStore {
                     value.optDouble("y", current.modes.getValue(mode)[1].toDouble()).toFloat(),
                 )
         }
-        save(context, KeyLayout(xs, json.optDouble("noteY", current.noteY.toDouble()).toFloat(), modes))
+        save(
+            context,
+            KeyLayout(xs, json.optDouble("noteY", current.noteY.toDouble()).toFloat(), modes),
+        )
     }
 }

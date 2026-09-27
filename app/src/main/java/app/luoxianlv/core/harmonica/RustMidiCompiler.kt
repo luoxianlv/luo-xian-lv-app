@@ -1,16 +1,16 @@
 package app.luoxianlv.core.harmonica
+
 import android.util.Base64
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.core.score.NoteEvent
 import app.luoxianlv.core.score.PlayMode
 import app.luoxianlv.core.score.ScoreParser
-import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import org.json.JSONObject
 
-/** 前导静音超过 5 秒判定为旧版编译核心的缺陷产物（不会剪掉 MIDI 开头空白），
- * 编译时直接平移到 0，避免播放开头长时间没有点击。 */
+/** 前导静音超过 5 秒判定为旧版编译核心的缺陷产物（不会剪掉 MIDI 开头空白）， 编译时直接平移到 0，避免播放开头长时间没有点击。 */
 const val MAX_LEAD_IN_US = 5_000_000L
 
 data class RustCompiledMidi(
@@ -21,8 +21,7 @@ data class RustCompiledMidi(
     val midiCoreVersion: String = "",
 )
 
-/** 服务端 MIDI 编译：MIDI 字节在内存里直接发到 /api/compile-midi，
- * 拿到事件时间线后换算成 NoteEvent，本地不再保留 MIDI 数据。 */
+/** 服务端 MIDI 编译：MIDI 字节在内存里直接发到 /api/compile-midi， 拿到事件时间线后换算成 NoteEvent，本地不再保留 MIDI 数据。 */
 object RustMidiCompiler {
     private val baseUrl = BuildConfig.UPDATE_BASE_URL.trimEnd('/')
 
@@ -72,7 +71,12 @@ object RustMidiCompiler {
             cursor = end
         }
         require(events.isNotEmpty()) { "服务端没有可播放音符" }
-        return RustCompiledMidi(ScoreParser.format(events, bpm), bpm, notes.length(), root.optString("midiCoreVersion"))
+        return RustCompiledMidi(
+            ScoreParser.format(events, bpm),
+            bpm,
+            notes.length(),
+            root.optString("midiCoreVersion"),
+        )
     }
 
     private fun postCompileJson(
@@ -100,7 +104,11 @@ object RustMidiCompiler {
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8).use { it?.readText().orEmpty() }
             if (status !in 200..299) {
-                val message = runCatching { JSONObject(text).optString("message") }.getOrDefault("").ifBlank { "HTTP $status" }
+                val message = runCatching {
+                    JSONObject(text).optString("message")
+                }
+                    .getOrDefault("")
+                    .ifBlank { "HTTP $status" }
                 error(message)
             }
             return text

@@ -19,23 +19,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.platform.PlatformScore
 import app.luoxianlv.ui.components.GroupCardCornerRadius
 import app.luoxianlv.ui.components.RemoteScoreRow
-import app.luoxianlv.update.PlatformScore
 
 /**
  * 发现 / 搜索 / 平台三页共用的平台谱子列表。
  *
- * 与曲库歌曲列表同一套连排语言：整列一张卡，内部零分隔，行与行直接相邻。
- * 每首曲目是独立的惰性列表项，接近末尾时消费预取缓存。
+ * 与曲库歌曲列表同一套连排语言：整列一张卡，内部零分隔，行与行直接相邻。 每首曲目是独立的惰性列表项，接近末尾时消费预取缓存。
  *
- * 「一张卡」是**按行拼**出来的：首行只给上圆角、末行只给下圆角、中间保持直角，
- * 而不是把整列包进一个 `Card`。理由有两条：
- * 1. 每行都要能独立惰性回收，包 Card 就得让 `LazyColumn` 住在 Card 里，
- *    而 Card 会把它**内容之外**的剩余高度也铺上容器色 —— 列表短的时候卡片会拖出
+ * 「一张卡」是**按行拼**出来的：首行只给上圆角、末行只给下圆角、中间保持直角， 而不是把整列包进一个 `Card`。理由有两条：
+ * 1. 每行都要能独立惰性回收，包 Card 就得让 `LazyColumn` 住在 Card 里， 而 Card 会把它**内容之外**的剩余高度也铺上容器色 —— 列表短的时候卡片会拖出
  *    一大块空板子（曲库那张卡是「整列一个 item」，所以没这个问题，但也就没有惰性）。
- * 2. 半透明容器色逐行铺开与整块铺开在观感上没有差别：相邻行不重叠，不会叠色，
- *    只要圆角对得上，看起来就是同一张卡。
+ * 2. 半透明容器色逐行铺开与整块铺开在观感上没有差别：相邻行不重叠，不会叠色， 只要圆角对得上，看起来就是同一张卡。
  *
  * 圆角取值与 `SettingsCard` 共用 [GroupCardCornerRadius]，两种拼法不会走偏。
  */
@@ -56,7 +52,12 @@ fun RemoteScoreList(
         }
     }
     LaunchedEffect(nearBottom, state.visibleCount, state.loadingMore, state.error) {
-        if (nearBottom && state.error == null && (!state.loadingMore || state.visibleCount < state.scores.size)) onLoadMore()
+        if (
+            nearBottom &&
+                state.error == null &&
+                (!state.loadingMore || state.visibleCount < state.scores.size)
+        )
+            onLoadMore()
     }
 
     LazyColumn(
@@ -75,8 +76,10 @@ fun RemoteScoreList(
                         RoundedCornerShape(
                             topStart = if (index == 0) GroupCardCornerRadius else 0.dp,
                             topEnd = if (index == 0) GroupCardCornerRadius else 0.dp,
-                            bottomStart = if (index == visible.lastIndex) GroupCardCornerRadius else 0.dp,
-                            bottomEnd = if (index == visible.lastIndex) GroupCardCornerRadius else 0.dp,
+                            bottomStart =
+                                if (index == visible.lastIndex) GroupCardCornerRadius else 0.dp,
+                            bottomEnd =
+                                if (index == visible.lastIndex) GroupCardCornerRadius else 0.dp,
                         ),
                 ) {
                     RemoteScoreRow(
@@ -91,9 +94,7 @@ fun RemoteScoreList(
                 // 不是列表内容。让它参与卡面的话，卡片下边缘会随加载态在中缝和底边之间跳。
                 item {
                     Text(
-                        if (state.error !=
-                            null
-                        ) {
+                        if (state.error != null) {
                             "加载失败，点击重试"
                         } else if (state.loadingMore && state.visibleCount >= state.scores.size) {
                             "正在加载…"
@@ -102,7 +103,10 @@ fun RemoteScoreList(
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().clickable { onLoadMore() }.padding(vertical = 10.dp),
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .clickable { onLoadMore() }
+                                .padding(vertical = 10.dp),
                         textAlign = TextAlign.Center,
                     )
                 }

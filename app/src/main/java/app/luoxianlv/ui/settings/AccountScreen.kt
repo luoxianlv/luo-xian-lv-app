@@ -35,8 +35,7 @@ import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
 
-/** 登录页（独立页面，对齐 App 浅色风格：渐变底由导航层铺，这里放白卡表单）。
- * 已登录时显示账号信息与退出。 */
+/** 登录页（独立页面，对齐 App 浅色风格：渐变底由导航层铺，这里放白卡表单）。 已登录时显示账号信息与退出。 */
 @Composable
 fun LoginScreen(
     onBack: () -> Unit,
@@ -68,8 +67,7 @@ fun LoginScreen(
         }
         Column(
             modifier =
-                Modifier
-                    .padding(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance),
+                Modifier.padding(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance)
         ) {
             SettingsCard {
                 if (state.session == null) {
@@ -93,15 +91,21 @@ fun LoginScreen(
                             onClick = { vm.login(account, password) },
                             enabled = !state.busy && account.isNotBlank() && password.isNotBlank(),
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text(if (state.busy) "登录中…" else "登录") }
+                        ) {
+                            Text(if (state.busy) "登录中…" else "登录")
+                        }
                         TextButton(
                             onClick = onShushuLogin,
                             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        ) { Text("鼠鼠账号登录") }
+                        ) {
+                            Text("鼠鼠账号登录")
+                        }
                         TextButton(
                             onClick = onRegister,
                             modifier = Modifier.fillMaxWidth(),
-                        ) { Text("注册网站账号") }
+                        ) {
+                            Text("注册网站账号")
+                        }
                     }
                 } else {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -115,7 +119,9 @@ fun LoginScreen(
                                 onBack()
                             },
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        ) { Text("退出网站账号") }
+                        ) {
+                            Text("退出网站账号")
+                        }
                     }
                 }
             }

@@ -1,7 +1,9 @@
 package app.luoxianlv.update
+
 import android.content.Context
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.SongRepository
+import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.service.MusicAccessibilityService
 
 /** Runs content updates in the background without exposing a manual control. */
@@ -10,7 +12,7 @@ class HotUpdateCoordinator(
     private val repository: SongRepository,
 ) {
     private val appContext = context.applicationContext
-    private val updater = UpdateManager(appContext)
+    private val updater = PlatformClient(appContext)
 
     @Volatile private var running = false
 

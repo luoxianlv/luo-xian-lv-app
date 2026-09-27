@@ -41,13 +41,14 @@ private const val BOTTOM_THRESHOLD_PX = 4
 
 private val SECTION_HEADING = Regex("^[一二三四五六七八九十]+、")
 
-/** 首次启动的免责协议全屏门：同意前不渲染正常 App。
+/**
+ * 首次启动的免责协议全屏门：同意前不渲染正常 App。
  *
- * 视觉与顶层页面同一套语言：蓝灰渐变底 + 深藏青标题 + 白色圆角卡片，
- * 见 ui/theme/Backdrop.kt 与 ActionPill。协议正文按行渲染：
+ * 视觉与顶层页面同一套语言：蓝灰渐变底 + 深藏青标题 + 白色圆角卡片， 见 ui/theme/Backdrop.kt 与 ActionPill。协议正文按行渲染：
  * 小节标题（一、二、…）加粗强调，正文用常规字重。
  *
- * 内容不足一屏时 maxValue 为 0，视为无需滚动，"同意"直接可点。 */
+ * 内容不足一屏时 maxValue 为 0，视为无需滚动，"同意"直接可点。
+ */
 @Composable
 fun DisclaimerScreen(
     text: String,
@@ -71,19 +72,21 @@ fun DisclaimerScreen(
     // 页面顶部已有同类标题，卡片内不再重复。
     val bodyLines =
         remember(text) {
-            text.lines().dropWhile { it.isBlank() }.let { lines ->
-                if (lines.isNotEmpty()) lines.drop(1) else lines
-            }
+            text
+                .lines()
+                .dropWhile { it.isBlank() }
+                .let { lines ->
+                    if (lines.isNotEmpty()) lines.drop(1) else lines
+                }
         }
 
     Box(modifier = Modifier.fillMaxSize()) {
         GradientBackdrop()
         Column(
             modifier =
-                Modifier
-                    .fillMaxSize()
+                Modifier.fillMaxSize()
                     .padding(horizontal = 20.dp)
-                    .padding(top = 44.dp, bottom = 20.dp),
+                    .padding(top = 44.dp, bottom = 20.dp)
         ) {
             Text(
                 "落弦律",
@@ -106,21 +109,14 @@ fun DisclaimerScreen(
             )
             Spacer(modifier = Modifier.height(16.dp))
             Surface(
-                modifier =
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 0.dp,
             ) {
                 Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
                     Column(
-                        modifier =
-                            Modifier
-                                .weight(1f)
-                                .fillMaxWidth()
-                                .verticalScroll(scrollState),
+                        modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         bodyLines.forEach { line ->

@@ -22,30 +22,29 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import app.luoxianlv.ui.theme.PlayerQqBlue
 
-/**
- * 紧凑型开关（40×22dp）：替代默认 M3 Switch（52×32dp），
- * 用于偏好项、播放条等空间紧凑的场景。
- */
+/** 紧凑型开关（40×22dp）：替代默认 M3 Switch（52×32dp）， 用于偏好项、播放条等空间紧凑的场景。 */
 @Composable
 fun SmallSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val trackColor by animateColorAsState(
-        targetValue =
-            if (checked) {
-                // 强调蓝用 QQ 蓝而非主色：默认主色偏深，小尺寸轨道里更显沉闷
-                PlayerQqBlue
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant
-            },
-        label = "small-switch-track",
-    )
-    val thumbOffset by animateDpAsState(
-        targetValue = if (checked) 20.dp else 2.dp,
-        label = "small-switch-thumb",
-    )
+    val trackColor by
+        animateColorAsState(
+            targetValue =
+                if (checked) {
+                    // 强调蓝用 QQ 蓝而非主色：默认主色偏深，小尺寸轨道里更显沉闷
+                    PlayerQqBlue
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+            label = "small-switch-track",
+        )
+    val thumbOffset by
+        animateDpAsState(
+            targetValue = if (checked) 20.dp else 2.dp,
+            label = "small-switch-thumb",
+        )
     Box(
         modifier =
             modifier
@@ -58,11 +57,10 @@ fun SmallSwitch(
     ) {
         Box(
             modifier =
-                Modifier
-                    .offset(x = thumbOffset)
+                Modifier.offset(x = thumbOffset)
                     .size(18.dp)
                     .clip(CircleShape)
-                    .background(Color.White),
+                    .background(Color.White)
         )
     }
 }

@@ -1,13 +1,15 @@
 package app.luoxianlv.service
 
 internal class DisplayStability {
-    private var last: Triple<Int, Int, Int>? = null
+    private var last: DisplayState? = null
     private var since = 0L
 
-    fun reset() { last = null }
+    fun reset() {
+        last = null
+    }
 
-    fun ready(sample: Triple<Int, Int, Int>, now: Long): Boolean {
-        if (sample.first <= 0 || sample.second <= 0) {
+    fun ready(sample: DisplayState, now: Long): Boolean {
+        if (sample.width <= 0 || sample.height <= 0) {
             reset()
             return false
         }

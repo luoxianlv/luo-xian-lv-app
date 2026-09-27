@@ -21,7 +21,9 @@ internal fun readMidi(name: String, stream: InputStream): ByteArray {
         output.write(buffer, 0, count)
     }
     val bytes = output.toByteArray()
-    require(bytes.size >= 14 && bytes.copyOfRange(0, 4).contentEquals(byteArrayOf(77, 84, 104, 100))) {
+    require(
+        bytes.size >= 14 && bytes.copyOfRange(0, 4).contentEquals(byteArrayOf(77, 84, 104, 100))
+    ) {
         "MIDI 文件头无效，请选择原始 .mid / .midi 文件"
     }
     return bytes

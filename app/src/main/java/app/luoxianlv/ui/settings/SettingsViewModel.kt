@@ -10,11 +10,11 @@ import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.KeyLayout
 import app.luoxianlv.data.SessionStore
 import app.luoxianlv.data.ThemeMode
+import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.service.KeepAliveStatus
 import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.update.UpdateAutoCheck
-import app.luoxianlv.update.UpdateManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -30,11 +30,9 @@ data class SettingsUiState(
     val autoUpdate: Boolean = true,
 )
 
-class SettingsViewModel(
-    private val app: Application,
-) : AndroidViewModel(app) {
+class SettingsViewModel(private val app: Application) : AndroidViewModel(app) {
     private val sessionStore = SessionStore(app)
-    private val updater = UpdateManager(app)
+    private val updater = PlatformClient(app)
     private val _state = MutableStateFlow(SettingsUiState())
     val state = _state.asStateFlow()
 
@@ -42,15 +40,14 @@ class SettingsViewModel(
         refresh()
     }
 
-    fun refresh() =
-        _state.update {
-            it.copy(
-                session = sessionStore.current(),
-                appearance = AppearanceStore.load(app),
-                keepAlive = KeepAlive.status(app),
-                autoUpdate = UpdateAutoCheck.isEnabled(app),
-            )
-        }
+    fun refresh() = _state.update {
+        it.copy(
+            session = sessionStore.current(),
+            appearance = AppearanceStore.load(app),
+            keepAlive = KeepAlive.status(app),
+            autoUpdate = UpdateAutoCheck.isEnabled(app),
+        )
+    }
 
     fun login(
         account: String,
@@ -66,7 +63,8 @@ class SettingsViewModel(
                     Analytics.logEvent(app, "login_success") // 埋点：邮箱登录成功
                     refresh()
                     _state.update { it.copy(message = "登录成功") }
-                }.onFailure { e -> _state.update { it.copy(error = e.message ?: "登录失败") } }
+                }
+                .onFailure { e -> _state.update { it.copy(error = e.message ?: "登录失败") } }
         }
     }
 
@@ -85,8 +83,8 @@ class SettingsViewModel(
     /**
      * 切换深浅色模式。
      *
-     * 只写偏好即可：`MainActivity` 收着 `AppearanceStore.settings` 这个 Flow，
-     * 存盘时发的值会直接驱动主题重组，不需要这里再通知 Activity。
+     * 只写偏好即可：`MainActivity` 收着 `AppearanceStore.settings` 这个 Flow， 存盘时发的值会直接驱动主题重组，不需要这里再通知
+     * Activity。
      */
     fun setThemeMode(mode: ThemeMode) {
         val next = _state.value.appearance.copy(themeMode = mode)
@@ -105,11 +103,11 @@ class SettingsViewModel(
     fun loadCalibration(): KeyLayout = ConfigStore.load(app)
 
     /** 保存校准并热加载到服务；返回是否成功。 */
-    fun saveCalibration(layout: KeyLayout): Boolean =
-        runCatching {
-            ConfigStore.save(app, layout)
-            MusicAccessibilityService.instance?.reloadConfig()
-        }.isSuccess
+    fun saveCalibration(layout: KeyLayout): Boolean = runCatching {
+        ConfigStore.save(app, layout)
+        MusicAccessibilityService.instance?.reloadConfig()
+    }
+        .isSuccess
 
     fun dismissError() = _state.update { it.copy(error = null) }
 

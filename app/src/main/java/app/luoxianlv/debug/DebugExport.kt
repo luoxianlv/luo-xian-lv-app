@@ -11,7 +11,6 @@ import app.luoxianlv.BuildConfig
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.Kv
 import app.luoxianlv.service.MusicAccessibilityService
-import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -19,6 +18,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import org.json.JSONObject
 
 /** 打包调试信息（日志/截图/布局/设备信息）成 ZIP 并通过 FileProvider 分享。 */
 object DebugExport {
@@ -29,19 +29,24 @@ object DebugExport {
                     PlaybackDebugLog.init(context)
                     PlaybackDebugLog.flush()
                     PlaybackDebugLog.withSnapshot { export(context) }
-                }.getOrNull()
+                }
+                    .getOrNull()
             } ?: return false
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
             runCatching {
-                val uri = FileProvider.getUriForFile(context, context.packageName + ".updates", file)
+                val uri =
+                    FileProvider.getUriForFile(context, context.packageName + ".updates", file)
                 val send =
                     Intent(Intent.ACTION_SEND).apply {
                         type = "application/zip"
                         putExtra(Intent.EXTRA_STREAM, uri)
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
-                context.startActivity(Intent.createChooser(send, "分享调试 ZIP").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }.isSuccess
+                context.startActivity(
+                    Intent.createChooser(send, "分享调试 ZIP").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+                .isSuccess
         }
     }
 
@@ -50,7 +55,9 @@ object DebugExport {
         val zipFile =
             File(
                 context.cacheDir,
-                "updates/luoxianlv-debug-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".zip",
+                "updates/luoxianlv-debug-" +
+                    SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) +
+                    ".zip",
             )
         zipFile.parentFile?.mkdirs()
         zipFile.parentFile
@@ -65,11 +72,12 @@ object DebugExport {
             zip.putNextEntry(ZipEntry("diagnostics.json"))
             zip.write(diagnostics(context).toString(2).toByteArray(Charsets.UTF_8))
             zip.closeEntry()
-            dir?.listFiles { f -> f.isFile && f.name.startsWith("play-debug") }?.forEach { log ->
-                zip.putNextEntry(ZipEntry("logs/" + log.name))
-                log.inputStream().use { it.copyTo(zip) }
-                zip.closeEntry()
-            }
+            dir?.listFiles { f -> f.isFile && f.name.startsWith("play-debug") }
+                ?.forEach { log ->
+                    zip.putNextEntry(ZipEntry("logs/" + log.name))
+                    log.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
             File(dir, "shots").listFiles()?.forEach { shot ->
                 zip.putNextEntry(ZipEntry("shots/" + shot.name))
                 shot.inputStream().use { it.copyTo(zip) }
@@ -82,10 +90,10 @@ object DebugExport {
     }
 
     private fun deviceInfo(context: Context): JSONObject {
-        val display = context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+        val display =
+            context.getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
         val size = Point()
-        @Suppress("DEPRECATION")
-        display.getRealSize(size)
+        @Suppress("DEPRECATION") display.getRealSize(size)
         val metrics = context.resources.displayMetrics
         return JSONObject()
             .put("packageName", context.packageName)
@@ -119,7 +127,7 @@ object DebugExport {
             .put("playing", d?.playing)
             .put("preparing", d?.preparing)
             .put("songTitle", d?.songTitle)
-            .put("display", d?.display?.let { "${it.first}x${it.second} rot=${it.third}" })
+            .put("display", d?.display?.let { "${it.width}x${it.height} rot=${it.rotation}" })
             .put("playbackDisplay", d?.playbackDisplay?.toString())
             .put("lastCoordinates", d?.lastCoordinates)
             .put("error", d?.error)

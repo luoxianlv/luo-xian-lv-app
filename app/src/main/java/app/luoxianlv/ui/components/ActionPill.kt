@@ -22,12 +22,10 @@ import androidx.compose.ui.unit.dp
 /**
  * 胶囊操作按钮：本应用统一的主动作样式（「我的」的「启动」定下来的）。
  *
- * `surface` 白底。之所以不用 `FilledTonalButton`：
- * 它的容器色是 `secondaryContainer`（浅蓝 #EAF3FF），压在同为蓝灰的渐变底上
+ * `surface` 白底。之所以不用 `FilledTonalButton`： 它的容器色是 `secondaryContainer`（浅蓝 #EAF3FF），压在同为蓝灰的渐变底上
  * 会糊成一片；白色才拉得开对比。
  *
- * [compact] 用于并排的双按钮（曲库的「导入谱子 / 平台下载」），
- * 矮一档、字号小一档，避免两个按钮各占半屏时显得笨重。
+ * [compact] 用于并排的双按钮（曲库的「导入谱子 / 平台下载」）， 矮一档、字号小一档，避免两个按钮各占半屏时显得笨重。
  */
 @Composable
 fun ActionPill(
