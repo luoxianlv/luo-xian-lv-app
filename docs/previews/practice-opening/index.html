@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>落弦律 · 演练场开场预览</title>
+  <style>
+    :root{font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;color:#192637;background:#f4f7fc;font-synthesis:none;--blue:#0a84ff;--ease:cubic-bezier(.2,.7,.2,1)}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 83% 0%,#e8f1ff,transparent 44%),radial-gradient(ellipse at 0% 75%,#e9f2f8,transparent 48%),#f4f7fc}
+    button,select{font:inherit}button{cursor:pointer}button:focus-visible,select:focus-visible,[role=button]:focus-visible{outline:3px solid #0a84ff;outline-offset:5px}button:disabled{cursor:default;opacity:.5}
+    .shell{width:min(1440px,100%);margin:auto;padding:32px 48px 26px}.masthead{display:flex;align-items:center;justify-content:space-between;margin-bottom:34px;gap:16px}
+    .brand{display:flex;align-items:center;gap:12px;color:#27384b;text-decoration:none;font-size:18px;font-weight:600;letter-spacing:2px}.brand-symbol{width:38px;height:38px;background:#0a84ff;color:#fff;display:grid;place-items:center;border-radius:13px;box-shadow:0 5px 18px #0a84ff25}.brand-symbol svg{width:25px;height:25px}
+    .header-tag{font-size:12px;letter-spacing:1px;color:#78869a;border:1px solid #dce4ed;border-radius:20px;padding:7px 13px;background:#ffffff70}.heading{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:0 2px 20px}.heading h1{font-size:26px;line-height:1.4;letter-spacing:1px;margin:0 0 5px;font-weight:600}.heading p{font-size:13px;margin:0;color:#7d8a9b}.format{font-size:12px;color:#8894a2;display:flex;align-items:center;gap:8px}.format svg{width:19px;height:14px}
+    .device{position:relative;aspect-ratio:2.18;border:7px solid #fff;border-radius:30px;overflow:clip;box-shadow:0 24px 70px -34px #385b8c55,0 2px 6px #243d6010;background:#f2f7ff;isolation:isolate;--pace:1}
+    .lobby{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:radial-gradient(ellipse at 50% 60%,#fff 0%,#f4f8fe 55%,#eaf2ff 100%);z-index:3;transition:opacity calc(220ms * var(--pace)) ease,transform calc(430ms * var(--pace)) var(--ease)}
+    .lobby::before,.lobby::after{content:"";position:absolute;width:600px;height:600px;border:1px solid #dce7f560;border-radius:50%;pointer-events:none}.lobby::before{transform:translate(-65%,12%)}.lobby::after{transform:translate(75%,-14%)}
+    .lobby-label{position:absolute;left:28px;top:23px;display:flex;align-items:center;gap:8px;font-size:12px;color:#75879e}.lobby-label svg{width:15px;height:15px}.hero-art{width:164px;height:82px;margin-bottom:13px;filter:drop-shadow(0 15px 15px #157ade15)}
+    .lobby h2{margin:0 0 9px;font-size:30px;font-weight:600;letter-spacing:5px;color:#233c58}.lobby p{margin:0 0 26px;font-size:13px;letter-spacing:1px;color:#8192a6}.enter{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;gap:18px;padding:13px 24px;min-width:172px;background:var(--blue);color:#fff;border:0;border-radius:25px;font-size:14px;box-shadow:0 7px 20px #0a84ff26;transition:background .2s,transform .2s}.enter:hover{background:#0078ed;transform:translateY(-2px)}.enter svg{width:17px;height:17px}.lobby-features{position:absolute;bottom:23px;display:flex;gap:22px;color:#94a1b1;font-size:11px;letter-spacing:.5px}.lobby-features span+span::before{content:"·";margin-right:22px;color:#bac5d1}
+    .stage{position:absolute;inset:0;background:#060807;overflow:hidden;opacity:0;transition:opacity calc(240ms * var(--pace)) ease}.stage::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 43%,#b6c9d91a,transparent 66%);opacity:0;pointer-events:none}
+    .stage-top{position:absolute;left:28px;right:27px;top:22px;display:flex;align-items:center;justify-content:space-between;opacity:0;color:#8d9590;font-size:11px;letter-spacing:2px;z-index:2}.stage-name{display:flex;align-items:center;gap:9px}.stage-name i{width:4px;height:4px;border-radius:50%;background:#738075;display:block}.leave{width:34px;height:34px;border:1px solid #ffffff14;border-radius:50%;background:#ffffff04;color:#a7aca7;display:grid;place-items:center;transition:background .2s}.leave:hover{background:#ffffff12;color:white}.leave svg{width:16px;height:16px}
+    .keyboard{position:absolute;width:92%;height:auto;left:4%;top:50%;transform:translateY(-43%);overflow:visible;touch-action:none;user-select:none;-webkit-user-select:none}.key{cursor:pointer;outline:none;touch-action:none}.hit{fill:transparent;stroke:none}.disk{fill:#555852;opacity:0}.ring-base{fill:none;stroke:#383b36;stroke-width:2.5;opacity:0}.ring-trace{fill:none;stroke:#d9e6ed;stroke-width:2.6;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;opacity:0}.active-ring{fill:none;stroke:#e3e6dd;stroke-width:3;opacity:0}.glyph{fill:#eeeeE5;font-family:"Microsoft YaHei",sans-serif;font-weight:700;opacity:0}.note-label{font-size:80px}.mode-label{font-size:31px;font-weight:500}.high-dot{fill:#eeeee5;opacity:0}.sharp{font-size:28px;fill:#e7e8dd;opacity:0}.divider{stroke:#53564e;stroke-width:1.5;opacity:0}.ornament{fill:none;stroke:#90998b;stroke-width:1.8;stroke-linecap:round;opacity:0}.touch-glow{fill:#d3ded3;opacity:0;transition:opacity 90ms ease}.key.pressed .touch-glow{opacity:.20}.key.pressed .active-ring{opacity:.85}.key.pressed .glyph{fill:#fff}.key:focus-visible .ring-base{stroke:#97c2ed;opacity:1}
+    .stage-foot{position:absolute;bottom:22px;left:29px;right:29px;display:flex;align-items:center;justify-content:space-between;color:#626e65;font-size:11px;letter-spacing:.8px;opacity:0}.stage-foot .quiet{display:flex;align-items:center;gap:6px}.stage-foot svg{width:12px;height:12px}.state-dot{display:inline-block;width:4px;height:4px;background:#9cb49c;border-radius:50%;margin-right:6px}
+    .device[data-state=entering] .lobby,.device[data-state=playing] .lobby{opacity:0;transform:scale(1.025);pointer-events:none}.device[data-state=entering] .stage,.device[data-state=playing] .stage{opacity:1}.device[data-state=entering] .stage::before{animation:stage-breath calc(1000ms * var(--pace)) ease both}.device[data-state=entering] .ring-base{animation:base-in calc(440ms * var(--pace)) ease both;animation-delay:calc(var(--delay) * var(--pace))}.device[data-state=entering] .ring-trace{animation:draw-ring calc(500ms * var(--pace)) cubic-bezier(.32,.04,.19,1) both;animation-delay:calc(var(--delay) * var(--pace))}.device[data-state=entering] .glyph,.device[data-state=entering] .high-dot{animation:label-in calc(240ms * var(--pace)) var(--ease) both;animation-delay:calc((var(--delay) + 270ms) * var(--pace))}.device[data-state=entering] .divider,.device[data-state=entering] .ornament{animation:ornament-in calc(620ms * var(--pace)) var(--ease) both;animation-delay:calc(140ms * var(--pace))}.device[data-state=entering] .key[data-mode=natural] .disk{animation:disc-light calc(300ms * var(--pace)) ease both;animation-delay:calc(770ms * var(--pace))}.device[data-state=entering] .key[data-mode=natural] .active-ring{animation:active-light calc(300ms * var(--pace)) ease both;animation-delay:calc(770ms * var(--pace))}.device[data-state=entering] .stage-top,.device[data-state=entering] .stage-foot{animation:chrome-in calc(260ms * var(--pace)) ease both;animation-delay:calc(810ms * var(--pace))}
+    .device[data-state=playing] .ring-base,.device[data-state=playing] .glyph,.device[data-state=playing] .high-dot{opacity:1}.device[data-state=playing] .divider{opacity:.6}.device[data-state=playing] .ornament{opacity:.65}.device[data-state=playing] .stage-top,.device[data-state=playing] .stage-foot{opacity:1}.device[data-state=playing] .key.selected .disk{opacity:.8}.device[data-state=playing] .key.selected .active-ring{opacity:1}.device[data-state=playing][data-half=true] .sharp{opacity:1}.device[data-state=entering] .key{pointer-events:none}.device[data-state=leaving] .stage{opacity:0}.device[data-state=leaving] .lobby{opacity:0;transform:scale(.985);pointer-events:none}
+    @keyframes draw-ring{0%{stroke-dashoffset:1;opacity:0}8%{opacity:.7}70%{opacity:.85}100%{stroke-dashoffset:0;opacity:0}}@keyframes base-in{0%,10%{opacity:0}100%{opacity:1}}@keyframes label-in{from{opacity:0;translate:0 5px}to{opacity:1;translate:0 0}}@keyframes disc-light{from{opacity:0}75%{opacity:.98}to{opacity:.8}}@keyframes active-light{from{opacity:0}70%{opacity:1}to{opacity:1}}@keyframes ornament-in{from{opacity:0;scale:.96 1}to{opacity:.65;scale:1}}@keyframes chrome-in{from{opacity:0}to{opacity:1}}@keyframes stage-breath{0%{opacity:0}40%{opacity:1}100%{opacity:0}}
+    .preview-controls{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:21px 3px 17px}.control-group{display:flex;gap:10px;align-items:center}.secondary{display:flex;gap:7px;align-items:center;border:1px solid #dae3ed;background:#ffffffb3;color:#405670;padding:9px 15px;border-radius:19px;font-size:12px;transition:background .2s,border .2s}.secondary:hover{background:#fff;border-color:#a6bdd7}.secondary svg{width:14px;height:14px}.speed{display:flex;align-items:center;gap:9px;color:#8491a0;font-size:12px}.speed select{appearance:none;border:1px solid #dae3ed;background:#ffffffb3;color:#4e647c;padding:9px 30px 9px 13px;border-radius:18px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 5 3 3 3-3' fill='none' stroke='%2378889b' stroke-width='1.2'/%3E%3C/svg%3E");background-position:right 11px center;background-repeat:no-repeat}.status{color:#7d8b9d;font-size:12px;min-width:120px;text-align:right}.status i{display:inline-block;width:5px;height:5px;border-radius:50%;background:#9eacbc;margin-right:7px}.status.live i{background:#6a9b85}
+    .timeline{height:2px;background:#e1e7f0;border-radius:2px;overflow:hidden;margin:0 3px}.timeline span{display:block;transform:scaleX(0);transform-origin:left;background:linear-gradient(90deg,#8bc3ff,#0a84ff);width:100%;height:100%}.footnote{display:flex;justify-content:space-between;gap:20px;margin:15px 3px 0;color:#93a0b1;font-size:11px;line-height:1.8}.footnote strong{font-weight:400;color:#738398}.hint-key{border:1px solid #d7e0ec;border-radius:4px;padding:1px 5px;font-size:10px;color:#7c8da3;margin:0 2px}
+    .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    @media(min-width:1600px){.shell{padding-top:52px}.masthead{margin-bottom:48px}}
+    @media(max-width:760px){.shell{padding:22px 16px}.masthead{margin-bottom:27px}.heading h1{font-size:22px}.heading p{font-size:11px}.format{display:none}.device{border-width:4px;border-radius:20px;aspect-ratio:1.75}.lobby h2{font-size:23px}.hero-art{width:105px;height:50px;margin-bottom:7px}.lobby p{font-size:11px;margin-bottom:16px}.enter{font-size:12px;padding:10px 20px;min-width:145px}.lobby-label{top:14px;left:17px;font-size:10px}.lobby-features{bottom:13px;font-size:9px;gap:10px}.lobby-features span+span::before{margin-right:10px}.stage-top{left:17px;right:16px;top:12px;font-size:9px}.stage-foot{left:17px;right:17px;bottom:13px;font-size:9px}.leave{width:28px;height:28px}.keyboard{width:96%;left:2%;top:52%}.preview-controls{gap:8px;flex-wrap:wrap}.speed>span{display:none}.control-group{gap:7px}.secondary{padding:8px 11px}.footnote{display:block}.footnote>span{display:block}.status{font-size:10px;min-width:60px}.brand{font-size:16px}.header-tag{font-size:10px}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important}.device .ring-trace{display:none!important}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header class="masthead">
+    <a class="brand" href="#" aria-label="落弦律演练场预览"><span class="brand-symbol"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 21V11m5 14V7m6 14V11m5 7v-4" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></span>落弦律</a>
+    <span class="header-tag">开场动画预览 · 01</span>
+  </header>
+  <section class="heading"><div><h1>演练场</h1><p>灯光落下，旋律登场。</p></div><span class="format"><svg viewBox="0 0 20 14" fill="none" aria-hidden="true"><rect x="1" y="1" width="18" height="12" rx="3" stroke="currentColor"/><path d="M3.5 5v4" stroke="currentColor" stroke-linecap="round"/></svg>横屏舞台</span></section>
+  <section class="device" id="device" data-state="idle" data-half="false" aria-label="演练场开场动画舞台">
+    <div class="lobby" id="lobby">
+      <div class="lobby-label"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 13V7m4 9V4m6 9V7m4 4V9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>演练场</div>
+      <svg class="hero-art" viewBox="0 0 220 105" fill="none" aria-hidden="true">
+        <defs><linearGradient id="instrument" x1="36" y1="20" x2="172" y2="90" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset="1" stop-color="#d3e7ff"/></linearGradient></defs>
+        <g transform="rotate(-8 110 52)"><rect x="29" y="27" width="162" height="50" rx="13" fill="url(#instrument)" stroke="#b6d3f5"/><rect x="35" y="36" width="150" height="14" rx="6" fill="#f8fcff" stroke="#d2e4f8"/><path d="M40 65h140" stroke="#9ec8f6" stroke-width="2" stroke-linecap="round"/><g fill="#609edc"><rect x="45" y="55" width="9" height="9" rx="2"/><rect x="62" y="55" width="9" height="9" rx="2"/><rect x="79" y="55" width="9" height="9" rx="2"/><rect x="96" y="55" width="9" height="9" rx="2"/><rect x="113" y="55" width="9" height="9" rx="2"/><rect x="130" y="55" width="9" height="9" rx="2"/><rect x="147" y="55" width="9" height="9" rx="2"/><rect x="164" y="55" width="9" height="9" rx="2"/></g></g>
+        <path d="M192 14v8m-4-4h8M19 74v6m-3-3h6" stroke="#91bced" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <h2>准备好，吹响第一音</h2><p>属于你的口琴演练空间</p>
+      <button class="enter" id="enter">进入演奏<svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="lobby-features"><span>口琴原声</span><span>自由弹奏</span><span>悬浮窗演练</span></div>
+    </div>
+    <div class="stage" id="stage" aria-hidden="true">
+      <div class="stage-top"><span class="stage-name"><i></i>落弦律 · 演练场</span><button class="leave" id="leave" aria-label="退出演奏"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m12 5-5 5 5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+      <svg class="keyboard" id="keyboard" viewBox="0 0 2048 512" aria-label="八键口琴，包含半音与三种调式">
+        <g class="divider"><path d="M5 7H946M1002 7h968M5 477h1965"/><path d="M740 84v89"/></g>
+        <g class="ornament"><path d="M974 1v22m0-18c-13-14-34 2-22 12 8 6 14-8 4-8m18-4c13-14 34 2 22 12-8 6-14-8-4-8m-25 0c1 10-11 15-16 7m30-7c-1 10 11 15 16 7"/></g>
+        <g id="mode-buttons"></g><g id="note-buttons"></g>
+      </svg>
+      <div class="stage-foot"><span id="pitch-status"><i class="state-dot"></i>自然音</span><span class="quiet"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 6H3v4h3l3 3V3L6 6Zm6 0 3 4m0-4-3 4" stroke="currentColor" stroke-linejoin="round"/></svg>音效待接入</span></div>
+    </div>
+  </section>
+  <div class="preview-controls">
+    <div class="control-group"><button class="secondary" id="replay"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 8a6 6 0 1 1 0 5M4 3v5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>重播开场</button><label class="speed"><span>观察速度</span><select id="speed" aria-label="动画观察速度"><option value="1">正常速度</option><option value="2">慢速观察 · 0.5×</option></select></label></div>
+    <span class="status" id="status" role="status"><i></i>等待入场</span>
+  </div>
+  <div class="timeline" aria-hidden="true"><span id="progress"></span></div>
+  <footer class="footnote"><span><strong>本页预览开场与按键视觉。</strong>入场音效留空，口琴发声尚未接入。</span><span>点击琴键试按 · <kbd class="hint-key">1–8</kbd>弹奏 · <kbd class="hint-key">Esc</kbd>返回</span></footer>
+  <p class="sr-only" id="announcer" aria-live="polite"></p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const device = $('device'), stage = $('stage'), lobby = $('lobby');
+  const notes = [], modes = [], noteXs = [96,347,598,848,1098,1349,1600,1852];
+  const modeInfo = [{id:'half',label:'半音',x:588},{id:'raise',label:'升调',x:882},{id:'natural',label:'自然音',x:1116},{id:'lower',label:'降调',x:1350}];
+  const ns = 'http://www.w3.org/2000/svg';
+  let state = 'idle', pitch = 'natural', half = false, active = null, generation = 0, progressAnimation = null;
+  const timers = new Set();
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  function svg(tag, attrs, parent, text) {
+    const element = document.createElementNS(ns, tag);
+    for (const [key,value] of Object.entries(attrs)) element.setAttribute(key,String(value));
+    if (text !== undefined) element.textContent = text;
+    parent.appendChild(element); return element;
+  }
+  function createKey(parent, x, y, radius, delay, label) {
+    const group = svg('g',{class:'key',transform:`translate(${x} ${y})`,role:'button',tabindex:'-1','aria-label':label,'aria-pressed':'false',style:`--delay:${delay}ms`},parent);
+    svg('circle',{class:'hit',r:radius+8},group);
+    svg('circle',{class:'disk',r:radius},group);
+    svg('circle',{class:'touch-glow',r:radius},group);
+    svg('circle',{class:'ring-base',r:radius},group);
+    svg('circle',{class:'ring-trace',r:radius,pathLength:1,transform:'rotate(-90)'},group);
+    svg('circle',{class:'active-ring',r:radius},group);
+    return group;
+  }
+  modeInfo.forEach((info,i) => {
+    const key = createKey($('mode-buttons'), info.x,126,74,130+i*37,info.label);
+    key.dataset.mode = info.id;
+    svg('text',{class:'glyph mode-label','text-anchor':'middle','dominant-baseline':'central',y:0},key,info.label);
+    key.addEventListener('click',() => changeMode(info.id));
+    key.addEventListener('keydown',e => {if(e.key==='Enter'||e.key===' '){e.preventDefault();changeMode(info.id)}});
+    modes.push(key);
+  });
+  noteXs.forEach((x,i) => {
+    const key = createKey($('note-buttons'),x,355,86,220+i*27,`音符 ${i===7?'高音1':i+1}`);
+    key.dataset.note=String(i);
+    svg('text',{class:'glyph note-label','text-anchor':'middle','dominant-baseline':'central',y:4},key,i===7?'1':String(i+1));
+    svg('text',{class:'sharp','text-anchor':'middle',x:-37,y:-18},key,'♯');
+    const dots=svg('g',{class:'dots'},key);
+    if(i===7)svg('circle',{class:'high-dot',cx:0,cy:-53,r:5.2},dots);
+    key.addEventListener('pointerdown',e => {if(state!=='playing')return;e.preventDefault();key.setPointerCapture(e.pointerId);press(i,`p${e.pointerId}`)});
+    const release=e=>stop(`p${e.pointerId}`);
+    key.addEventListener('pointerup',release);key.addEventListener('pointercancel',release);key.addEventListener('lostpointercapture',release);
+    key.addEventListener('keydown',e=>{if((e.key===' '||e.key==='Enter')&&!e.repeat){e.preventDefault();press(i,`focus${i}`)}});
+    key.addEventListener('keyup',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();stop(`focus${i}`)}});
+    notes.push(key);
+  });
+  function setState(value){state=value;device.dataset.state=value;const playable=value==='playing';notes.concat(modes).forEach(key=>{key.setAttribute('tabindex',playable?'0':'-1');key.setAttribute('aria-disabled',String(!playable))});}
+  function later(fn,ms){const token=generation;const id=setTimeout(()=>{timers.delete(id);if(token===generation)fn()},ms);timers.add(id)}
+  function cancel(){generation++;timers.forEach(clearTimeout);timers.clear();if(progressAnimation)progressAnimation.cancel();progressAnimation=null;stop();}
+  function status(text,live=false){$('status').replaceChildren();const dot=document.createElement('i');$('status').append(dot,document.createTextNode(text));$('status').classList.toggle('live',live);}
+  function resetModes(){pitch='natural';half=false;device.dataset.half='false';updateModes();}
+  function updateModes(){
+    modes.forEach(key=>{const selected=key.dataset.mode==='half'?half:key.dataset.mode===pitch;key.classList.toggle('selected',selected);key.setAttribute('aria-pressed',String(selected))});
+    notes.forEach((key,i)=>{const dots=key.querySelector('.dots');dots.replaceChildren();const register=(pitch==='raise'?1:pitch==='lower'?-1:0)+(i===7?1:0);for(let j=0;j<Math.abs(register);j++)svg('circle',{class:'high-dot',cx:0,cy:register>0?-53-j*12:58+j*12,r:5.2},dots)});
+    $('pitch-status').innerHTML='<i class="state-dot"></i>';
+    $('pitch-status').append(document.createTextNode(modeInfo.find(m=>m.id===pitch).label+(half?' · 半音':'')));
+    device.dataset.half=String(half);
+  }
+  function changeMode(id){if(state!=='playing')return;if(id==='half')half=!half;else pitch=id;updateModes();}
+  function press(index,owner){if(state!=='playing')return;stop();active={index,owner};notes[index].classList.add('pressed');notes[index].setAttribute('aria-pressed','true');}
+  function stop(owner){if(!active||(owner!==undefined&&owner!==active.owner))return;notes[active.index].classList.remove('pressed');notes[active.index].setAttribute('aria-pressed','false');active=null;}
+  function enter(){
+    cancel();resetModes();device.style.setProperty('--pace',$('speed').value);stage.setAttribute('aria-hidden','false');lobby.inert=true;stage.inert=false;
+    setState('idle');void device.offsetWidth;setState('entering');status('舞台开场中');$('announcer').textContent='正在进入演奏';
+    const total=reducedMotion.matches?160:1070*Number($('speed').value);
+    if(reducedMotion.matches)device.style.setProperty('--pace','0.15');
+    progressAnimation=$('progress').animate([{transform:'scaleX(0)'},{transform:'scaleX(1)'}],{duration:total,fill:'forwards',easing:'linear'});
+    later(()=>{setState('playing');status('可以试按琴键',true);$('announcer').textContent='演奏模式已就绪，声音暂未接入';$('leave').focus({preventScroll:true});},total);
+  }
+  function leave(){
+    if(state==='idle')return;cancel();setState('leaving');stage.inert=true;status('正在返回');
+    later(()=>{setState('idle');lobby.inert=false;stage.setAttribute('aria-hidden','true');resetModes();status('等待入场');$('enter').focus({preventScroll:true});},reducedMotion.matches?30:220);
+  }
+  $('enter').addEventListener('click',enter);$('replay').addEventListener('click',enter);$('leave').addEventListener('click',leave);
+  $('speed').addEventListener('change',()=>{if(state==='entering'||state==='playing')enter()});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'){leave();return}if(e.target.matches('select,input,textarea'))return;if(/^[1-8]$/.test(e.key)&&!e.repeat){e.preventDefault();press(Number(e.key)-1,`k${e.key}`)}});
+  document.addEventListener('keyup',e=>{if(/^[1-8]$/.test(e.key))stop(`k${e.key}`)});
+  window.addEventListener('blur',()=>stop());
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){stop();if(state==='entering')leave()}});
+  stage.inert=true;resetModes();setState('idle');
+})();
+</script>
+</body>
+</html>
