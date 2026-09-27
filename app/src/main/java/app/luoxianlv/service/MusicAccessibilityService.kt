@@ -89,6 +89,10 @@ class MusicAccessibilityService : AccessibilityService() {
     /** 当前选中曲目是否已经尝试过播放前自动修复（每次选中重置，避免内部 resume 反复重试）。 */
     private var fixAttemptedForSong = false
     private var playbackDisplay: Triple<Int, Int, Int>? = null
+    // Pixel coordinates come from the accepted accessibility screenshot, not OEM display metrics.
+    private var screenshotFrame: PlaybackCoordinates.Frame? = null
+    private val interruptionGuard = PlaybackInterruptionGuard()
+    internal fun canStartPlayback() = interruptionGuard.canStart(SystemClock.uptimeMillis())
     private var recoveringDisplay = false
     private var recoveryAttempts = 0
     private var recoveryWasPlaying = false
@@ -265,6 +269,10 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     fun play() {
+        if (!canStartPlayback()) {
+            PlaybackDebugLog.log("play ignored: within 300ms of gesture interruption")
+            return
+        }
         if (app.luoxianlv.ui.practice.PracticePlaybackGate.active &&
             (!app.luoxianlv.ui.practice.PracticePlaybackGate.ready || Build.VERSION.SDK_INT < 30)) {
             error = if (Build.VERSION.SDK_INT < 30) "演练场自动定位需要 Android 11 或更高版本" else "请等待演练场开场完成"
@@ -287,6 +295,7 @@ class MusicAccessibilityService : AccessibilityService() {
         // toggled 半音/升降调 directly in the game. Screenshot needs API 30;
         // below that the stored layout is used as before.
         playbackDisplay = displayState()
+        screenshotFrame = null
         PlaybackDebugLog.log("play() display=$playbackDisplay baseMs=$baseMs speed=$speed")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             preparing = true
@@ -330,11 +339,14 @@ class MusicAccessibilityService : AccessibilityService() {
      * 失败留在当前页并提示回 App 内修复。全程在后台线程跑，不阻塞手势主循环。
      */
     private fun attemptRemoteFixThenPlay() {
+        val token = ++generation
+        val requestedSongId = song.id
         preparing = true
         error = "正在修复谱面…"
         floating.refresh()
         MidiCoreFixer.fixSong(this, song) { ok ->
             handler.post {
+                if (token != generation || !preparing || song.id != requestedSongId) return@post
                 preparing = false
                 if (!ok) {
                     error = "谱面修复失败，请到 App 内曲库中修复该谱子"
@@ -379,10 +391,7 @@ class MusicAccessibilityService : AccessibilityService() {
                 object : TakeScreenshotCallback {
                     override fun onSuccess(screenshot: ScreenshotResult) {
                         val currentDisplay = displayState()
-                        if (token != generation || playbackDisplay != currentDisplay ||
-                            screenshot.hardwareBuffer.width != currentDisplay.first ||
-                            screenshot.hardwareBuffer.height != currentDisplay.second
-                        ) {
+                        if (token != generation || playbackDisplay != currentDisplay) {
                             PlaybackDebugLog.log(
                                 "screenshot mismatch tokenAlive=${token == generation} playback=$playbackDisplay current=$currentDisplay shot=${screenshot.hardwareBuffer.width}x${screenshot.hardwareBuffer.height}",
                             )
@@ -390,6 +399,8 @@ class MusicAccessibilityService : AccessibilityService() {
                             done(false)
                             return
                         }
+                        val frame = PlaybackCoordinates.Frame(screenshot.hardwareBuffer.width, screenshot.hardwareBuffer.height)
+                        PlaybackDebugLog.log("accessibility frame=${frame.width}x${frame.height} display=$currentDisplay")
                         recognitionExecutor.execute {
                             val result = recognizeScreenshot(screenshot)
                             handler.post {
@@ -399,6 +410,7 @@ class MusicAccessibilityService : AccessibilityService() {
                                 }
                                 val valid = result != null && PlaybackCoordinates.validLayout(result.layout)
                                 if (valid) {
+                                    screenshotFrame = frame
                                     keys = result.layout
                                     ConfigStore.save(this@MusicAccessibilityService, result.layout)
                                     result.mode?.let { pitchMode = it }
@@ -541,8 +553,9 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     fun screenBounds(): Rect {
-        val (width, height) = displayState()
-        return Rect(0, 0, width, height)
+        val display = displayState()
+        val frame = screenshotFrame?.takeIf { playbackDisplay == display }
+        return Rect(0, 0, frame?.width ?: display.first, frame?.height ?: display.second)
     }
 
     fun diagnostics(): Diagnostics =
@@ -670,18 +683,22 @@ class MusicAccessibilityService : AccessibilityService() {
             done(false)
             return
         }
-        val bounds = Rect(0, 0, currentDisplay.first, currentDisplay.second)
-        // Clamp normalized coordinates against the active landscape display.
-        // This prevents a stale calibration value or a cutout inset from
-        // producing an out-of-bounds gesture that Android cancels.
+        val frame = screenshotFrame ?: if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            PlaybackCoordinates.Frame(currentDisplay.first,currentDisplay.second)
+        } else {
+            gestureFailure = "缺少无障碍截图坐标，请重新识别"
+            done(false)
+            return
+        }
+        val bounds = Rect(0,0,frame.width,frame.height)
+        // Use the same pixel space that produced the recognized normalized keys.
         if (!PlaybackCoordinates.validPoint(x, y)) {
             gestureFailure = "按键坐标无效，请重新识别"
             PlaybackDebugLog.log("invalid coordinate x=$x y=$y display=$currentDisplay")
             done(false)
             return
         }
-        val px = x * (bounds.width() - 1).coerceAtLeast(1)
-        val py = y * (bounds.height() - 1).coerceAtLeast(1)
+        val (px, py) = frame.point(x,y)
         gestureFailure = null
         lastCoordinates = "ratio=($x,$y) px=($px,$py) display=$currentDisplay"
         PlaybackDebugLog.log(
@@ -722,6 +739,7 @@ class MusicAccessibilityService : AccessibilityService() {
 
                         override fun onCancelled(gestureDescription: GestureDescription) {
                             if (token != generation) return
+                            interruptionGuard.interrupted(SystemClock.uptimeMillis())
                             PlaybackDebugLog.log("gesture cancelled at ${px.toInt()},${py.toInt()}")
                             gestureFailure = "手势被系统取消 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
                             finish(false)
