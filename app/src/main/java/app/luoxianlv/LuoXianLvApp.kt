@@ -2,7 +2,6 @@ package app.luoxianlv
 
 import android.app.Application
 import app.luoxianlv.core.Analytics
-import com.umeng.commonsdk.UMConfigure
 
 /**
  * 友盟统计接入（U-App）：
@@ -12,6 +11,6 @@ import com.umeng.commonsdk.UMConfigure
 class LuoXianLvApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        UMConfigure.preInit(this, Analytics.APP_KEY, Analytics.CHANNEL)
+        Analytics.preInitialize(this)
     }
 }

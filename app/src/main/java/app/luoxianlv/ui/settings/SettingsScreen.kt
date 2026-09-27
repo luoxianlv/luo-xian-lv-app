@@ -237,15 +237,7 @@ fun SettingsScreen(
                         iconTint = IconGray,
                         onClick = onAbout,
                     )
-                    if (app.luoxianlv.BuildConfig.DEBUG) {
-                        PreferenceItem(
-                            title = "统计诊断",
-                            summary = "友盟集成测试排障（仅 debug 包）",
-                            icon = Icons.Filled.BugReport,
-                            iconTint = IconOrange,
-                            onClick = onAnalyticsDebug,
-                        )
-                    }
+
                 }
             }
         }

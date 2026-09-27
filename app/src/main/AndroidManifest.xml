@@ -11,6 +11,37 @@
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.updates" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />
         </provider>
+        <activity android:name=".ui.practice.PracticeActivity" android:exported="false" android:launchMode="singleTop"
+            android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|smallestScreenSize" />
+        <activity android:name=".ui.practice.WallpaperPickerActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".ui.practice.WallpaperImportActivity" android:exported="true" android:label="导入落弦律壁纸">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" /><data android:scheme="file" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/x-zip" />
+                <data android:mimeType="application/x-compressed" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/x-zip" />
+                <data android:mimeType="application/x-compressed" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" /><data android:scheme="file" />
+                <data android:host="*" android:pathPattern=".*\\.zip" />
+                <data android:pathPattern=".*\\.ZIP" />
+            </intent-filter>
+        </activity>
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
@@ -21,13 +52,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="luoxianlv" android:host="oauth" android:path="/callback" />
             </intent-filter>
-            <!-- 友盟集成测试唤起跑通实时日志验证，唤起码固定为 um.<appkey> -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="um.6ab2b6f174319160830e642e" />
-            </intent-filter>
+
         </activity>
         <service android:name=".service.MusicAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true" android:label="落弦律">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>

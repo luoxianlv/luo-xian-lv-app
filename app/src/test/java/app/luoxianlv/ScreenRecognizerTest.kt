@@ -9,6 +9,92 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class ScreenRecognizerTest {
+    @Test fun diagnosticArchiveCaptures() {
+        val path = System.getenv("LX_ARCHIVE_FIXTURES") ?: return
+        val files = java.io.File(path).listFiles { f -> f.extension == "gray" }!!.sortedBy { it.name }
+        for (file in files) {
+            val bytes = file.readBytes()
+            val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            val w = header.int
+            val h = header.int
+            val result = ScreenRecognizer.analyze(FloatArray(w*h) { bytes[8+it].toInt().and(255).toFloat() }, w, h)
+            println("ARCHIVE ${file.name}: ${result?.layout?.noteX?.joinToString()} y=${result?.layout?.noteY} mode=${result?.mode} borders=${result?.noteBorders}/${result?.modeBorders}")
+            val unavailable = h > w || listOf("100449", "100450", "100457").any { it in file.name }
+            if (unavailable) {
+                org.junit.Assert.assertNull(file.name, result)
+            } else {
+                assertNotNull(file.name, result)
+                assertEquals(file.name, .605f, result!!.layout.noteY, .005f)
+                val first = when {
+                    "2712" in file.name -> .190f
+                    "2362" in file.name -> .184f
+                    else -> .186f
+                }
+                for (i in 0..7) assertEquals(file.name, first + i * (1f - 2f * first) / 7,
+                    result.layout.noteX[i], .003f)
+                val expectedMode = if (listOf("150819", "150835", "150841").any { it in file.name }) PlayMode.RAISE else PlayMode.NATURAL
+                assertEquals(file.name, expectedMode, result.mode)
+                assertEquals(file.name, .425f, result.layout.modes.getValue(expectedMode)[1], .012f)
+            }
+        }
+    }
+
+    @Test fun threeMissingDigitsAreRecoveredFromGridAndModeAnchors() {
+        val bytes = javaClass.getResourceAsStream("/keyboard-sample.gray")!!.readBytes()
+        val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val w = header.int
+        val h = header.int
+        val pixels = FloatArray(w*h) { bytes[8+it].toInt().and(255).toFloat() }
+        val original = ScreenRecognizer.analyze(pixels, w, h)!!
+        val spacing = (original.layout.noteX[1] - original.layout.noteX[0]) * w
+        for (missing in listOf(listOf(2, 3, 4), listOf(1, 4, 6), listOf(0, 1, 2), listOf(5, 6, 7), listOf(0, 3, 7))) {
+            val masked = pixels.copyOf()
+            for (index in missing) {
+                val x = (original.layout.noteX[index] * w).toInt()
+                val y = (original.layout.noteY * h).toInt()
+                val r = (spacing * .35f).toInt()
+                for (yy in y-r..y+r) for (xx in x-r..x+r) masked[yy*w+xx] = 0f
+            }
+            val result = ScreenRecognizer.analyze(masked, w, h)
+            assertNotNull("Missing $missing", result)
+            assertEquals(5, result!!.observedNotes)
+            for (i in 0..7) assertEquals(original.layout.noteX[i], result.layout.noteX[i], .005f)
+            // Digit ink and disc centers differ slightly; allow three analysis pixels.
+            assertEquals(original.layout.noteY*h, result.layout.noteY*h, 3f)
+        }
+    }
+
+    @Test fun partialModeLabelsFollowObservedRowAndKeepOccludedStateUnknown() {
+        val bytes = javaClass.getResourceAsStream("/keyboard-sample.gray")!!.readBytes()
+        val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val w = header.int
+        val h = header.int
+        val pixels = FloatArray(w*h) { bytes[8+it].toInt().and(255).toFloat() }
+        val original = ScreenRecognizer.analyze(pixels, w, h)!!
+        val spacing = (original.layout.noteX[1] - original.layout.noteX[0]) * w
+        val y = (original.layout.modes.getValue(PlayMode.NATURAL)[1] * h).toInt()
+        val r = (spacing * .42f).toInt()
+        val shift = (spacing * .12f).toInt()
+        val masked = pixels.copyOf()
+        for (yy in y-r..y+r+shift) for (xx in 0 until w) masked[yy*w+xx] = 0f
+        for (yy in y-r..y+r) for (xx in 0 until w) masked[(yy+shift)*w+xx] = pixels[yy*w+xx]
+        for (mode in listOf(PlayMode.SEMITONE, PlayMode.LOWER)) {
+            val x = (original.layout.modes.getValue(mode)[0]*w).toInt()
+            for (yy in y-r..y+r+shift) for (xx in x-r..x+r) masked[yy*w+xx] = 0f
+        }
+        val result = ScreenRecognizer.analyze(masked, w, h)
+        assertNotNull(result)
+        assertEquals(2, result!!.observedModes)
+        for (mode in PlayMode.values()) {
+            assertEquals(original.layout.modes.getValue(mode)[0], result.layout.modes.getValue(mode)[0], .01f)
+            assertEquals(y+shift.toFloat(), result.layout.modes.getValue(mode)[1]*h, 4f)
+        }
+        org.junit.Assert.assertNull(result.halfTone)
+        val single = masked.copyOf()
+        val x = (original.layout.modes.getValue(PlayMode.RAISE)[0]*w).toInt()
+        for (yy in y-r..y+r+shift) for (xx in x-r..x+r) single[yy*w+xx] = 0f
+        org.junit.Assert.assertNull("One mode anchor is insufficient", ScreenRecognizer.analyze(single, w, h))
+    }
     @Test fun modeRowMovesIndependentlyAndMissingLabelsAreRejected() {
         val bytes = javaClass.getResourceAsStream("/keyboard-sample.gray")!!.readBytes()
         val header = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -123,6 +209,11 @@ class ScreenRecognizerTest {
     @Test fun blackBackground() {
         checkLayout("/keyboard-sample.gray", 0.60f..0.75f, 0.15f..0.35f)
         checkState("/keyboard-sample.gray")
+    }
+
+    @Test fun userProvidedKeyboardReference() {
+        checkLayout("/keyboard-reference.gray", .67f.. .71f, .22f.. .27f)
+        checkState("/keyboard-reference.gray")
     }
 
     @Test fun gameScene1920() {

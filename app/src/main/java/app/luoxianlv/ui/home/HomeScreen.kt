@@ -122,6 +122,7 @@ private const val HOME_QUOTE = "天空你是否知晓一切？"
 fun HomeScreen(
     onLibrary: () -> Unit,
     onDiscover: () -> Unit,
+    onPractice: () -> Unit,
     onSettings: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: LibraryViewModel = viewModel(),
@@ -226,6 +227,7 @@ fun HomeScreen(
                         },
                         // 「启动 / 关闭」：同一个按钮按真实状态开或关。
                         onToggleFloating = vm::toggleFloating,
+                        onPractice = onPractice,
                         // 启动按钮左侧的「首页设置」：编辑一言 + 侧边栏开关
                         settingsButton = {
                             HomePageSettings(
@@ -576,6 +578,7 @@ private fun HomeOverview(
     running: Boolean,
     onStatusClick: () -> Unit,
     onToggleFloating: () -> Unit,
+    onPractice: () -> Unit,
     settingsButton: @Composable () -> Unit,
 ) {
     // heightIn(min) 保证信息区至少占满「整列高度 - 插画高度」，
@@ -648,6 +651,18 @@ private fun HomeOverview(
                 label = if (running) "关闭" else "启动",
                 onClick = onToggleFloating,
                 icon = if (running) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            app.luoxianlv.ui.practice.WallpaperButton()
+            Spacer(modifier = Modifier.width(10.dp))
+            ActionPill(
+                label = "进入演练场",
+                onClick = onPractice,
+                icon = Icons.Filled.MusicNote,
                 modifier = Modifier.weight(1f),
             )
         }

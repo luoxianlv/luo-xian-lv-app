@@ -1,0 +1,183 @@
+--- webwallgl@1.4.2/webwallgl.mjs
++++ assets/wallpaperengine/webwallgl.mjs
+@@ -1,3 +1,6 @@
++import { createSceneVideo } from "./scene-video.mjs";
++import { SceneDate } from "./clock.mjs";
++import { fixLegacyCutout } from "./compat.mjs";
+ function mat4Identity() {
+   return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+ }
+@@ -25231,6 +25234,7 @@
+   let fns;
+   try {
+     const factory = new Function(
++      "Date",
+       "scriptProperties",
+       "engine",
+       "thisLayer",
+@@ -25281,6 +25285,7 @@
+       'animationEvent: typeof animationEvent === "function" ? animationEvent : null,resizeScreen: typeof resizeScreen === "function" ? resizeScreen : null,dummy_: 0};'
+     );
+     fns = factory(
++      SceneDate,
+       spValues,
+       wrapEngine(engine),
+       thisLayer,
+@@ -26326,6 +26331,7 @@
+   let fns;
+   try {
+     const factory = new Function(
++      "Date",
+       "scriptProperties",
+       "engine",
+       "WEMath",
+@@ -26378,6 +26384,7 @@
+       'animationEvent: typeof animationEvent === "function" ? animationEvent : null,resizeScreen: typeof resizeScreen === "function" ? resizeScreen : null,dummy_: 0};'
+     );
+     fns = factory(
++      SceneDate,
+       spValues,
+       wrapEngine(engine),
+       WEMATH,
+@@ -28311,7 +28318,7 @@
+       src = src.replace(new RegExp("\\b" + fn + "\\b(?=\\s*\\()", "g"), renamed);
+     }
+   }
+-  let code = preprocess(src, effective, includeResolver);
++  let code = preprocess(fixLegacyCutout(src), effective, includeResolver);
+   {
+     const AUDIO_VARYING_CAP = 24;
+     code = code.replace(
+@@ -29327,65 +29334,68 @@
+ // mode 编号同 WE common_blending.h（0=Normal … 32=LighterColor 的实现子集）
+ vec3 ApplyBlending(int mode, vec3 A, vec3 B, float opacity) {
+     vec3 r;
+-    if (mode == 1) { r = min(B, A); }                       // Darken
+-    else if (mode == 2) { r = A * B; }                      // Multiply
+-    else if (mode == 3) {                                   // ColorBurn
++    // Luoxianlv: flat dispatch avoids Android ANGLE nested-if compiler exhaustion.
++    switch (mode) {
++    case 1: { r = min(B, A);  break; }
++    case 2: { r = A * B;  break; }
++    case 3: {                                   // ColorBurn
+         r = vec3(
+             B.r == 0.0 ? 0.0 : max(1.0 - (1.0 - A.r) / B.r, 0.0),
+             B.g == 0.0 ? 0.0 : max(1.0 - (1.0 - A.g) / B.g, 0.0),
+             B.b == 0.0 ? 0.0 : max(1.0 - (1.0 - A.b) / B.b, 0.0));
+-    }
+-    else if (mode == 4 || mode == 20) { r = max(A + B - 1.0, vec3(0.0)); } // Substract
+-    else if (mode == 5) { r = min(A, B); }                  // LinearBurn
+-    else if (mode == 6) { r = max(B, A); }                  // Lighten
+-    else if (mode == 7) { r = 1.0 - (1.0 - A) * (1.0 - B); } // Screen
+-    else if (mode == 8) {                                   // ColorDodge
++     break; }
++    case 4: case 20: { r = max(A + B - 1.0, vec3(0.0));  break; }
++    case 5: { r = min(A, B);  break; }
++    case 6: { r = max(B, A);  break; }
++    case 7: { r = 1.0 - (1.0 - A) * (1.0 - B);  break; }
++    case 8: {                                   // ColorDodge
+         r = vec3(
+             B.r == 1.0 ? 1.0 : min(A.r / (1.0 - B.r), 1.0),
+             B.g == 1.0 ? 1.0 : min(A.g / (1.0 - B.g), 1.0),
+             B.b == 1.0 ? 1.0 : min(A.b / (1.0 - B.b), 1.0));
+-    }
+-    else if (mode == 9) { r = min(A + B, vec3(1.0)); }      // Add
+-    else if (mode == 10) { r = max(A, B); }                 // Lighter
+-    else if (mode == 11) { r = weBlendOverlay(A, B); }      // Overlay
+-    else if (mode == 12) { r = weBlendSoftLight(A, B); }    // SoftLight
+-    else if (mode == 13) { r = weBlendOverlay(B, A); }      // HardLight
+-    else if (mode == 14) {                                  // VividLight
++     break; }
++    case 9: { r = min(A + B, vec3(1.0));  break; }
++    case 10: { r = max(A, B);  break; }
++    case 11: { r = weBlendOverlay(A, B);  break; }
++    case 12: { r = weBlendSoftLight(A, B);  break; }
++    case 13: { r = weBlendOverlay(B, A);  break; }
++    case 14: {                                  // VividLight
+         r = vec3(weBlendVivid(A.r, B.r), weBlendVivid(A.g, B.g), weBlendVivid(A.b, B.b));
+-    }
+-    else if (mode == 15) {                                  // LinearLight
++     break; }
++    case 15: {                                  // LinearLight
+         r = vec3(
+             B.r < 0.5 ? max(A.r + 2.0 * B.r - 1.0, 0.0) : min(A.r + 2.0 * (B.r - 0.5), 1.0),
+             B.g < 0.5 ? max(A.g + 2.0 * B.g - 1.0, 0.0) : min(A.g + 2.0 * (B.g - 0.5), 1.0),
+             B.b < 0.5 ? max(A.b + 2.0 * B.b - 1.0, 0.0) : min(A.b + 2.0 * (B.b - 0.5), 1.0));
+-    }
+-    else if (mode == 16) {                                  // PinLight
++     break; }
++    case 16: {                                  // PinLight
+         r = vec3(
+             B.r < 0.5 ? min(A.r, 2.0 * B.r) : max(A.r, 2.0 * (B.r - 0.5)),
+             B.g < 0.5 ? min(A.g, 2.0 * B.g) : max(A.g, 2.0 * (B.g - 0.5)),
+             B.b < 0.5 ? min(A.b, 2.0 * B.b) : max(A.b, 2.0 * (B.b - 0.5)));
+-    }
+-    else if (mode == 17) {                                  // HardMix
++     break; }
++    case 17: {                                  // HardMix
+         r = vec3(
+             weBlendVivid(A.r, B.r) < 0.5 ? 0.0 : 1.0,
+             weBlendVivid(A.g, B.g) < 0.5 ? 0.0 : 1.0,
+             weBlendVivid(A.b, B.b) < 0.5 ? 0.0 : 1.0);
+-    }
+-    else if (mode == 18) { r = abs(A - B); }                // Difference
+-    else if (mode == 19) { r = A + B - 2.0 * A * B; }       // Exclusion
+-    else if (mode == 21) { r = weBlendReflect(A, B); }      // Reflect
+-    else if (mode == 22) { r = weBlendReflect(B, A); }      // Glow = Reflect(B,A)
+-    else if (mode == 23) { r = min(A, B) - max(A, B) + 1.0; }  // Phoenix
+-    else if (mode == 24) { r = (A + B) / 2.0; }             // Average
+-    else if (mode == 25) { r = 1.0 - abs(1.0 - A - B); }    // Negation
+-    else if (mode == 26) { r = HSLToRGB(vec3(RGBToHSL(B).x, RGBToHSL(A).y, RGBToHSL(A).z)); } // Hue
+-    else if (mode == 27) { r = HSLToRGB(vec3(RGBToHSL(A).x, RGBToHSL(B).y, RGBToHSL(A).z)); } // Saturation
+-    else if (mode == 28) { r = HSLToRGB(vec3(RGBToHSL(B).x, RGBToHSL(B).y, RGBToHSL(A).z)); } // Color
+-    else if (mode == 29) { r = HSLToRGB(vec3(RGBToHSL(A).x, RGBToHSL(A).y, RGBToHSL(B).z)); } // Luminosity
+-    else if (mode == 30) { r = mix(A, max(max(A.r, max(A.g, A.b)), 0.0) * B, opacity); } // Tint
+-    else if (mode == 31) { r = A + B * opacity; }           // Add(带 opacity 权重)
+-    else if (mode == 32) { r = mix(A, A + A * B, opacity); } // LinearDodge 变体
+-    else { r = mix(A, B, opacity); }                        // Normal(含 0)
++     break; }
++    case 18: { r = abs(A - B);  break; }
++    case 19: { r = A + B - 2.0 * A * B;  break; }
++    case 21: { r = weBlendReflect(A, B);  break; }
++    case 22: { r = weBlendReflect(B, A);  break; }
++    case 23: { r = min(A, B) - max(A, B) + 1.0;  break; }
++    case 24: { r = (A + B) / 2.0;  break; }
++    case 25: { r = 1.0 - abs(1.0 - A - B);  break; }
++    case 26: { r = HSLToRGB(vec3(RGBToHSL(B).x, RGBToHSL(A).y, RGBToHSL(A).z));  break; }
++    case 27: { r = HSLToRGB(vec3(RGBToHSL(A).x, RGBToHSL(B).y, RGBToHSL(A).z));  break; }
++    case 28: { r = HSLToRGB(vec3(RGBToHSL(B).x, RGBToHSL(B).y, RGBToHSL(A).z));  break; }
++    case 29: { r = HSLToRGB(vec3(RGBToHSL(A).x, RGBToHSL(A).y, RGBToHSL(B).z));  break; }
++    case 30: { r = mix(A, max(max(A.r, max(A.g, A.b)), 0.0) * B, opacity);  break; }
++    case 31: { r = A + B * opacity;  break; }
++    case 32: { r = mix(A, A + A * B, opacity);  break; }
++    default: r = mix(A, B, opacity); break;
++    }
+     // CPU 参考（effects.js applyBlending）：5/10/30/31/32 直接返回不经 opacity 权重，
+     // 其余统一 mix(A, r, opacity) 回归原色。
+     // [we-scene patch] **mode 0 也必须排除**：它的分支已经是 mix(A, B, opacity)，
+@@ -43652,7 +43662,7 @@
+         let entry = null;
+         if (m.video !== void 0) {
+           const url = URL.createObjectURL(new Blob([m.video], { type: "video/mp4" }));
+-          const pair = createLoopingVideo(url, {
++          const pair = createSceneVideo(url, {
+             muted: true,
+             renderDpr: effectiveDpr(rt, cfg),
+             maxW: c.clientWidth || window.innerWidth || 1,
+@@ -47110,7 +47120,7 @@
+     const defaults = await fetchProjectWire(entry);
+     const wire = mergeLiveIntoWire(defaults, rt.liveUserProps);
+     rt.liveUserProps = Object.fromEntries(Object.entries(wire).map(([k, w]) => [k, w.value]));
+-    if (isSameOriginUrl(entry)) {
++    if (isSameOriginUrl(entry) && cfg.webSandbox !== "strict") {
+       attachIframe(rt, cfg, container, entry, { injected: true, frameClock, strictSandbox: cfg.webSandbox === "strict" });
+       startPumps();
+       const f = rt.iframe;
+@@ -47213,6 +47223,7 @@
+     loop: true,
+     canvas: el,
+     source: o.source,
++    webSandbox: "strict",
+     // 质量设置（抗锯齿/粒子/后处理档位）。原样透传：规范化在消费方做
+     // （scene-mount applyQuality / getQuality），这里不引依赖 —— 本函数会被
+     // verify-media 抽出来脱离 import 单独执行。

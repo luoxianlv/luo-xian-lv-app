@@ -6,7 +6,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import app.luoxianlv.BuildConfig
 import com.umeng.analytics.MobclickAgent
 import com.umeng.commonsdk.UMConfigure
 import com.umeng.umcrash.UMCrash
@@ -52,6 +51,10 @@ object Analytics {
     /** 记录一次外部唤起（集成测试二维码 / OAuth 回调都走这里）。 */
     fun recordScheme(dataString: String?) = record("唤起", dataString ?: "(无 data)")
 
+    fun preInitialize(context: Context) {
+        UMConfigure.preInit(context, APP_KEY, CHANNEL)
+    }
+
     fun initialize(context: Context) {
         if (initialized) return
         synchronized(this) {
@@ -77,8 +80,6 @@ object Analytics {
             // 隐私授权确认：友盟合规检查的显式授权 API，必须在 init 之前调用，
             // 否则上报被拦截（logcat 报「检测到未调用隐私授权API」）。
             UMConfigure.submitPolicyGrantResult(app, true)
-            // debug 包打开 SDK 日志：集成测试排查（marker 接收、上报）全靠它，release 关闭。
-            if (BuildConfig.DEBUG) UMConfigure.setLogEnabled(true)
             UMConfigure.init(
                 app,
                 APP_KEY,

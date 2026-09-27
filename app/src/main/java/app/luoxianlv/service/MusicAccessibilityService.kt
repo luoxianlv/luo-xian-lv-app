@@ -29,6 +29,7 @@ import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.PlaybackDebugLog
 import app.luoxianlv.profile.ScreenRecognizer
 import app.luoxianlv.update.MidiCoreFixer
+import java.util.concurrent.Executors
 
 class MusicAccessibilityService : AccessibilityService() {
     data class Diagnostics(
@@ -60,6 +61,7 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private val recognitionExecutor = Executors.newSingleThreadExecutor()
     private lateinit var repository: SongRepository
     private lateinit var keys: KeyLayout
     private lateinit var floating: FloatingControls
@@ -231,6 +233,8 @@ class MusicAccessibilityService : AccessibilityService() {
         playing = false
         generation++
         handler.removeCallbacksAndMessages(null)
+        // Let accepted screenshot jobs finish their finally blocks and release buffers.
+        recognitionExecutor.shutdown()
         recoveringDisplay = false
         if (::floating.isInitialized) floating.destroy()
         if (instance === this) instance = null
@@ -261,6 +265,12 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     fun play() {
+        if (app.luoxianlv.ui.practice.PracticePlaybackGate.active &&
+            (!app.luoxianlv.ui.practice.PracticePlaybackGate.ready || Build.VERSION.SDK_INT < 30)) {
+            error = if (Build.VERSION.SDK_INT < 30) "演练场自动定位需要 Android 11 或更高版本" else "请等待演练场开场完成"
+            floating.refresh()
+            return
+        }
         if (playing || preparing || recoveringDisplay || timeline.events.isEmpty()) return
         if (baseMs >= durationMs) baseMs = 0
         // 标记 needsFix 的歌：播放前先自动尝试一次远端重编（每选中一次只试一次），
@@ -380,52 +390,25 @@ class MusicAccessibilityService : AccessibilityService() {
                             done(false)
                             return
                         }
-                        val started = SystemClock.uptimeMillis()
-                        val result =
-                            runCatching {
-                                val hardware =
-                                    try {
-                                        Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                                    } finally {
-                                        screenshot.hardwareBuffer.close()
-                                    }
-                                val bitmap =
-                                    try {
-                                        hardware?.copy(Bitmap.Config.ARGB_8888, false)
-                                    } finally {
-                                        hardware?.recycle()
-                                    }
-                                bitmap?.let(PlaybackDebugLog::saveScreenshot)
-                                PlaybackDebugLog.log("screenshot ${bitmap?.width}x${bitmap?.height} analyze start")
-                                try {
-                                    bitmap?.let(ScreenRecognizer::fromBitmap)
-                                } finally {
-                                    bitmap?.recycle()
+                        recognitionExecutor.execute {
+                            val result = recognizeScreenshot(screenshot)
+                            handler.post {
+                                if (token != generation || playbackDisplay != displayState()) {
+                                    done(false)
+                                    return@post
                                 }
-                            }.onFailure {
-                                Log.w(TAG, "截图识别失败", it)
-                                PlaybackDebugLog.log("recognize failure: ${it.message}")
-                            }.getOrNull()
-                        PlaybackDebugLog.log("recognition elapsedMs=${SystemClock.uptimeMillis() - started}")
-                        PlaybackDebugLog.log(
-                            result?.let { r ->
-                                "recognized noteX=" + r.layout.noteX.joinToString(",") { v -> "%.3f".format(v) } +
-                                    " noteY=" + "%.3f".format(r.layout.noteY) + " mode=" + r.mode + " half=" + r.halfTone
-                            } ?: "recognize returned null",
-                        )
-                        if (token != generation || playbackDisplay != displayState()) {
-                            done(false)
-                            return
+                                val valid = result != null && PlaybackCoordinates.validLayout(result.layout)
+                                if (valid) {
+                                    keys = result.layout
+                                    ConfigStore.save(this@MusicAccessibilityService, result.layout)
+                                    result.mode?.let { pitchMode = it }
+                                    result.halfTone?.let { halfToneOn = it }
+                                    Log.i(TAG, "按键识别成功 mode=${result.mode} half=${result.halfTone}")
+                                    floating.refresh()
+                                }
+                                done(valid)
+                            }
                         }
-                        if (result != null && PlaybackCoordinates.validLayout(result.layout)) {
-                            keys = result.layout
-                            ConfigStore.save(this@MusicAccessibilityService, result.layout)
-                            result.mode?.let { pitchMode = it }
-                            result.halfTone?.let { halfToneOn = it }
-                            Log.i(TAG, "按键识别成功 mode=${result.mode} half=${result.halfTone}")
-                            floating.refresh()
-                        }
-                        done(result != null && PlaybackCoordinates.validLayout(result.layout))
                     }
 
                     override fun onFailure(errorCode: Int) {
@@ -439,6 +422,41 @@ class MusicAccessibilityService : AccessibilityService() {
             Log.w(TAG, "无法请求截图", failure)
             done(false)
         }
+    }
+
+    /** Worker-only image conversion/analysis; never touches playback or views. */
+    private fun recognizeScreenshot(screenshot: ScreenshotResult): ScreenRecognizer.Result? {
+        val started = SystemClock.uptimeMillis()
+        val result = runCatching {
+            val hardware = try {
+                Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+            } finally {
+                screenshot.hardwareBuffer.close()
+            }
+            val bitmap = try {
+                hardware?.copy(Bitmap.Config.ARGB_8888, false)
+            } finally {
+                hardware?.recycle()
+            }
+            try {
+                bitmap?.let(PlaybackDebugLog::saveScreenshot)
+                PlaybackDebugLog.log("screenshot ${bitmap?.width}x${bitmap?.height} analyze start")
+                bitmap?.let(ScreenRecognizer::fromBitmap)
+            } finally {
+                bitmap?.recycle()
+            }
+        }.onFailure {
+            Log.w(TAG, "截图识别失败", it)
+            PlaybackDebugLog.log("recognize failure: ${it.message}")
+        }.getOrNull()
+        PlaybackDebugLog.log("recognition elapsedMs=${SystemClock.uptimeMillis() - started}")
+        PlaybackDebugLog.log(result?.let { r ->
+            "recognized noteX=" + r.layout.noteX.joinToString(",") { "%.3f".format(it) } +
+                " noteY=" + "%.3f".format(r.layout.noteY) + " mode=${r.mode} half=${r.halfTone}" +
+                " observedNotes=${r.observedNotes}/8 observedModes=${r.observedModes}/4" +
+                " noteBorders=${r.noteBorders}/8 modeBorders=${r.modeBorders}/4"
+        } ?: "recognize returned null")
+        return result
     }
 
     fun pause() {

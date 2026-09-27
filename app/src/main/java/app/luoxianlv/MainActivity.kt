@@ -60,15 +60,15 @@ class MainActivity : AppCompatActivity() {
         // 免责协议是启动第一道门：已同意文本的 SHA-256 与当前 assets 里的协议不一致
         // （首次使用或协议更新后）就拦截在协议页，同意前不渲染正常 App。
         // 读不到协议文件时不拦截，避免资源缺失把用户挡在门外。
-        disclaimerText = runCatching { DisclaimerStore.readAsset(this) }.getOrElse { "" }
+        disclaimerText = if (BuildConfig.DEBUG) "" else runCatching { DisclaimerStore.readAsset(this) }.getOrElse { "" }
         val disclaimerSha = DisclaimerStore.sha256(disclaimerText)
         disclaimerAccepted =
-            disclaimerText.isNotEmpty() && DisclaimerStore(this).agreedSha() == disclaimerSha
+            BuildConfig.DEBUG || (disclaimerText.isNotEmpty() && DisclaimerStore(this).agreedSha() == disclaimerSha)
         // 同意过协议：本次启动直接初始化友盟统计（Application 里已 preInit）。
         if (disclaimerAccepted) Analytics.initialize(this)
         // 权限引导只在首次启动弹一次，此后不再打扰；
         // 之后的运行时检查在「我的」页悬浮窗开关处（LibraryViewModel.setFloatingEnabled）
-        showOnboarding = isFirstLaunch() && !MusicAccessibilityService.isEnabled(this)
+        showOnboarding = !BuildConfig.DEBUG && isFirstLaunch() && !MusicAccessibilityService.isEnabled(this)
         setContent {
             val appearance by AppearanceStore.settings.collectAsState()
             // 深浅色：偏好（跟随系统 / 浅色 / 深色）叠加系统设置算出最终结果。
@@ -166,7 +166,7 @@ class MainActivity : AppCompatActivity() {
         // MIDI 编译核心版本检查 + remoteId 回填 + 批量重编：内部有 5 分钟节流，
         // 启动和每次回前台都调用即可，离线时静默失败。
         MidiCoreFixer.kick(this)
-        if (android.os.Build.VERSION.SDK_INT >= 33 && repository.floatingEnabled &&
+        if (!BuildConfig.DEBUG && android.os.Build.VERSION.SDK_INT >= 33 && repository.floatingEnabled &&
             appPrefs.getBoolean("auto_start_asked", false) &&
             MusicAccessibilityService.isEnabled(this) &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
@@ -177,7 +177,7 @@ class MainActivity : AppCompatActivity() {
         }
         // 无障碍服务可能在本应用暂停期间被启用；回到前台时按持久化偏好重新对齐悬浮窗
         MusicAccessibilityService.instance?.showFloating(repository.floatingEnabled)
-        if (disclaimerAccepted) {
+        if (!BuildConfig.DEBUG && disclaimerAccepted) {
             if (!updateCheckOnOpenDone) {
                 checkUpdatesAfterDisclaimer()
             } else {
@@ -200,7 +200,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 每项引导仅显示一次；展示前保存记录，返回设置、重开无障碍或应用都不重复。 */
     private fun requestBackgroundPermissionsOnce() {
-        if (!disclaimerAccepted || showOnboarding || showBatteryPrompt || showAutoStartPrompt) return
+        if (BuildConfig.DEBUG || !disclaimerAccepted || showOnboarding || showBatteryPrompt || showAutoStartPrompt) return
         if (!MusicAccessibilityService.isEnabled(this)) return
         val pm = getSystemService(PowerManager::class.java) ?: return
         if (!pm.isIgnoringBatteryOptimizations(packageName) && !appPrefs.getBoolean("battery_exemption_asked", false)) {

@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name=".MainActivity">
+            <!-- 友盟集成测试唤起跑通实时日志验证，唤起码固定为 um.<appkey> -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="um.6ab2b6f174319160830e642e" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -164,6 +164,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                             HomeScreen(
                                 onLibrary = { goTab(Routes.LIBRARY) },
                                 onDiscover = { goTab(Routes.DISCOVER) },
+                                onPractice = { activity.startActivity(android.content.Intent(activity, app.luoxianlv.ui.practice.PracticeActivity::class.java)) },
                                 onSettings = { goTab(Routes.SETTINGS) },
                                 snackbarHostState = snackbarHostState,
                             )

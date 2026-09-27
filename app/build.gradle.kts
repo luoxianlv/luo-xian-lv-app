@@ -23,6 +23,7 @@ android {
 
     defaultConfig {
         applicationId = "app.luoxianlv"
+        testInstrumentationRunner = project.findProperty("practiceTestRunner") as String? ?: "app.luoxianlv.PracticeInstrumentation"
         minSdk = 26
         targetSdk = 37
         versionCode = appVersionCode
@@ -85,7 +86,7 @@ android {
 // 等价于官方文档里 efs { enable = true; whiteList = ["app.luoxianlv"] } 的效果。
 // 帧计算模式与插件自身保持一致（注入方法调用后需要重算帧）。
 androidComponents {
-    onVariants { variant ->
+    onVariants(selector().withBuildType("release")) { variant ->
         variant.instrumentation.setAsmFramesComputationMode(
             FramesComputationMode.COMPUTE_FRAMES_FOR_INSTRUMENTED_METHODS,
         )
@@ -113,10 +114,10 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.navigation.compose)
     implementation(libs.fastkv)
-    implementation(libs.umeng.common)
-    implementation(libs.umeng.asms)
-    implementation(libs.umeng.uyumao)
-    implementation(libs.umeng.apm)
+    releaseImplementation(libs.umeng.common)
+    releaseImplementation(libs.umeng.asms)
+    releaseImplementation(libs.umeng.uyumao)
+    releaseImplementation(libs.umeng.apm)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
