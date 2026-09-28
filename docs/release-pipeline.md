@@ -36,11 +36,13 @@ OSS 导入要求 Release 附带上述发布资料；旧流水线没有这些附�
 - 网络失败最多尝试三次，同一次任务复用断点并跳过已完成分片。新 runner 不继承旧 runner 的本地断点；已完成对象若大小及摘要元数据一致，则跳过上传并重新下载校验。
 - 上传完成后通过 APP 下载域名完整读取文件，核对 MIME、字节数及 SHA-256；只有校验成功才生成 verified-stable 产物（保留 30 天）。跨境网络仍可能限制速度，分片不保证带宽提升。
 - 上传步骤限时 15 分钟；取消任务可能留下未完成分片。建议管理员按运维策略配置 OSS 未完成分片生命周期规则，本改动不修改桶策略或清理已有对象。
+- OSS 账号需要目标前缀的 PutObject、GetObject 和 ListParts 权限；其中 ListParts 用于断点续传。实现依据阿里云[Python SDK 断点续传文档](https://www.alibabacloud.com/help/en/oss/developer-reference/resumable-upload-1)。
 - APK 首先与 Release 标签、版本资料、SHA 文件和 GitHub 记录的摘要核对；两条下载渠道使用相同内容摘要。签名证书在构建阶段校验。
 
 ## 发布保护
 
 - 构建 job 无 Release 写权限；发布、OSS、服务器密钥分别隔离。检出代码不保留 Git 凭据，关键 Action 固定到 commit SHA。
+- 使用 Node 24 运行时的 Action，runner 固定 Ubuntu 24.04。Gradle 使用 basic 开源缓存，避免引入默认的商业增强缓存服务。
 - APP 更新部署只接受本仓库 main 分支成功的 oss.yml 手动任务产物；禁止使用 PR、失败任务或其他工作流产物。
 - 更新清单原子替换，保留 stable.previous.json；拒绝版本号倒退，也拒绝同版本号更换 APK 摘要。重复部署同一包允许通过。
 - OSS 错误日志只输出异常类型，不打印密钥或签名下载 URL。失败前删除本地旧清单，避免误部署残留文件。
