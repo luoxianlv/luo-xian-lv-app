@@ -121,6 +121,32 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(upload.call_args.kwargs["part_size"], 4 * 1024 * 1024)
             self.assertEqual(upload.call_args.kwargs["headers"]["x-oss-meta-sha256"], self.sha)
 
+    def test_part_progress_before_acknowledgement(self):
+        output = io.StringIO()
+        expected = Mock()
+        callback = Mock()
+
+        def send(*args, **kwargs):
+            kwargs["progress_callback"](5, 10)
+            self.assertIn("分片 2 已发送：50%", output.getvalue())
+            self.assertNotIn("已获 OSS 确认", output.getvalue())
+            return expected
+
+        bucket = publish.ReportingBucket(publish.oss2.AnonymousAuth(), "https://example.test", "fixture")
+        with patch.object(publish.oss2.Bucket, "upload_part", side_effect=send), redirect_stdout(output):
+            actual = bucket.upload_part("key", "upload", 2, io.BytesIO(b"0123456789"), progress_callback=callback)
+        self.assertIs(actual, expected)
+        callback.assert_called_once_with(5, 10)
+        self.assertIn("分片 2 已获 OSS 确认", output.getvalue())
+
+    def test_failed_part_never_reports_acknowledgement(self):
+        output = io.StringIO()
+        bucket = publish.ReportingBucket(publish.oss2.AnonymousAuth(), "https://example.test", "fixture")
+        with patch.object(publish.oss2.Bucket, "upload_part", side_effect=OSError("fixture")), redirect_stdout(output):
+            with self.assertRaises(OSError):
+                bucket.upload_part("key", "upload", 1, io.BytesIO(b"part"))
+        self.assertNotIn("已获 OSS 确认", output.getvalue())
+
     def test_existing_object_still_download_verified(self):
         bucket = Mock()
         bucket.head_object.return_value.headers = {"Content-Length": str(len(self.data)), "X-Oss-Meta-Sha256": self.sha}

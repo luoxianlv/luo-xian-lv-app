@@ -31,6 +31,24 @@ class Progress:
                 print(f"{self.label}：{percent}%（{consumed}/{total} 字节）", flush=True)
 
 
+class ReportingBucket(oss2.Bucket):
+    """保留 SDK 断点续传，同时补充分片内部发送和服务端确认日志。"""
+
+    def upload_part(self, key, upload_id, part_number, data, progress_callback=None, headers=None):
+        progress = Progress(f"分片 {part_number} 已发送")
+
+        def report(consumed, total):
+            progress(consumed, total)
+            if progress_callback is not None:
+                progress_callback(consumed, total)
+
+        started = time.monotonic()
+        result = super().upload_part(key, upload_id, part_number, data,
+                                     progress_callback=report, headers=headers)
+        print(f"分片 {part_number} 已获 OSS 确认（{time.monotonic() - started:.1f} 秒）", flush=True)
+        return result
+
+
 def upload_and_verify(bucket, download_bucket, apk, object_key, sha, store):
     size = apk.stat().st_size
     uploaded = False
@@ -45,7 +63,7 @@ def upload_and_verify(bucket, download_bucket, apk, object_key, sha, store):
         oss2.resumable_upload(
             bucket, object_key, str(apk), store=store,
             multipart_threshold=1024 * 1024, part_size=4 * 1024 * 1024, num_threads=4,
-            progress_callback=Progress("分片上传"),
+            progress_callback=Progress("汇总进度（以各分片发送和确认为准）"),
             headers={
                 "Content-Type": "application/vnd.android.package-archive",
                 "Cache-Control": "private, max-age=0", "x-oss-meta-sha256": sha,
@@ -82,7 +100,7 @@ def main():
     endpoint = os.environ["OSS_ENDPOINT"]
     if not endpoint.startswith("https://"):
         endpoint = "https://" + endpoint
-    bucket = oss2.Bucket(
+    bucket = ReportingBucket(
         oss2.Auth(os.environ["OSS_ACCESS_KEY_ID"], os.environ["OSS_ACCESS_KEY_SECRET"]),
         endpoint, os.environ["OSS_BUCKET"], connect_timeout=60,
     )
