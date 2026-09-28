@@ -2,6 +2,11 @@ name: Check OSS transfer
 
 on:
   workflow_dispatch:
+    inputs:
+      compare:
+        description: 先测试旧传输参数，再验证优化后的正式上传函数
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,20 +24,21 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install --disable-pip-version-check oss2==2.19.1
-      - name: Install verified ossutil
-        run: bash .github/scripts/install-ossutil.sh
-      - name: Compare runner TCP algorithms
+      - name: Check production transfer
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          COMPARE: ${{ inputs.compare }}
         run: |
           set -euo pipefail
           original=$(sysctl -n net.ipv4.tcp_congestion_control)
           trap 'sudo sysctl -w net.ipv4.tcp_congestion_control="$original"' EXIT
-          uname -r
-          sysctl net.ipv4.tcp_congestion_control
-          OSS_TRANSPORT="$original" python -u .github/scripts/check-oss.py
-          sudo modprobe tcp_bbr
-          sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+          if [[ "$COMPARE" == true ]]; then
+            sudo sysctl -w net.ipv4.tcp_congestion_control=cubic
+            if ! OSS_TRANSPORT=cubic python -u .github/scripts/check-oss.py; then
+              echo '::warning::旧传输参数测试失败或超时；继续验证优化后的链路。'
+            fi
+          fi
+          bash .github/scripts/prepare-oss-network.sh
           OSS_TRANSPORT=bbr python -u .github/scripts/check-oss.py
