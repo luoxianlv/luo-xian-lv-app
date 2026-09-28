@@ -47,6 +47,11 @@ import app.luoxianlv.ui.settings.PlaybackDiagnosticsScreen
 import app.luoxianlv.ui.settings.SettingsScreen
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.update.AppUpdateViewModel
+import kotlin.math.abs
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -79,28 +84,33 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     val scope = rememberCoroutineScope()
     val pagerState = rememberPagerState(initialPage = HOME_INDEX) { tabs.size }
     var subPage by remember { mutableStateOf<String?>(null) }
+    var navigationJob by remember { mutableStateOf<Job?>(null) }
 
     // 预加载跟随导航宿主，不能随首页被 Pager 回收而反复销毁、重建 WebView。
     StagePrewarmEffect()
 
     fun goTab(route: String) {
         val index = tabs.indexOf(route)
-        if (index >= 0) scope.launch { pagerState.animateScrollToPage(index) }
+        if (index < 0) return
+        navigationJob?.cancel()
+        navigationJob = scope.launch { pagerState.animateScrollToPage(index) }
     }
 
     // 子页面打开时拦截返回键：先退回主页面
     androidx.activity.compose.BackHandler(enabled = subPage != null) { subPage = null }
 
-    // 小窗/分屏下拖动窗口改变尺寸时，进行中的 Tab 切换动画可能被打断在半路，
-    // Pager 不会自行纠正（表现为两页各占半屏、内容点不动）。滚动停止后若不在整页就吸回去。
+    // 仅窗口宽度变化后修正停在半页的位置；普通切页交给 Pager，避免额外动画争抢滚动。
     androidx.compose.runtime.LaunchedEffect(pagerState) {
         androidx.compose.runtime
-            .snapshotFlow {
-                if (pagerState.isScrollInProgress) null
-                else pagerState.currentPage.takeIf { pagerState.currentPageOffsetFraction != 0f }
-            }
-            .collect { page ->
-                if (page != null) pagerState.animateScrollToPage(page)
+            .snapshotFlow { pagerState.layoutInfo.viewportSize.width }
+            .drop(1)
+            .collectLatest {
+                androidx.compose.runtime
+                    .snapshotFlow { pagerState.isScrollInProgress }
+                    .first { !it }
+                if (abs(pagerState.currentPageOffsetFraction) > .001f) {
+                    pagerState.scrollToPage(pagerState.currentPage)
+                }
             }
     }
 
@@ -120,7 +130,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     val updater = remember { PlatformClient(activity) }
     // U-App 页面统计：单 Activity + Compose 只能手动按页面名打点（U-APM 的页面维度是 Activity）。
     // 顶级 Tab 是跟手切换的 Pager、子页面是覆盖层，这里统一按当前页面名成对上报开始/结束。
-    val currentPage = subPage ?: tabs.getOrNull(pagerState.currentPage) ?: Routes.HOME
+    val currentPage = subPage ?: tabs.getOrNull(pagerState.settledPage) ?: Routes.HOME
     androidx.compose.runtime.DisposableEffect(currentPage) {
         Analytics.pageStart(currentPage)
         onDispose { Analytics.pageEnd(currentPage) }

@@ -31,6 +31,8 @@ public final class NavigationFrameInstrumentation extends Instrumentation {
     private volatile String phase;
     private int lostCallbacks;
     private String label;
+    private boolean stress;
+    private boolean refresh;
     private Activity activity;
     private boolean listening;
     private final Window.OnFrameMetricsAvailableListener listener = (window, frame, dropped) -> {
@@ -50,6 +52,8 @@ public final class NavigationFrameInstrumentation extends Instrumentation {
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         label = arguments == null ? "navigation" : arguments.getString("label", "navigation");
+        stress = arguments != null && "true".equals(arguments.getString("stress"));
+        refresh = arguments != null && "true".equals(arguments.getString("refresh"));
         start();
     }
 
@@ -132,11 +136,29 @@ public final class NavigationFrameInstrumentation extends Instrumentation {
         HandlerThread collector = new HandlerThread("navigation-frames");
         collector.start();
         boolean passed = false;
-        android.content.SharedPreferences wallpaper = getTargetContext().getSharedPreferences("practice_wallpaper", 0);
-        String previousProject = wallpaper.getString("project", null);
+        android.content.SharedPreferences library = app.luoxianlv.data.Kv.INSTANCE.of(getTargetContext(), "song_library");
+        String previousSongs = library.getString("songs", "[]");
+        // 恢复上次测试进程被外部终止时遗留的专用测试曲目。
         try {
-            // 使用相同静态背景隔离导航开销，结束后恢复用户选择，不删除壁纸文件。
-            wallpaper.edit().remove("project").commit();
+            org.json.JSONArray clean = new org.json.JSONArray(), saved = new org.json.JSONArray(previousSongs);
+            for (int i = 0; i < saved.length(); i++) {
+                JSONObject item = saved.getJSONObject(i);
+                if (!item.optString("id").startsWith("navigation-stress-")) clean.put(item);
+            }
+            previousSongs = clean.toString();
+        } catch (org.json.JSONException ignored) { /* 原数据损坏时仍原样恢复，不覆盖用户记录。 */ }
+        String previousSelected = library.getString("selected", null);
+        try {
+            if (stress) {
+                org.json.JSONArray songs = new org.json.JSONArray(previousSongs);
+                String notation = "1:0.25 2:0.25 ".repeat(3000);
+                for (int i = 0; i < 60; i++) songs.put(new JSONObject()
+                    .put("id", "navigation-stress-" + i).put("title", "性能回归-" + i)
+                    .put("score", notation).put("bpm", 120).put("source", "简谱"));
+                library.edit().putString("songs", songs.toString()).commit();
+            }
+            // 精确测量单独在未裁剪测试包执行；导航回归使用与正式版相同的 R8 优化。
+            String scoreReport = "解析和队列性能见独立测试";
             activity = startActivitySync(new Intent().setClassName(getTargetContext().getPackageName(),
                 "app.luoxianlv.MainActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             awaitPage("演练场");
@@ -161,13 +183,23 @@ public final class NavigationFrameInstrumentation extends Instrumentation {
                 transition("滑动曲库发现", null, "导入谱子", false);
                 transition("滑动我的曲库", null, "演练场", false);
             }
+            // 设置直接返回每个导航；刷新事件模拟下载完成，必须保持可切页。
+            for (int i = 0; i < 6; i++) {
+                transition("设置返回曲库", "设置", "网站账号", null);
+                // 内部事件接口仅在未裁剪包测试，R8 可将单例改成静态调用。
+                if (refresh) runOnMainSync(() -> app.luoxianlv.ui.AppEvents.INSTANCE.notifyLibraryChanged());
+                transition("设置返回曲库", "曲库", "导入谱子", null);
+                transition("设置返回发现", "设置", "网站账号", null);
+                transition("设置返回发现", "发现", "搜索谱子", null);
+            }
             for (int i = 0; i < 3; i++) {
                 transition("跨页点击", "设置", "网站账号", null);
                 transition("跨页点击", "我的", "演练场", null);
             }
             runOnMainSync(() -> activity.getWindow().removeOnFrameMetricsAvailableListener(listener));
             listening = false;
-            JSONObject report = new JSONObject().put("label", label).put("lostCallbacks", lostCallbacks);
+            JSONObject report = new JSONObject().put("label", label).put("lostCallbacks", lostCallbacks)
+                .put("score", scoreReport).put("stressSongs", stress ? 60 : 0).put("refresh", refresh);
             synchronized (samples) {
                 for (Map.Entry<String, List<long[]>> entry : samples.entrySet()) {
                     List<long[]> frames = entry.getValue();
@@ -203,8 +235,11 @@ public final class NavigationFrameInstrumentation extends Instrumentation {
             phase = null;
             if (listening) runOnMainSync(() -> activity.getWindow().removeOnFrameMetricsAvailableListener(listener));
             collector.quitSafely();
-            if (previousProject == null) wallpaper.edit().remove("project").commit();
-            else wallpaper.edit().putString("project", previousProject).commit();
+            if (stress) {
+                library.edit().putString("songs", previousSongs).commit();
+                if (previousSelected == null) library.edit().remove("selected").commit();
+                else library.edit().putString("selected", previousSelected).commit();
+            }
         }
         finish(passed ? -1 : 0, result);
     }

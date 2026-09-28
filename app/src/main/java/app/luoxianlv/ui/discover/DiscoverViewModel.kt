@@ -255,9 +255,9 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun download(remote: PlatformScore) {
+        if (remote.id in _state.value.downloading) return
         _state.update { it.copy(downloading = it.downloading + remote.id) }
         updater.downloadPublicScoreCompiled(remote.id) { result ->
-            _state.update { it.copy(downloading = it.downloading - remote.id) }
             result
                 .onSuccess { compiled ->
                     runCatching {
@@ -281,6 +281,8 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                         .onFailure { e -> _state.update { it.copy(error = e.message ?: "未能完成") } }
                 }
                 .onFailure { e -> _state.update { it.copy(error = e.message ?: "未能完成") } }
+            // 后台解析、校验及入库完成才结束下载状态，避免保存期间再次点击。
+            _state.update { it.copy(downloading = it.downloading - remote.id) }
         }
     }
 

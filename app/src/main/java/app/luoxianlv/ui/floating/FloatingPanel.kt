@@ -177,7 +177,9 @@ internal class FloatingPanel(
         title?.text = service.song.title
         status?.text =
             service.error
-                ?: if (service.preparing) {
+                ?: if (service.loadingSong) {
+                    if (service.waitingToPlay) "准备完成后立即播放…" else "正在准备谱面…"
+                } else if (service.preparing) {
                     "识别按键中…"
                 } else {
                     "${service.modeLabel} · ${timeLabel(
@@ -185,8 +187,9 @@ internal class FloatingPanel(
                     )}/${timeLabel(service.durationMs)}"
                 }
         play?.apply {
-            setImageResource(if (service.playing) R.drawable.ic_pause else R.drawable.ic_play)
-            contentDescription = if (service.playing) "暂停" else "播放"
+            val pending = service.playing || service.waitingToPlay
+            setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)
+            contentDescription = if (pending) "暂停" else "播放"
         }
         progress?.update(service.positionMs, service.durationMs)
     }

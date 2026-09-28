@@ -19,18 +19,15 @@ data class Song(
     /** 远端重编连续失败（已达重试上限）：列表显示「需要修复」，播放前会先尝试自动修复。 */
     val needsFix: Boolean = false,
 ) {
-    /**
-     * 惰性解析谱面，失败返回空事件，避免 [durationMs] 在组合期间触发崩溃。空谱时长为 0；PlaybackTimeline 仍保留 events.size + 1
-     * 个偏移，播放端直接返回。
-     */
-    val events: List<NoteEvent> by lazy {
-        runCatching { trimLeadIn(ScoreParser.parse(score), bpm) }.getOrDefault(emptyList())
-    }
-    val durationMs: Long
-        get() = (events.sumOf { it.beats } * 60000 / bpm).toLong()
+    /** 首次解析应在后台调用；坏谱退化为空事件，避免列表及播放崩溃。 */
+    // 播放与低优先级预览并发时允许各自计算，避免播放等待预览持有的锁；只发布一份结果。
+    val events: List<NoteEvent> by
+        lazy(LazyThreadSafetyMode.PUBLICATION) {
+            runCatching { trimLeadIn(ScoreParser.parse(score), bpm) }.getOrDefault(emptyList())
+        }
+    val durationMs: Long by lazy { (events.sumOf { it.beats } * 60000 / bpm).toLong() }
 
-    val noteCount: Int
-        get() = events.count { !it.rest }
+    val noteCount: Int by lazy { events.count { !it.rest } }
 
     /** 按 source 的 MIDI 前缀统一判定来源，供列表图标和筛选使用。 */
     val isMidi: Boolean

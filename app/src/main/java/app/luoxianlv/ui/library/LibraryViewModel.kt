@@ -12,6 +12,8 @@ import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.AppEvents
 import app.luoxianlv.ui.syncSelectionToService
 import app.luoxianlv.update.MidiCoreFixer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +24,9 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * 曲库筛选。
@@ -59,6 +64,8 @@ data class ServiceStatus(
 
 data class LibraryUiState(
     val songs: List<Song> = emptyList(),
+    val loading: Boolean = true,
+    val saving: Boolean = false,
     /** 持久化的“上次选择”，服务未连接时用它决定高亮 */
     val persistedSelectedId: String = "",
     val filter: SongFilter = SongFilter.All,
@@ -105,20 +112,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = SongRepository(app)
     private val main = Handler(Looper.getMainLooper())
 
-    /**
-     * 曲库数据与界面状态。
-     *
-     * 构造时就读取一次：如果等 `init` 里再刷新，[stateIn] 的初始值会是空列表， 首帧会闪一下「还没有谱面」。
-     */
-    private val _local =
-        MutableStateFlow(
-            LibraryUiState(
-                songs = repository.songs(),
-                persistedSelectedId = repository.selectedId,
-                floatingEnabled = repository.floatingEnabled,
-                hiddenBuiltInCount = repository.hiddenBuiltInCount(),
-            )
-        )
+    // 首次读取包含资源文件和 JSON 解析，不放在主线程构造函数中。
+    private val _local = MutableStateFlow(LibraryUiState())
+    private var refreshJob: Job? = null
+    private val libraryMutex = Mutex()
 
     /**
      * 无障碍服务状态轮询。
@@ -137,6 +134,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _local.value)
 
     init {
+        refresh()
         // 导入 / 平台下载会改变歌单，HorizontalPager 又不会重建离屏页面，
         // 所以由事件通知曲库重读，而不是依赖页面重组。
         viewModelScope.launch { AppEvents.libraryRefresh.collect { refresh() } }
@@ -148,12 +146,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      * 每个可能抛的点各自兜住（而不是整段包一个 runCatching）：这个方法跑在 500ms 轮询里， 抛一次异常就会让 combine 上游结束，界面永远停在最后一次状态上——
      * 表现就是“点什么都没反应”，所以宁可漏掉一个字段也不能让整条状态流断掉。
      */
-    private fun readServiceStatus(): ServiceStatus {
+    private suspend fun readServiceStatus(): ServiceStatus {
         val service = MusicAccessibilityService.instance
         return ServiceStatus(
             connected = service != null,
             // 服务已经在跑就必然已开启，省掉一次系统查询
-            accessibilityEnabled = service != null || accessibilityIsEnabled(),
+            accessibilityEnabled =
+                service != null || withContext(Dispatchers.IO) { accessibilityIsEnabled() },
             floatingVisible = service?.floatingVisible == true,
             error = service?.error,
             // song 在 onServiceConnected 里先于 instance 赋值，因此 instance 非空时 song 一定已初始化
@@ -167,13 +166,31 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
         .getOrDefault(false)
 
-    fun refresh() = _local.update {
-        it.copy(
-            songs = repository.songs(),
-            persistedSelectedId = repository.selectedId,
-            floatingEnabled = repository.floatingEnabled,
-            hiddenBuiltInCount = repository.hiddenBuiltInCount(),
-        )
+    fun refresh() {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            try {
+                val (songs, hidden) =
+                    withContext(Dispatchers.IO) {
+                        libraryMutex.withLock {
+                            repository.songs() to repository.hiddenBuiltInCount()
+                        }
+                    }
+                _local.update {
+                    it.copy(
+                        songs = songs,
+                        loading = false,
+                        persistedSelectedId = repository.selectedId,
+                        floatingEnabled = repository.floatingEnabled,
+                        hiddenBuiltInCount = hidden,
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _local.update { it.copy(loading = false, error = error.message ?: "曲库读取失败") }
+            }
+        }
     }
 
     fun setFilter(filter: SongFilter) = _local.update { it.copy(filter = filter) }
@@ -214,32 +231,31 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun removeSong(song: Song) {
+    fun removeSong(song: Song) = changeLibrary {
         repository.remove(song.id)
         val remaining = repository.songs()
-        // 删掉的正好是当前曲目时，把选择顺延到下一首。
-        // 原来写的是 remaining.first()，删掉最后一首会抛 NoSuchElementException 崩溃。
         if (repository.selectedId == song.id) {
-            remaining.firstOrNull()?.let(::select)
+            repository.selectedId = remaining.firstOrNull()?.id.orEmpty()
+            remaining.firstOrNull()?.let(::syncSelectionToService)
         }
-        _local.update {
-            it.copy(
-                songs = remaining,
-                notice = "已删除《${song.title}》",
-                hiddenBuiltInCount = repository.hiddenBuiltInCount(),
-            )
-        }
+        "已删除《${song.title}》"
     }
 
-    /** 恢复被删除的内置示例谱面。 */
-    fun restoreBuiltIns() {
+    fun restoreBuiltIns() = changeLibrary {
         repository.restoreBuiltIns()
-        _local.update {
-            it.copy(
-                songs = repository.songs(),
-                hiddenBuiltInCount = repository.hiddenBuiltInCount(),
-                notice = "已恢复内置示例谱面",
-            )
+        "已恢复内置示例谱面"
+    }
+
+    /** JSON 读写与谱面校验串行放在后台，主线程只更新界面。 */
+    private fun changeLibrary(change: () -> String) = viewModelScope.launch {
+        try {
+            val notice = withContext(Dispatchers.IO) { libraryMutex.withLock { change() } }
+            refresh()
+            _local.update { it.copy(notice = notice) }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _local.update { it.copy(error = error.message ?: "曲库更新失败") }
         }
     }
 
@@ -248,20 +264,21 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         if (song.id in _local.value.fixingIds) return
         _local.update { it.copy(fixingIds = it.fixingIds + song.id) }
         MidiCoreFixer.fixSong(getApplication(), song) { ok ->
-            // 回调在后台线程：服务 select 会碰悬浮窗视图，回主线程执行
+            val songs = repository.songs()
+            // 回调在后台线程：服务 select 会碰悬浮窗视图，回主线程执行。
             main.post {
                 // 服务可能持有旧 Song 实例，修好后让它也重新载入
                 if (ok) {
                     MusicAccessibilityService.instance?.let { service ->
                         runCatching {
-                            service.select(repository.songs().first { it.id == song.id })
+                            service.select(songs.first { it.id == song.id })
                         }
                     }
                 }
                 _local.update {
                     it.copy(
                         fixingIds = it.fixingIds - song.id,
-                        songs = repository.songs(),
+                        songs = songs,
                         notice = if (ok) "已修复《${song.title}》" else "《${song.title}》修复失败，请稍后重试",
                     )
                 }
@@ -269,29 +286,36 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 「另存为」：校验失败时把错误交给对话框展示，返回是否保存成功。 */
-    fun saveAs(
-        original: Song,
-        title: String,
-        score: String,
-    ): Boolean = runCatching {
-        repository.add(
-            title.ifBlank { original.title },
-            score,
-            ScoreParser.tempo(score, original.bpm),
-            "简谱",
-        )
+    /** 保存期间防止重复提交；成功后回主线程关闭编辑框。 */
+    fun saveAs(original: Song, title: String, score: String, onSaved: () -> Unit) {
+        if (_local.value.saving) return
+        _local.update { it.copy(saving = true) }
+        viewModelScope.launch {
+            try {
+                val song =
+                    withContext(Dispatchers.IO) {
+                        libraryMutex.withLock {
+                            repository.add(
+                                title.ifBlank { original.title },
+                                score,
+                                ScoreParser.tempo(score, original.bpm),
+                                "简谱",
+                            )
+                        }
+                    }
+                refresh()
+                syncSelectionToService(song)
+                _local.update { it.copy(notice = "已另存为《${song.title}》") }
+                onSaved()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _local.update { it.copy(error = error.message ?: "谱面格式无效") }
+            } finally {
+                _local.update { it.copy(saving = false) }
+            }
+        }
     }
-        .onSuccess { song ->
-            // 新增会改变歌单，本页需要重读；其它页面由事件通知
-            refresh()
-            syncSelectionToService(song)
-            _local.update { it.copy(notice = "已另存为《${song.title}》") }
-        }
-        .onFailure { e ->
-            _local.update { it.copy(error = e.message ?: "谱面格式无效") }
-        }
-        .isSuccess
 
     fun dismissAccessibilityPrompt() = _local.update { it.copy(showAccessibilityPrompt = false) }
 

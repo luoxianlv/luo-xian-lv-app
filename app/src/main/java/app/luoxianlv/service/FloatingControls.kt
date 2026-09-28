@@ -18,13 +18,16 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import app.luoxianlv.R
 import app.luoxianlv.data.Kv
+import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
+import app.luoxianlv.debug.AppLog
 import app.luoxianlv.ui.floating.FloatingPanel
 import app.luoxianlv.ui.floating.PlayerUi
 import app.luoxianlv.ui.floating.PlayerUi.dp
 import app.luoxianlv.ui.floating.PlayerUiPalette
 import app.luoxianlv.ui.floating.createPlaylistContent
 import kotlin.math.abs
+import kotlinx.coroutines.*
 
 /**
  * 悬浮窗（无障碍 overlay）。
@@ -38,6 +41,8 @@ class FloatingControls(private val service: MusicAccessibilityService) {
     private val wm = service.getSystemService(WindowManager::class.java)
     private val prefs = Kv.of(service, "floating_position")
     private val handler = Handler(Looper.getMainLooper())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var playlistJob: Job? = null
 
     /**
      * 当前配色。
@@ -112,6 +117,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
     fun destroy() {
         destroyed = true
         hide()
+        scope.cancel()
         handler.removeCallbacksAndMessages(null)
         removeMarker.run()
     }
@@ -374,6 +380,20 @@ class FloatingControls(private val service: MusicAccessibilityService) {
 
     /** 选歌：居中独立小窗（卡片 + 当前曲目蓝色高亮）。打开时面板退出，关闭后恢复。 */
     private fun showPlaylist() {
+        if (playlistJob?.isActive == true) return
+        playlistJob = scope.launch {
+            try {
+                val songs = withContext(Dispatchers.IO) { SongRepository(service).songs() }
+                if (!destroyed && displayRequested) showPlaylist(songs)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                AppLog.w("悬浮窗", "读取选歌列表失败", error)
+            }
+        }
+    }
+
+    private fun showPlaylist(songs: List<Song>) {
         palette = PlayerUi.palette(context)
         if (root != null) {
             panelHiddenForPicker = true
@@ -385,7 +405,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
             createPlaylistContent(
                 context = context,
                 palette = palette,
-                songs = SongRepository(service).songs(),
+                songs = songs,
                 selectedId = service.song.id,
                 onSelect = { song ->
                     service.select(song)
@@ -458,6 +478,8 @@ class FloatingControls(private val service: MusicAccessibilityService) {
     }
 
     private fun dismissPlaylist() {
+        playlistJob?.cancel()
+        playlistJob = null
         popup?.let { view ->
             // 搜索框可能还开着键盘：窗口移除前主动收一次，避免键盘留在游戏画面上。
             (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)

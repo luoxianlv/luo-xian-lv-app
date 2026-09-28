@@ -179,8 +179,8 @@ class ExperimentalInstrumentation : Instrumentation() {
                 player.reloadExperimentalOptions()
                 player.select(song)
                 player.play()
-                check(!player.preparing && player.playing) { "固定模式没有立即开始" }
             }
+            await("固定模式未衔接播放") { !player.loadingSong && player.playing }
             await("无截图播放未完成：$played") { !player.playing }
             check(player.error == null) { "固定布局播放失败：${player.error}" }
             check(played.toList() == expected) { "固定坐标或音区不匹配：$played / $expected" }

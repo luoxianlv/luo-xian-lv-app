@@ -6,9 +6,10 @@ import java.util.ArrayDeque
 object ScoreParser {
     private val tokens =
         Regex(
-            "tempo=\\d+(?:\\.\\d+)?|unit=\\d+(?:\\.\\d+)?|:[0-9]+(?:\\.[0-9]+)?|rest|[0-8iIrR休]|[\\[\\]()#+'bB,~|.·-]",
-            RegexOption.IGNORE_CASE,
-        )
+                "tempo=\\d+(?:\\.\\d+)?|unit=\\d+(?:\\.\\d+)?|:[0-9]+(?:\\.[0-9]+)?|rest|[0-8iIrR休]|[\\[\\]()#+'bB,~|.·-]",
+                RegexOption.IGNORE_CASE,
+            )
+            .toPattern()
 
     fun tempo(
         text: String,
@@ -39,14 +40,15 @@ object ScoreParser {
         var unit = 1.0
         var half = false
         var pending: PlayMode? = null
-        val matches = tokens.findAll(source).toList()
+        // Android 的 MatchResult.next() 会重建 Matcher 并复制完整输入；单 Matcher 顺序扫描长谱。
+        val matcher = tokens.matcher(source)
         var end = 0
-        matches.forEachIndexed { index, match ->
-            require(source.substring(end, match.range.first).isBlank()) {
-                "无法识别谱面：${source.substring(end, match.range.first).take(20)}"
+        while (matcher.find()) {
+            require(source.substring(end, matcher.start()).isBlank()) {
+                "无法识别谱面：${source.substring(end, matcher.start()).take(20)}"
             }
-            end = match.range.last + 1
-            val t = match.value.lowercase()
+            end = matcher.end()
+            val t = matcher.group().lowercase()
             when {
                 t.startsWith("tempo=") -> {
                     Unit
@@ -95,10 +97,7 @@ object ScoreParser {
                 }
 
                 t == "~" || t == "-" -> {
-                    val next = matches.getOrNull(index + 1)
-                    if (
-                        t == "-" && next?.range?.first == end && next.value.first() in "12345678iI#"
-                    ) {
+                    if (t == "-" && source.getOrNull(end)?.let { it in "12345678iI#" } == true) {
                         pending = PlayMode.LOWER
                     } else {
                         require(out.isNotEmpty()) { "延音前缺少音符" }

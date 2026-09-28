@@ -18,8 +18,10 @@ import android.view.accessibility.AccessibilityManager
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.core.playback.PlaybackTimeline
+import app.luoxianlv.core.playback.SongLoadGate
 import app.luoxianlv.core.score.NoteEvent
 import app.luoxianlv.core.score.PlayMode
+import app.luoxianlv.core.score.ScoreWork
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.ExperimentalOptions
 import app.luoxianlv.data.KeyLayout
@@ -31,6 +33,14 @@ import app.luoxianlv.ui.practice.PracticeGeometry
 import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.update.MidiCoreFixer
 import java.util.concurrent.Executors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MusicAccessibilityService : AccessibilityService() {
     data class Diagnostics(
@@ -68,10 +78,19 @@ class MusicAccessibilityService : AccessibilityService() {
     private lateinit var repository: SongRepository
     private lateinit var keys: KeyLayout
     private lateinit var floating: FloatingControls
-    lateinit var song: Song
+    var song = Song("", "正在加载曲目…", "", 120, "简谱")
         private set
 
-    private lateinit var timeline: PlaybackTimeline
+    private var timeline = PlaybackTimeline(emptyList(), 120)
+    private val scoreScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val songLoad = SongLoadGate()
+    private var songLoadJob: Job? = null
+    val loadingSong
+        get() = songLoad.loading
+
+    val waitingToPlay
+        get() = songLoad.playWhenReady
+
     var playing = false
         private set
 
@@ -250,11 +269,10 @@ class MusicAccessibilityService : AccessibilityService() {
         )
         repository = SongRepository(this)
         keys = ConfigStore.load(this)
-        song = repository.selected()
-        timeline = PlaybackTimeline(song.events, song.bpm)
         speed = repository.speed
         floating = FloatingControls(this)
         instance = this
+        prepareSong()
         getSystemService(DisplayManager::class.java)
             .registerDisplayListener(displayListener, handler)
         handler.post(monitorDisplay)
@@ -267,6 +285,7 @@ class MusicAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = pause()
 
     override fun onDestroy() {
+        scoreScope.cancel()
         PlaybackForegroundService.stop()
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         playing = false
@@ -285,10 +304,38 @@ class MusicAccessibilityService : AccessibilityService() {
         song = selected
         fixAttemptedForSong = false
         repository.selectedId = selected.id
-        timeline = PlaybackTimeline(selected.events, selected.bpm)
+        prepareSong(selected)
+    }
+
+    private fun prepareSong(selected: Song? = null) {
+        songLoadJob?.cancel()
+        val token = songLoad.begin()
+        timeline = PlaybackTimeline(emptyList(), 120)
         baseMs = 0
         error = null
         floating.refresh()
+        songLoadJob = scoreScope.launch {
+            try {
+                val (readySong, readyTimeline) =
+                    withContext(ScoreWork.playback) {
+                        val nextSong = selected ?: repository.selected()
+                        nextSong to PlaybackTimeline(nextSong.events, nextSong.bpm)
+                    }
+                val start = songLoad.finish(token) ?: return@launch
+                song = readySong
+                timeline = readyTimeline
+                if (timeline.events.isEmpty()) error = "乐谱没有可播放的音符"
+                floating.refresh()
+                if (start && timeline.events.isNotEmpty()) play()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (songLoad.finish(token) == null) return@launch
+                error = "谱面加载失败，请重新选择曲目"
+                AppLog.w(TAG, error!!, failure)
+                floating.refresh()
+            }
+        }
     }
 
     fun toggle() {
@@ -298,7 +345,7 @@ class MusicAccessibilityService : AccessibilityService() {
                 Analytics.logEvent(this, "play_stop")
                 pause()
             }
-            preparing -> pause()
+            preparing || waitingToPlay -> pause()
             else -> play()
         }
     }
@@ -306,6 +353,10 @@ class MusicAccessibilityService : AccessibilityService() {
     fun play() {
         if (!canStartPlayback()) {
             AppLog.log("忽略播放：距离手势中断不足 300 毫秒")
+            return
+        }
+        if (songLoad.requestPlay()) {
+            floating.refresh()
             return
         }
         val useFixedKeys = ExperimentalOptions.fixedHarmonicaKeys(this)
@@ -387,6 +438,13 @@ class MusicAccessibilityService : AccessibilityService() {
         error = "正在修复谱面…"
         floating.refresh()
         MidiCoreFixer.fixSong(this, song) { ok ->
+            val updated =
+                if (ok)
+                    runCatching {
+                        SongRepository(this).songs().firstOrNull { it.id == requestedSongId }
+                    }
+                        .getOrNull()
+                else null
             handler.post {
                 if (token != generation || !preparing || song.id != requestedSongId) return@post
                 preparing = false
@@ -396,13 +454,9 @@ class MusicAccessibilityService : AccessibilityService() {
                     return@post
                 }
                 // 重新载入该曲（updateCompiled 已覆盖缓存并清除 needsFix），再正常起播。
-                runCatching {
-                    SongRepository(this).songs().first { it.id == song.id }
+                updated?.let { updated ->
+                    if (updated.id == song.id && updated.score != song.score) select(updated)
                 }
-                    .getOrNull()
-                    ?.let { updated ->
-                        if (updated.id == song.id && updated.score != song.score) select(updated)
-                    }
                 play()
             }
         }
@@ -515,6 +569,7 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     fun pause() {
+        songLoad.pause()
         AppLog.log("暂停播放：播放中=$playing 准备中=$preparing")
         if (recoveringDisplay) {
             generation++
@@ -598,7 +653,7 @@ class MusicAccessibilityService : AccessibilityService() {
             serviceEnabled = isEnabled(this),
             playing = playing,
             preparing = preparing,
-            songTitle = if (::song.isInitialized) song.title else "未选择",
+            songTitle = song.title,
             display = runCatching { displayState() }.getOrNull(),
             error = error,
             gestureFailure = gestureFailure,

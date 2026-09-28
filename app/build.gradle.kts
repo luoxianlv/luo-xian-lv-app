@@ -14,8 +14,8 @@ plugins {
 // 因此不应用该插件，只复用它提供的 EfsFactory，通过 AGP 公开的 Instrumentation API 自行注册（见文件末尾）。
 
 // 版本号同时供 defaultConfig 与 apmUploadMapping（符号表归档）使用。
-val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 15
-val appVersionName = project.findProperty("appVersionName") as String? ?: "1.0.8"
+val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 16
+val appVersionName = project.findProperty("appVersionName") as String? ?: "1.0.9"
 
 val compactDebug = providers.gradleProperty("compactDebug").orNull == "true"
 

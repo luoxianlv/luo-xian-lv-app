@@ -24,6 +24,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -31,8 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.core.score.ScoreWork
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.timeLabel
+import kotlinx.coroutines.withContext
 
 /**
  * 曲目行：连排列表里的一行，**不带卡片外壳**。
@@ -51,6 +54,12 @@ fun SongRow(
     onFix: (() -> Unit)? = null,
 ) {
     var menu by remember { mutableStateOf(false) }
+    // 列表组合只读结果，首次解析长谱与统计时长均在后台完成。
+    val duration by
+        produceState<Long?>(null, song) {
+            value = null
+            value = withContext(ScoreWork.preview) { song.durationMs }
+        }
     Row(
         modifier =
             modifier
@@ -94,7 +103,7 @@ fun SongRow(
                 modifier = Modifier.padding(top = 4.dp),
             ) {
                 Text(
-                    "${song.source} · ${timeLabel(song.durationMs)}",
+                    "${song.source} · ${duration?.let(::timeLabel) ?: "—:—"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

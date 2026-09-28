@@ -51,7 +51,7 @@ object MidiCoreFixer {
             .start()
     }
 
-    /** 修复一首歌（曲库「修复」按钮 / 悬浮窗播放前自动修复）： 重置计数，完整跑一遍重编流程，成功与否通过 [onDone] 回主线程通知。 */
+    /** 修复一首歌；[onDone] 在后台线程通知，界面更新由调用方切回主线程。 */
     fun fixSong(
         context: Context,
         song: Song,

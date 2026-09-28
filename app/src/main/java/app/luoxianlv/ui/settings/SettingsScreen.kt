@@ -36,7 +36,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -94,7 +93,6 @@ fun SettingsScreen(
             if (!granted) KeepAlive.openNotificationSettings(context)
         }
 
-    LaunchedEffect(Unit) { vm.refresh() }
     // 从系统授权页返回时刷新保活状态（电池白名单 / 通知权限都在系统页里改）
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {

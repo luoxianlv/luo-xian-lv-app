@@ -2,6 +2,7 @@ package app.luoxianlv.ui.settings
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AccountSession
 import app.luoxianlv.data.AppearanceSettings
@@ -15,9 +16,13 @@ import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.service.KeepAliveStatus
 import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.update.UpdateAutoCheck
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class SettingsUiState(
     val session: AccountSession? = null,
@@ -35,18 +40,29 @@ class SettingsViewModel(private val app: Application) : AndroidViewModel(app) {
     private val updater = PlatformClient(app)
     private val _state = MutableStateFlow(SettingsUiState())
     val state = _state.asStateFlow()
+    private var refreshJob: Job? = null
 
     init {
         refresh()
     }
 
-    fun refresh() = _state.update {
-        it.copy(
-            session = sessionStore.current(),
-            appearance = AppearanceStore.load(app),
-            keepAlive = KeepAlive.status(app),
-            autoUpdate = UpdateAutoCheck.isEnabled(app),
-        )
+    fun refresh() {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
+            // 系统权限查询可能等待 Binder；不可阻塞导航动画，也不重复查询正在刷新的状态。
+            val keepAlive =
+                withContext(Dispatchers.IO) {
+                    runCatching { KeepAlive.status(app) }.getOrDefault(_state.value.keepAlive)
+                }
+            _state.update {
+                it.copy(
+                    session = sessionStore.current(),
+                    appearance = AppearanceStore.load(app),
+                    keepAlive = keepAlive,
+                    autoUpdate = UpdateAutoCheck.isEnabled(app),
+                )
+            }
+        }
     }
 
     fun login(

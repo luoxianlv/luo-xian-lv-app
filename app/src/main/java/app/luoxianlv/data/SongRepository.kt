@@ -37,15 +37,15 @@ class SongRepository(context: Context) {
                             appContext.assets.open("builtin-scores/$id.txt").use {
                                 it.readBytes().toString(Charsets.UTF_8)
                             }
-                        require(ScoreParser.parse(score).isNotEmpty()) { "内置谱面为空" }
                         Song(
-                            id,
-                            title,
-                            score,
-                            ScoreParser.tempo(score, 120).coerceIn(1, 999),
-                            "MIDI · Rust 编译",
-                            true,
-                        )
+                                id,
+                                title,
+                                score,
+                                ScoreParser.tempo(score, 120).coerceIn(1, 999),
+                                "MIDI · Rust 编译",
+                                true,
+                            )
+                            .also { require(it.events.isNotEmpty()) { "内置谱面为空" } }
                     }
                         .getOrNull()
                 }
@@ -349,7 +349,8 @@ class SongRepository(context: Context) {
             runCatching {
                 val item = array.getJSONObject(index)
                 val score = item.getString("score")
-                require(ScoreParser.parse(score).isNotEmpty())
+                // 写入同步库时已完整校验；读取列表不再重复解析所有谱面。
+                require(score.isNotBlank())
                 Song(
                     item.getString("id"),
                     item.optString("title", "未命名谱子"),

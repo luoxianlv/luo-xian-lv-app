@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FileUpload
@@ -23,6 +25,7 @@ import androidx.compose.material3.SegmentedButtonColors
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,9 +42,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.data.Song
 import app.luoxianlv.ui.components.ActionPill
 import app.luoxianlv.ui.components.ErrorDialogHost
+import app.luoxianlv.ui.components.GroupCardCornerRadius
 import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.PageTitle
-import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.components.SongRow
 import app.luoxianlv.ui.theme.LocalBackdropPalette
@@ -58,6 +61,7 @@ fun LibraryScreen(
     vm: LibraryViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val visibleSongs = remember(state.songs, state.filter) { state.visibleSongs }
     var editing by remember { mutableStateOf<Song?>(null) }
     var deleting by remember { mutableStateOf<Song?>(null) }
 
@@ -66,7 +70,7 @@ fun LibraryScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         PageTitle(
             title = "曲库",
-            trailing = "${state.visibleSongs.size} 首",
+            trailing = "${visibleSongs.size} 首",
             modifier = Modifier.padding(start = 20.dp, top = 12.dp, end = 20.dp),
         )
         Row(
@@ -105,11 +109,13 @@ fun LibraryScreen(
             contentPadding =
                 PaddingValues(start = 20.dp, top = 8.dp, end = 20.dp, bottom = NavBarClearance),
         ) {
-            if (state.visibleSongs.isEmpty()) {
+            if (visibleSongs.isEmpty()) {
                 item {
                     Text(
                         // 区分「一首都没有」与「这一类没有」，筛选后不再给出误导提示
-                        if (state.hasAnySong) {
+                        if (state.loading) {
+                            "正在加载曲库…"
+                        } else if (state.hasAnySong) {
                             "没有${state.filter.label}类的谱面"
                         } else {
                             "还没有谱面，点上面的「导入谱子」添加吧"
@@ -120,23 +126,35 @@ fun LibraryScreen(
                     )
                 }
             } else {
-                // 所有曲目连成一张卡：内部零分隔（先试了居中细线，仍嫌线条多），
-                // 行与行直接相邻，靠行高与内容自然分格；整列只有外轮廓一条边界。
-                item {
-                    SettingsCard {
-                        Column {
-                            state.visibleSongs.forEach { song ->
-                                SongRow(
-                                    song = song,
-                                    selected = song.id == state.highlightedSongId,
-                                    onClick = { vm.select(song) },
-                                    onEdit = { editing = song },
-                                    onDelete = { deleting = song },
-                                    fixing = song.id in state.fixingIds,
-                                    onFix = { vm.fixSong(song) },
-                                )
-                            }
-                        }
+                // 每首独立回收；首末行圆角拼成连续卡片，不能把整份曲库塞进一个 item。
+                itemsIndexed(
+                    visibleSongs,
+                    key = { _, song -> song.id },
+                    contentType = { _, _ -> "song" },
+                ) { index, song ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape =
+                            RoundedCornerShape(
+                                topStart = if (index == 0) GroupCardCornerRadius else 0.dp,
+                                topEnd = if (index == 0) GroupCardCornerRadius else 0.dp,
+                                bottomStart =
+                                    if (index == visibleSongs.lastIndex) GroupCardCornerRadius
+                                    else 0.dp,
+                                bottomEnd =
+                                    if (index == visibleSongs.lastIndex) GroupCardCornerRadius
+                                    else 0.dp,
+                            ),
+                    ) {
+                        SongRow(
+                            song = song,
+                            selected = song.id == state.highlightedSongId,
+                            onClick = { vm.select(song) },
+                            onEdit = { editing = song },
+                            onDelete = { deleting = song },
+                            fixing = song.id in state.fixingIds,
+                            onFix = { vm.fixSong(song) },
+                        )
                     }
                 }
             }
@@ -146,9 +164,10 @@ fun LibraryScreen(
     editing?.let { song ->
         EditSongDialog(
             song = song,
+            saving = state.saving,
             onDismiss = { editing = null },
             onSave = { title, score ->
-                if (vm.saveAs(song, title, score)) editing = null
+                vm.saveAs(song, title, score) { editing = null }
             },
         )
     }
@@ -182,6 +201,7 @@ fun LibraryScreen(
 @Composable
 private fun EditSongDialog(
     song: Song,
+    saving: Boolean,
     onDismiss: () -> Unit,
     onSave: (title: String, score: String) -> Unit,
 ) {
@@ -209,7 +229,11 @@ private fun EditSongDialog(
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(title, score) }) { Text("另存为") } },
+        confirmButton = {
+            TextButton(enabled = !saving, onClick = { onSave(title, score) }) {
+                Text(if (saving) "保存中…" else "另存为")
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
