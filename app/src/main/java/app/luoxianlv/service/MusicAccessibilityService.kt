@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.Context
-import android.content.Intent
 import android.graphics.Path
 import android.graphics.Point
 import android.graphics.Rect
@@ -22,11 +21,14 @@ import app.luoxianlv.core.playback.PlaybackTimeline
 import app.luoxianlv.core.score.NoteEvent
 import app.luoxianlv.core.score.PlayMode
 import app.luoxianlv.data.ConfigStore
+import app.luoxianlv.data.ExperimentalOptions
 import app.luoxianlv.data.KeyLayout
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.service.recognition.ScreenshotAnalyzer
+import app.luoxianlv.ui.practice.PracticeGeometry
+import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.update.MidiCoreFixer
 import java.util.concurrent.Executors
 
@@ -94,8 +96,9 @@ class MusicAccessibilityService : AccessibilityService() {
     /** 当前选中曲目是否已经尝试过播放前自动修复（每次选中重置，避免内部 resume 反复重试）。 */
     private var fixAttemptedForSong = false
     private var playbackDisplay: DisplayState? = null
-    // 像素坐标以接受的无障碍截图为准，不使用厂商显示尺寸换算。
-    private var screenshotFrame: PlaybackCoordinates.Frame? = null
+    // 自动模式使用截图像素空间；固定模式使用无障碍手势所在的完整显示空间。
+    private var coordinateFrame: PlaybackCoordinates.Frame? = null
+    private var fixedKeys = false
     private val interruptionGuard = PlaybackInterruptionGuard()
 
     internal fun canStartPlayback() = interruptionGuard.canStart(SystemClock.uptimeMillis())
@@ -123,6 +126,8 @@ class MusicAccessibilityService : AccessibilityService() {
             override fun onDisplayRemoved(displayId: Int) = Unit
 
             override fun onDisplayChanged(displayId: Int) {
+                if (displayId == Display.DEFAULT_DISPLAY && ::floating.isInitialized)
+                    floating.reposition()
                 if (
                     displayId == Display.DEFAULT_DISPLAY &&
                         (playing || preparing) &&
@@ -262,7 +267,7 @@ class MusicAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = pause()
 
     override fun onDestroy() {
-        stopService(Intent(this, PlaybackForegroundService::class.java))
+        PlaybackForegroundService.stop()
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         playing = false
         generation++
@@ -303,16 +308,25 @@ class MusicAccessibilityService : AccessibilityService() {
             AppLog.log("忽略播放：距离手势中断不足 300 毫秒")
             return
         }
+        val useFixedKeys = ExperimentalOptions.fixedHarmonicaKeys(this)
         if (
             app.luoxianlv.ui.practice.PracticePlaybackGate.active &&
                 (!app.luoxianlv.ui.practice.PracticePlaybackGate.ready ||
-                    Build.VERSION.SDK_INT < 30)
+                    (Build.VERSION.SDK_INT < 30 && !useFixedKeys))
         ) {
-            error = if (Build.VERSION.SDK_INT < 30) "演练场自动定位需要 Android 11 或更高版本" else "请等待演练场开场完成"
+            error =
+                if (Build.VERSION.SDK_INT < 30 && !useFixedKeys) "演练场自动定位需要 Android 11 或更高版本"
+                else "请等待演练场开场完成"
             floating.refresh()
             return
         }
         if (playing || preparing || recoveringDisplay || timeline.events.isEmpty()) return
+        if (fixedKeys != useFixedKeys) {
+            fixedKeys = useFixedKeys
+            keys = ConfigStore.load(this)
+            pitchMode = PlayMode.NATURAL
+            halfToneOn = false
+        }
         if (baseMs >= durationMs) baseMs = 0
         // 标记 needsFix 的歌：播放前先自动尝试一次远端重编（每选中一次只试一次），
         // 失败给出提示，引导回 App 内曲库手动修复；没有 remoteId 的只能靠播放兜底修剪。
@@ -322,11 +336,14 @@ class MusicAccessibilityService : AccessibilityService() {
             return
         }
         error = null
-        // 首音前通过截图定位键盘并读取音区，兼容平板比例及用户在游戏内切换半音、音区的情况；截图需 API 30，低版本沿用已保存布局。
+        // 首音前按本次模式准备布局；固定模式不发起截图，也不覆盖识别缓存。
         playbackDisplay = displayState()
-        screenshotFrame = null
+        coordinateFrame = null
         AppLog.log("开始播放：显示=$playbackDisplay 起点毫秒=$baseMs 速度=$speed")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        if (fixedKeys) {
+            syncFixedLayout()
+            startPlaying()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             preparing = true
             val token = ++generation
             floating.refresh()
@@ -401,11 +418,42 @@ class MusicAccessibilityService : AccessibilityService() {
         floating.refresh()
     }
 
+    private fun syncFixedLayout() {
+        val display = checkNotNull(playbackDisplay)
+        coordinateFrame = PlaybackCoordinates.Frame(display.width, display.height)
+        keys = PracticeGeometry.keyLayout(display.width, display.height)
+        PracticePlaybackGate.pitchState()?.let { (mode, half) ->
+            pitchMode = mode
+            halfToneOn = half
+        }
+        AppLog.log("固定口琴布局：显示=$display 音区=$pitchMode 半音=$halfToneOn，不请求截图")
+    }
+
+    /** 设置切换时停止旧手势序列，下一次播放再采用新布局。 */
+    fun reloadExperimentalOptions() {
+        pause()
+        fixedKeys = ExperimentalOptions.fixedHarmonicaKeys(this)
+        coordinateFrame = null
+        keys = ConfigStore.load(this)
+        pitchMode = PlayMode.NATURAL
+        halfToneOn = false
+        error = null
+        floating.refresh()
+    }
+
     /** 截图识别后保存布局并同步音区；回调在主线程执行。 */
     private fun syncWithScreen(
         token: Int,
         done: (Boolean) -> Unit,
     ) {
+        if (fixedKeys) {
+            if (token != generation || playbackDisplay != displayState()) done(false)
+            else {
+                syncFixedLayout()
+                done(true)
+            }
+            return
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             done(false)
             return
@@ -441,7 +489,7 @@ class MusicAccessibilityService : AccessibilityService() {
                                 val valid =
                                     result != null && PlaybackCoordinates.validLayout(result.layout)
                                 if (valid) {
-                                    screenshotFrame = frame
+                                    coordinateFrame = frame
                                     keys = result.layout
                                     ConfigStore.save(this@MusicAccessibilityService, result.layout)
                                     result.mode?.let { pitchMode = it }
@@ -528,27 +576,20 @@ class MusicAccessibilityService : AccessibilityService() {
         repository.floatingEnabled = enabled
         if (enabled) {
             floating.show()
-            runCatching {
-                if (Build.VERSION.SDK_INT >= 26) {
-                    startForegroundService(Intent(this, PlaybackForegroundService::class.java))
-                } else {
-                    startService(Intent(this, PlaybackForegroundService::class.java))
-                }
-            }
-                .onFailure { AppLog.w(TAG, "启动播放前台服务失败", it) }
+            PlaybackForegroundService.start(this)
         } else {
             floating.hide()
-            stopService(Intent(this, PlaybackForegroundService::class.java))
+            PlaybackForegroundService.stop()
         }
     }
 
     fun reloadConfig() {
-        keys = ConfigStore.load(this)
+        if (!fixedKeys) keys = ConfigStore.load(this)
     }
 
     fun screenBounds(): Rect {
         val display = displayState()
-        val frame = screenshotFrame?.takeIf { playbackDisplay == display }
+        val frame = coordinateFrame?.takeIf { playbackDisplay == display }
         return Rect(0, 0, frame?.width ?: display.width, frame?.height ?: display.height)
     }
 
@@ -683,7 +724,7 @@ class MusicAccessibilityService : AccessibilityService() {
             return
         }
         val frame =
-            screenshotFrame
+            coordinateFrame
                 ?: if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
                     PlaybackCoordinates.Frame(currentDisplay.width, currentDisplay.height)
                 } else {
@@ -692,7 +733,7 @@ class MusicAccessibilityService : AccessibilityService() {
                     return
                 }
         val bounds = Rect(0, 0, frame.width, frame.height)
-        // 使用产生归一化识别坐标的同一截图像素空间。
+        // 使用生成当前布局时的同一像素空间，避免截图、显示尺寸混用。
         if (!PlaybackCoordinates.validPoint(x, y)) {
             gestureFailure = "按键坐标无效，请重新识别"
             AppLog.log("坐标无效：x=$x y=$y 显示=$currentDisplay")

@@ -29,6 +29,8 @@ class StorageLogInstrumentation : Instrumentation() {
         val previous = prefs.getString("project", null)
         val oldLog = File(targetContext.filesDir, "playback-debug/play-debug-迁移测试-$id.log")
         try {
+            // Instrumentation 线程可能早于 Application.onCreate 完成，先等主线程启动任务提交。
+            runOnMainSync {}
             // 等启动迁移结束再创建旧版样本，避免后台线程抢先迁移导致前置断言失效。
             Thread.getAllStackTraces()
                 .keys
@@ -49,8 +51,12 @@ class StorageLogInstrumentation : Instrumentation() {
                 )
             File(project, "preview.png").writeBytes(byteArrayOf(1, 2, 3, 4))
             File(legacy, ".root").writeText("中文项目", Charsets.UTF_8)
+            // 先完成内置默认壁纸初始化，避免它覆盖测试刚选中的旧项目。
+            WallpaperProjectStore.root(targetContext)
             prefs.edit().putString("project", id).commit()
-            check(WallpaperProjectStore.root(targetContext) == project.canonicalFile)
+            check(WallpaperProjectStore.root(targetContext) == project.canonicalFile) {
+                "旧项目路径不符：实际=${WallpaperProjectStore.root(targetContext)}，预期=${project.canonicalFile}"
+            }
             AppStorage.migrate(targetContext) { AppLog.i("迁移测试", it) }
             check(
                 WallpaperProjectStore.root(targetContext) == File(destination, "中文项目").canonicalFile
@@ -88,6 +94,14 @@ class StorageLogInstrumentation : Instrumentation() {
                 check(zip.getEntry("说明.txt") != null)
                 check(zip.getEntry("logs/play-debug.log") != null)
                 check(zip.getEntry("device.json") != null)
+                val exits =
+                    org.json.JSONObject(
+                        zip.getInputStream(zip.getEntry("process-exits.json"))
+                            .bufferedReader(Charsets.UTF_8)
+                            .use { it.readText() }
+                    )
+                check(exits.getBoolean("supported") == (android.os.Build.VERSION.SDK_INT >= 30))
+                check(!exits.has("error")) { "系统退出原因读取失败：$exits" }
             }
             val uri =
                 FileProvider.getUriForFile(

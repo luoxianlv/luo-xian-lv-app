@@ -14,18 +14,17 @@ object WallpaperProjectStore {
         context.getSharedPreferences("practice_wallpaper", Context.MODE_PRIVATE)
 
     fun hasBundled(context: Context) =
+        BundledWallpaper.available(context) || hasLegacyBundled(context)
+
+    fun hasLegacyBundled(context: Context) =
         context.assets.list("default-wallpaper")?.contains("scene.pkg") == true
 
-    private fun initializeDefault(context: Context) {
-        if (
-            hasBundled(context) && prefs(context).getString("defaultRevision", null) != "3113554287"
-        ) {
-            prefs(context)
-                .edit()
-                .remove("project")
-                .putString("defaultRevision", "3113554287")
-                .commit()
-        }
+    fun selectedId(context: Context): String? = prefs(context).getString("project", null)
+
+    fun soundEnabled(context: Context): Boolean = prefs(context).getBoolean("sound", false)
+
+    fun setSoundEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean("sound", enabled).apply()
     }
 
     fun minute(context: Context): Int? =
@@ -37,8 +36,7 @@ object WallpaperProjectStore {
     }
 
     fun current(context: Context): File? {
-        initializeDefault(context)
-        val id = prefs(context).getString("project", null) ?: return null
+        val id = selectedId(context) ?: BundledWallpaper.ID
         if (!id.matches(Regex("[a-f0-9-]{36}"))) return null
         return AppStorage.wallpaperRoots(context)
             .map { File(it, id) }
@@ -63,7 +61,6 @@ object WallpaperProjectStore {
     }
 
     fun import(context: Context, uri: Uri, tree: Boolean, checkpoint: () -> Unit = {}): String {
-        initializeDefault(context)
         val id = UUID.randomUUID().toString()
         val staging = File(AppStorage.wallpapers(context), id).apply { mkdirs() }
         val budget = WallpaperArchive.Budget(staging, checkpoint)
@@ -192,11 +189,22 @@ object WallpaperProjectStore {
     data class Entry(val id: String?, val title: String, val root: File?)
 
     fun entries(context: Context): List<Entry> {
-        val defaults = listOf(Entry(null, if (hasBundled(context)) "窗旁の伊蕾娜" else "默认背景", null))
+        runCatching { BundledWallpaper.ensureInstalled(context) }
+            .onFailure { app.luoxianlv.debug.AppLog.w("壁纸", "默认壁纸尚未安装，仍可选择其他项目", it) }
+        val defaultRoot = BundledWallpaper.folder(context).takeIf { File(it, ".root").isFile }
+        val defaults =
+            listOf(
+                Entry(
+                    null,
+                    if (defaultRoot != null) BundledWallpaper.TITLE
+                    else if (hasLegacyBundled(context)) "窗旁の伊蕾娜" else "默认背景",
+                    defaultRoot,
+                )
+            )
         val imported =
             AppStorage.wallpaperRoots(context)
                 .flatMap { it.listFiles().orEmpty().toList() }
-                .filter { File(it, ".root").isFile }
+                .filter { it.name != BundledWallpaper.ID && File(it, ".root").isFile }
                 .distinctBy { it.name }
                 .mapNotNull { folder ->
                     if (

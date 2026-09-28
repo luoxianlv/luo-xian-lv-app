@@ -22,9 +22,11 @@ import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -77,6 +79,7 @@ fun SettingsScreen(
     onAbout: () -> Unit,
     onDiagnostics: () -> Unit,
     onAnalyticsDebug: () -> Unit,
+    onExperimental: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: SettingsViewModel = viewModel(),
 ) {
@@ -158,6 +161,28 @@ fun SettingsScreen(
 
         item {
             Column {
+                PreferenceGroupCaption("演练场")
+                Spacer(modifier = Modifier.height(6.dp))
+                SettingsCard {
+                    PreferenceItem(
+                        title = "演练场设置",
+                        summary = "壁纸与声音",
+                        icon = Icons.Filled.MusicNote,
+                        iconTint = IconTeal,
+                    ) {
+                        context.startActivity(
+                            android.content.Intent(
+                                context,
+                                app.luoxianlv.ui.practice.WallpaperPickerActivity::class.java,
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Column {
                 PreferenceGroupCaption("后台运行")
                 Spacer(modifier = Modifier.height(6.dp))
                 SettingsCard {
@@ -212,6 +237,18 @@ fun SettingsScreen(
                         KeepAlive.openAutoStartSettings(context)
                     }
                 }
+            }
+        }
+
+        item {
+            SettingsCard {
+                PreferenceItem(
+                    title = "实验性选项",
+                    summary = "可选的兼容功能",
+                    icon = Icons.Filled.Science,
+                    iconTint = IconIndigo,
+                    onClick = onExperimental,
+                )
             }
         }
 

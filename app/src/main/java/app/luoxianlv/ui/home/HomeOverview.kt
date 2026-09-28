@@ -21,10 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -126,15 +123,16 @@ private fun HomeStagePill(
 ) {
     val context = LocalContext.current
     val dark = MaterialTheme.colorScheme.background.luminance() < .5f
-    var bounds by remember { mutableStateOf(RectF()) }
+    // 位置只在点击时使用；页面滑动更新窗口坐标时无需触发重组。
+    val bounds = remember { RectF() }
     Surface(
-        onClick = { openPracticeStage(context, bounds, dark, onPractice) },
+        onClick = { openPracticeStage(context, RectF(bounds), dark, onPractice) },
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier =
             modifier.onGloballyPositioned {
                 val r = it.boundsInWindow()
-                bounds = RectF(r.left, r.top, r.right, r.bottom)
+                bounds.set(r.left, r.top, r.right, r.bottom)
             },
     ) {
         Row(

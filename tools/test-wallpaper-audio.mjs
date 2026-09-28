@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import {bindWallpaperAudio} from '../app/src/main/assets/wallpaperengine/audio.mjs';
+const callbacks = new Set();
+const doc = {hidden:false, addEventListener:(_,f)=>callbacks.add(f), removeEventListener:(_,f)=>callbacks.delete(f)};
+const host = {};
+const volumes = [];
+const audio = bindWallpaperAudio(host,doc);
+audio.attach({setVolume:value=>volumes.push(value)});
+assert.deepEqual(volumes,[]); // 挂载、预热默认静音。
+host.setWallpaperSoundEnabled(true);
+host.setWallpaperSoundEnabled(true);
+assert.deepEqual(volumes,[1]);
+doc.hidden=true;callbacks.forEach(f=>f());
+assert.deepEqual(volumes,[1,0]);
+host.wallpaperSuspended=true;
+doc.hidden=false;callbacks.forEach(f=>f());
+assert.deepEqual(volumes,[1,0]);
+host.wallpaperSuspended=false;host.setWallpaperSoundEnabled(true);
+assert.deepEqual(volumes,[1,0,1]);
+host.setWallpaperSoundEnabled(false);
+assert.deepEqual(volumes,[1,0,1,0]);
+audio.close();audio.close();
+assert.equal(callbacks.size,0);
+const before = bindWallpaperAudio(host,doc);
+host.setWallpaperSoundEnabled(true);
+before.attach({setVolume:value=>volumes.push(value)});
+assert.equal(volumes.at(-1),1); // 原生状态早于异步挂载也不会丢失。
+before.close();
+assert.equal(volumes.at(-1),0);
+console.log('壁纸音量：默认关闭、切换去重、隐藏和挂起、异步挂载、退出静音验证通过');

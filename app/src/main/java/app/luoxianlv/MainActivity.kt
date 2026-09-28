@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.MotionEvent
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -32,6 +33,7 @@ import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.components.DisclaimerScreen
 import app.luoxianlv.ui.components.OnboardingDialog
 import app.luoxianlv.ui.components.Snowfall
+import app.luoxianlv.ui.components.dispatchWindowTouch
 import app.luoxianlv.ui.navigation.AppNavHost
 import app.luoxianlv.ui.theme.LuoXianLvTheme
 import app.luoxianlv.update.AppUpdateViewModel
@@ -40,6 +42,10 @@ import app.luoxianlv.update.UpdateAutoCheck
 
 /** Compose 单 Activity 入口：只负责挂 UI 树与生命周期级的服务/热更新对齐。 */
 class MainActivity : AppCompatActivity() {
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean = dispatchWindowTouch {
+        super.dispatchTouchEvent(event)
+    }
+
     private lateinit var repository: SongRepository
     private val oauthUpdater by lazy { PlatformClient(this) }
     private lateinit var appUpdates: AppUpdateViewModel

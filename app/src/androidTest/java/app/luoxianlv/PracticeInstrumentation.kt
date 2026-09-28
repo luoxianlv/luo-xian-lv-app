@@ -219,7 +219,7 @@ class PracticeInstrumentation : Instrumentation() {
                 touch(PracticeGeometry.notes[0], MotionEvent.ACTION_UP)
                 check(keyboard.session.active == null)
             }
-            // 工具栏打开竖屏壁纸库，GIF 预览先于再次进入横屏运行。
+            // 工具栏打开竖屏壁纸库；静态预览可见，GIF 预览保持播放。
             val pickerMonitor = addMonitor(WallpaperPickerActivity::class.java.name, null, false)
             runOnMainSync {
                 val density = keyboard.resources.displayMetrics.density
@@ -254,12 +254,10 @@ class PracticeInstrumentation : Instrumentation() {
                         descendants(picker.window.decorView)
                             .filterIsInstance<android.widget.ImageView>()
                             .any {
-                                if (
-                                    testWallpaper || WallpaperProjectStore.hasBundled(targetContext)
-                                )
-                                    (it.drawable as? android.graphics.drawable.Animatable)
-                                        ?.isRunning == true
-                                else it.drawable != null
+                                val drawable = it.drawable
+                                drawable != null &&
+                                    (drawable !is android.graphics.drawable.Animatable ||
+                                        drawable.isRunning)
                             }
                 }
                 if (!previewReady) Thread.sleep(100)

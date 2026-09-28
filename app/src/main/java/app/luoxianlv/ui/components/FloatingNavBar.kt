@@ -1,11 +1,9 @@
 package app.luoxianlv.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -13,10 +11,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
@@ -28,13 +24,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import app.luoxianlv.ui.navigation.Routes
 import kotlin.math.abs
@@ -73,7 +76,7 @@ val NavBarClearance: Dp = 74.dp
  */
 @Composable
 fun FloatingNavBar(
-    position: Float,
+    position: () -> Float,
     onNavigate: (String) -> Unit,
 ) {
     // 容器色直接用主题的 surface —— 它已经被压到 ON_BACKDROP_SURFACE_ALPHA。
@@ -90,22 +93,34 @@ fun FloatingNavBar(
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {
-        val selectedIndex = position.roundToInt().coerceIn(0, items.size - 1)
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(54.dp).padding(5.dp)) {
-            val itemWidth = maxWidth / items.size
-            // 手势位移驱动横向拉伸：滑到两页中间时胶囊最长，停下收回
-            val dragFraction = abs(position - position.roundToInt())
-            val stretch = (dragFraction * 0.44f).coerceIn(0f, 0.22f)
-            Box(
-                modifier =
-                    Modifier.offset(x = itemWidth * position - itemWidth * stretch / 2)
-                        .width(itemWidth * (1 + stretch))
-                        .fillMaxHeight()
-                        .background(
-                            MaterialTheme.colorScheme.primaryContainer,
-                            RoundedCornerShape(24.dp),
+        val selectedIndex by
+            remember(position) {
+                derivedStateOf { position().roundToInt().coerceIn(0, items.size - 1) }
+            }
+        val indicatorColor = MaterialTheme.colorScheme.primaryContainer
+        Box(
+            modifier =
+                Modifier.fillMaxWidth().height(54.dp).padding(5.dp).drawWithCache {
+                    val itemWidth = size.width / items.size
+                    val radius = CornerRadius(minOf(24.dp.toPx(), size.height / 2))
+                    onDrawBehind {
+                        val page = position()
+                        val stretch = (abs(page - page.roundToInt()) * .44f).coerceIn(0f, .22f)
+                        val width = itemWidth * (1 + stretch)
+                        val start = itemWidth * (page - stretch / 2)
+                        val left =
+                            if (layoutDirection == LayoutDirection.Rtl) size.width - start - width
+                            else start
+                        // 保留原位移、伸缩和圆角，只重画胶囊，不再每帧测量导航栏。
+                        drawRoundRect(
+                            color = indicatorColor,
+                            topLeft = Offset(left, 0f),
+                            size = Size(width, size.height),
+                            cornerRadius = radius,
                         )
-            )
+                    }
+                }
+        ) {
             Row(modifier = Modifier.fillMaxSize()) {
                 items.forEachIndexed { index, item ->
                     val tint by

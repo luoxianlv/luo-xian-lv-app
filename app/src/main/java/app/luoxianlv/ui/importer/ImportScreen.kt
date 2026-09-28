@@ -1,7 +1,6 @@
 package app.luoxianlv.ui.importer
 
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,9 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.ui.components.ErrorDialogHost
+import app.luoxianlv.ui.components.ImportFilePicker
 import app.luoxianlv.ui.components.SnackbarNotice
 
-/** 导入页：SAF 打开文档 → MIDI 导入。现在是「曲库」的子页面，需要返回入口。 */
+/** 曲库的 MIDI 导入页，可通过系统文件列表或其他文件管理器选取。 */
 @Composable
 fun ImportScreen(
     onBack: () -> Unit,
@@ -43,7 +43,7 @@ fun ImportScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val launcher =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        rememberLauncherForActivityResult(ImportFilePicker("选择 MIDI 文件")) { uri ->
             uri?.let(vm::import)
         }
 

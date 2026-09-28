@@ -1,0 +1,68 @@
+{
+  "label": "baseline-controlled",
+  "lostCallbacks": 0,
+  "首次点击": {
+    "frames": 78,
+    "overDeadline": 35,
+    "totalP50Ms": 29.980458,
+    "totalP95Ms": 63.553028,
+    "layoutP95Ms": 0.2932,
+    "drawP95Ms": 9.104918
+  },
+  "点击我的曲库": {
+    "frames": 302,
+    "overDeadline": 152,
+    "totalP50Ms": 30.237172,
+    "totalP95Ms": 69.486572,
+    "layoutP95Ms": 0.1805,
+    "drawP95Ms": 6.812384
+  },
+  "点击曲库发现": {
+    "frames": 390,
+    "overDeadline": 161,
+    "totalP50Ms": 31.009106,
+    "totalP95Ms": 66.210278,
+    "layoutP95Ms": 0.2307,
+    "drawP95Ms": 12.784002
+  },
+  "点击发现设置": {
+    "frames": 378,
+    "overDeadline": 157,
+    "totalP50Ms": 32.66431,
+    "totalP95Ms": 77.411044,
+    "layoutP95Ms": 0.2095,
+    "drawP95Ms": 11.980506
+  },
+  "滑动我的曲库": {
+    "frames": 512,
+    "overDeadline": 209,
+    "totalP50Ms": 35.550358,
+    "totalP95Ms": 72.313884,
+    "layoutP95Ms": 0.2422,
+    "drawP95Ms": 2.0875
+  },
+  "滑动曲库发现": {
+    "frames": 524,
+    "overDeadline": 194,
+    "totalP50Ms": 32.513718,
+    "totalP95Ms": 66.509653,
+    "layoutP95Ms": 0.2371,
+    "drawP95Ms": 1.589
+  },
+  "滑动发现设置": {
+    "frames": 527,
+    "overDeadline": 205,
+    "totalP50Ms": 33.561848,
+    "totalP95Ms": 66.460212,
+    "layoutP95Ms": 0.2236,
+    "drawP95Ms": 1.7981
+  },
+  "跨页点击": {
+    "frames": 230,
+    "overDeadline": 108,
+    "totalP50Ms": 28.742006,
+    "totalP95Ms": 64.813824,
+    "layoutP95Ms": 0.2702,
+    "drawP95Ms": 4.637
+  }
+}

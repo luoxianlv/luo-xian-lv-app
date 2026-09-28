@@ -35,7 +35,7 @@ object WallpaperPreview {
             else
                 context.assets
                     .open(
-                        if (WallpaperProjectStore.hasBundled(context))
+                        if (WallpaperProjectStore.hasLegacyBundled(context))
                             "default-wallpaper/preview.gif"
                         else "practice-sunset.jpg"
                     )

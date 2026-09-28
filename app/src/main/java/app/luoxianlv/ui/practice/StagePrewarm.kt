@@ -8,38 +8,30 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
 
-/**
- * 演练场入口的公共后勤。入口在首页的状态胶囊位（见 HomeOverview 的 HomeStagePill）， 这里放两件与入口形态无关的事：首页存活期间预热壁纸渲染器，以及带开幕动画的跳转。
- */
-
-/** 壁纸预热：resume 后延迟 500ms 准备（避开首页自身的进场动画）， pause 挂起渲染省电，销毁时彻底清理。 挂在首页根部组合里，只要「我的」页还在就持续有效。 */
+/** 导航宿主恢复后延迟预热；暂停时挂起，销毁时清理，不随 Tab 切换重建。 */
 @Composable
 fun StagePrewarmEffect() {
     val context = LocalContext.current
     DisposableEffect(context) {
         val activity = context.activity()
+        val prepare = Runnable {
+            if (
+                activity
+                    ?.lifecycle
+                    ?.currentState
+                    ?.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) == true
+            ) {
+                app.luoxianlv.wallpaper.render.PreparedWallpaper.prepare(activity)
+            }
+        }
         val observer =
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onResume(owner: androidx.lifecycle.LifecycleOwner) {
-                    activity
-                        ?.window
-                        ?.decorView
-                        ?.postDelayed(
-                            {
-                                if (
-                                    owner.lifecycle.currentState.isAtLeast(
-                                        androidx.lifecycle.Lifecycle.State.RESUMED
-                                    )
-                                )
-                                    app.luoxianlv.wallpaper.render.PreparedWallpaper.prepare(
-                                        activity
-                                    )
-                            },
-                            500,
-                        )
+                    activity?.window?.decorView?.postDelayed(prepare, 500)
                 }
 
                 override fun onPause(owner: androidx.lifecycle.LifecycleOwner) {
+                    activity?.window?.decorView?.removeCallbacks(prepare)
                     app.luoxianlv.wallpaper.render.PreparedWallpaper.pause()
                 }
 
@@ -49,6 +41,7 @@ fun StagePrewarmEffect() {
             }
         activity?.lifecycle?.addObserver(observer)
         onDispose {
+            activity?.window?.decorView?.removeCallbacks(prepare)
             activity?.lifecycle?.removeObserver(observer)
             app.luoxianlv.wallpaper.render.PreparedWallpaper.clear()
         }

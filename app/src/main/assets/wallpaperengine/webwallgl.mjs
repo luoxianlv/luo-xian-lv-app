@@ -40729,10 +40729,10 @@ function mountVideoDom(rt, cfg) {
     container.style.position = "relative";
   }
   let failed = false;
-  const onErr = (code) => {
+  const onErr = (code, detail = "") => {
     if (failed) return;
     failed = true;
-    const why = `解码/加载失败（code ${code ?? "?"}）`;
+    const why = `解码/加载失败（code ${code ?? "?"}）：${detail}`;
     reportDiag(rt, cfg, `media video 失败: ${why}`);
     rt.onError?.(new Error(`媒体壁纸（video）${why}`));
     rt.fallbackPage?.();
@@ -40800,27 +40800,29 @@ function mountVideoDom(rt, cfg) {
       if (raf) cancelAnimationFrame(raf);
     });
   };
-  if (!wantLoop) {
+  // 手机端保留音轨时使用单解码器原生循环，避免片尾 A/B 预滚抢占硬件解码资源。
+  if (!wantLoop || cfg.videoAudioControls) {
     const v = document.createElement("video");
-    v.autoplay = true;
-    v.loop = false;
+    v.autoplay = false;
+    v.loop = wantLoop;
     v.muted = muted;
     v.playsInline = true;
     v.preload = "metadata";
     applyDecodeHint(v, rt, cfg);
     v.style.cssText = css;
     v.src = cfg.src;
-    v.addEventListener("error", () => onErr(v.error?.code));
+    v.addEventListener("error", () => onErr(v.error?.code, v.error?.message));
     container.appendChild(v);
     rt.video = v;
     (rt.videoTextures ??= []).push(v);
-    v.addEventListener("canplay", () => void v.play().catch(() => {
-    }), { once: true });
+    v.addEventListener("canplay", () => {
+      if (!rt.paused) void v.play().catch(() => {});
+    }, { once: true });
     v.addEventListener("loadeddata", signalFirstFrame, { once: true });
     if (v.readyState >= 2) signalFirstFrame();
     attachVideoSpectrum(rt, cfg, v);
     pumpFrames(() => v);
-    reportDiag(rt, cfg, "media video → DOM 直显（单元素，不循环）");
+    reportDiag(rt, cfg, `media video → DOM 直显（单解码器，${wantLoop ? "原生循环" : "不循环"}）`);
     return;
   }
   const mountAbPair = () => {
@@ -40835,7 +40837,7 @@ function mountVideoDom(rt, cfg) {
       el.style.cssText = css;
       container.appendChild(el);
       (rt.videoTextures ??= []).push(el);
-      el.addEventListener("error", () => onErr(el.error?.code));
+      el.addEventListener("error", () => onErr(el.error?.code, `${el === pair.active ? "当前" : "备用"}视频：${el.error?.message}`));
     }
     const showActive = () => {
       pair.active.style.zIndex = "1";
@@ -40849,7 +40851,7 @@ function mountVideoDom(rt, cfg) {
     };
     pair.onFallback = () => reportDiag(rt, cfg, "media video: 无缝循环兜底（退回原生 loop）");
     (rt.videoPairs ??= []).push(pair);
-    rt.webcodecsPreferred = supportsWebCodecsVideo();
+    rt.webcodecsPreferred = !cfg.videoAudioControls && supportsWebCodecsVideo();
     const swapSpectrum = attachPairSpectrum(rt, cfg, pair.active, pair.standby);
     pair.active.addEventListener("loadeddata", signalFirstFrame, { once: true });
     if (pair.active.readyState >= 2) signalFirstFrame();
@@ -40857,7 +40859,7 @@ function mountVideoDom(rt, cfg) {
     if (!rt.paused) pair.resume();
     reportDiag(rt, cfg, "media video → DOM 直显（A/B 无缝循环）");
   };
-  if (wantLoop && muted && supportsWebCodecsVideo()) {
+  if (wantLoop && muted && !cfg.videoAudioControls && supportsWebCodecsVideo()) {
     let pathActive = true;
     let player = null;
     const fallbackToAb = (why, allowReturn = true) => {
@@ -47221,6 +47223,8 @@ async function resolveMountConfig(el, o) {
     renderDpr: o.renderDpr ?? 0,
     sceneFps: o.fps ?? 60,
     muted: (o.volume ?? 0) <= 0,
+    // 可切换声音的视频保留音轨通道，避免静音切换重建解码器、重置进度。
+    videoAudioControls: o.videoAudioControls === true,
     loop: true,
     canvas: el,
     source: o.source,

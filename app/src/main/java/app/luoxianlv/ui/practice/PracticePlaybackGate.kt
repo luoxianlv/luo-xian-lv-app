@@ -1,7 +1,20 @@
 package app.luoxianlv.ui.practice
 
-/** 仅控制就绪状态；坐标和曲目事件仍须经过截图识别。 */
+/** 控制演练场就绪状态；固定布局模式可读取真实音区，点击仍由无障碍注入。 */
 object PracticePlaybackGate {
+    private var session: PracticeSession? = null
+
+    fun bindSession(value: PracticeSession) {
+        session = value
+    }
+
+    fun pitchState(): Pair<app.luoxianlv.core.score.PlayMode, Boolean>? =
+        session
+            ?.takeIf { active && ready }
+            ?.let {
+                app.luoxianlv.core.score.PlayMode.valueOf(it.mode.name) to it.half
+            }
+
     var active = false
         private set
 
@@ -9,6 +22,7 @@ object PracticePlaybackGate {
         private set
 
     fun enter() {
+        session = null
         active = true
         ready = false
     }
@@ -18,6 +32,7 @@ object PracticePlaybackGate {
     }
 
     fun leave() {
+        session = null
         ready = false
         active = false
     }

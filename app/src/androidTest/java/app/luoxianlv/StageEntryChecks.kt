@@ -44,7 +44,11 @@ internal fun Instrumentation.checkStageEntry() {
     }
     fun entry(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
-        if (node.text?.toString() == "演练场") return if (node.isClickable) node else node.parent
+        if (node.isVisibleToUser && node.text?.toString() == "演练场") {
+            var target: AccessibilityNodeInfo? = node
+            while (target != null && !target.isClickable) target = target.parent
+            if (target != null) return target
+        }
         return (0 until node.childCount).firstNotNullOfOrNull { entry(node.getChild(it)) }
     }
     var entrance: AccessibilityNodeInfo? = null
@@ -101,11 +105,64 @@ internal fun Instrumentation.checkStageEntry() {
         }
     }
     assertRendererPaused(warmed!!, true)
+    // 跨到最远的 Tab 再返回，首页会被回收，但预加载的壁纸不应重建。
+    fun navigation(node: AccessibilityNodeInfo?, label: String): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (
+            node.isVisibleToUser &&
+                (node.text?.toString() == label || node.contentDescription?.toString() == label)
+        ) {
+            var target: AccessibilityNodeInfo? = node
+            while (target != null && !target.isClickable) target = target.parent
+            if (target != null) return target
+        }
+        return (0 until node.childCount).firstNotNullOfOrNull {
+            navigation(node.getChild(it), label)
+        }
+    }
+    fun tapNavigation(label: String) {
+        val node = checkNotNull(navigation(uiAutomation.rootInActiveWindow, label))
+        val bounds = android.graphics.Rect().also(node::getBoundsInScreen)
+        val down = SystemClock.uptimeMillis()
+        listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP).forEach {
+            action ->
+            val event =
+                android.view.MotionEvent.obtain(
+                    down,
+                    SystemClock.uptimeMillis(),
+                    action,
+                    bounds.exactCenterX(),
+                    bounds.exactCenterY(),
+                    0,
+                )
+            event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+            try {
+                check(uiAutomation.injectInputEvent(event, true))
+            } finally {
+                event.recycle()
+            }
+        }
+        Thread.sleep(1200)
+    }
+    tapNavigation("设置")
+    tapNavigation("我的")
+    await("Home entrance did not return") {
+        entrance = entry(uiAutomation.rootInActiveWindow)
+        entrance != null
+    }
+    runOnMainSync {
+        check(background(home.window.decorView) === warmed) {
+            "Tab navigation recreated the prepared wallpaper"
+        }
+    }
+    assertRendererPaused(warmed!!, true)
     capture("home.png")
     val monitor = addMonitor(PracticeActivity::class.java.name, null, false)
     var originalPortrait = false
     runOnMainSync { originalPortrait = home.window.decorView.height > home.window.decorView.width }
     val originalOrientation = home.requestedOrientation
+    // 页面重组和截图后重新取节点，避免使用已经失效的语义节点。
+    entrance = checkNotNull(entry(uiAutomation.rootInActiveWindow))
     check(entrance!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
     // 重复点击不能创建第二个演练场。
     entrance!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)

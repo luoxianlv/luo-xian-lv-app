@@ -19,6 +19,13 @@ class PracticeKeyboard(context: Context) : View(context) {
     var onNoteOff: () -> Unit = {}
     var onExit: () -> Unit = {}
     var onWallpaper: () -> Unit = {}
+    var onWallpaperSound: () -> Unit = {}
+    var wallpaperSoundEnabled = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     var onReady: () -> Unit = {}
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var animator: ValueAnimator? = null
@@ -26,6 +33,8 @@ class PracticeKeyboard(context: Context) : View(context) {
     private var ready = false
     private var exitPointer: Int? = null
     private var wallpaperPointer: Int? = null
+    private var soundPointer: Int? = null
+    private val speakerPath = android.graphics.Path()
     var safeLeft = 0
         set(value) {
             field = value
@@ -62,6 +71,15 @@ class PracticeKeyboard(context: Context) : View(context) {
                 safeLeft + 72 * density,
                 safeTop + 12 * density,
                 safeLeft + 126 * density,
+                safeTop + 66 * density,
+            )
+
+    private val soundBounds
+        get() =
+            RectF(
+                safeLeft + 132 * density,
+                safeTop + 12 * density,
+                safeLeft + 186 * density,
                 safeTop + 66 * density,
             )
 
@@ -309,14 +327,41 @@ class PracticeKeyboard(context: Context) : View(context) {
         canvas.drawLine(wx - 7 * density, wy + 5 * density, wx - 2 * density, wy, paint)
         canvas.drawLine(wx - 2 * density, wy, wx + 2 * density, wy + 4 * density, paint)
         canvas.drawLine(wx + 2 * density, wy + 4 * density, wx + 5 * density, wy + density, paint)
-        text(
-            canvas,
-            if (ready) "落弦律 · 演练场" else "舞台开场中",
-            width / 2f,
-            28 * density,
-            11 * density,
-            .5f,
-        )
+        val sound = soundBounds
+        circle(canvas, sound.centerX(), sound.centerY(), 18 * density, Color.DKGRAY, .6f, density)
+        canvas.save()
+        canvas.translate(sound.centerX(), sound.centerY())
+        canvas.scale(density, density)
+        paint.color = Color.LTGRAY
+        paint.alpha = if (wallpaperSoundEnabled) 255 else 180
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.5f
+        speakerPath.reset()
+        speakerPath.moveTo(-9f, -3f)
+        speakerPath.lineTo(-5f, -3f)
+        speakerPath.lineTo(0f, -7f)
+        speakerPath.lineTo(0f, 7f)
+        speakerPath.lineTo(-5f, 3f)
+        speakerPath.lineTo(-9f, 3f)
+        speakerPath.close()
+        canvas.drawPath(speakerPath, paint)
+        if (wallpaperSoundEnabled) {
+            canvas.drawArc(-2f, -6f, 9f, 6f, -60f, 120f, false, paint)
+            canvas.drawArc(-4f, -9f, 14f, 9f, -55f, 110f, false, paint)
+        } else {
+            canvas.drawLine(4f, -3f, 10f, 3f, paint)
+            canvas.drawLine(4f, 3f, 10f, -3f, paint)
+        }
+        canvas.restore()
+        if (width > 520 * density)
+            text(
+                canvas,
+                if (ready) "落弦律 · 演练场" else "舞台开场中",
+                width / 2f,
+                28 * density,
+                11 * density,
+                .5f,
+            )
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -333,6 +378,10 @@ class PracticeKeyboard(context: Context) : View(context) {
                 }
                 if (wallpaperBounds.contains(x, y)) {
                     wallpaperPointer = id
+                    return true
+                }
+                if (soundBounds.contains(x, y)) {
+                    soundPointer = id
                     return true
                 }
                 if (!ready) return true
@@ -370,6 +419,13 @@ class PracticeKeyboard(context: Context) : View(context) {
                         onWallpaper()
                     }
                 }
+                if (soundPointer == id) {
+                    soundPointer = null
+                    if (soundBounds.contains(event.getX(index), event.getY(index))) {
+                        performClick()
+                        onWallpaperSound()
+                    }
+                }
                 if (exitPointer == id) {
                     exitPointer = null
                     if (exitBounds.contains(event.getX(index), event.getY(index))) {
@@ -381,6 +437,7 @@ class PracticeKeyboard(context: Context) : View(context) {
             MotionEvent.ACTION_CANCEL -> {
                 exitPointer = null
                 wallpaperPointer = null
+                soundPointer = null
                 silence()
             }
         }

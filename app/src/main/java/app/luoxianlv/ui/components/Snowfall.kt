@@ -10,6 +10,7 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
@@ -87,7 +88,8 @@ fun Snowfall(
     }
 
     // Canvas 不消费触摸事件，所以雪花只是盖在上面，不会挡住底下的按钮和列表
-    Canvas(modifier = modifier.fillMaxSize()) {
+    // 独立显示列表，雪花更新只使自己的绘制层失效，不带着页面内容重复录制。
+    Canvas(modifier = modifier.fillMaxSize().graphicsLayer()) {
         val seconds = clock.longValue / 1000f
         flakes.forEach { flake ->
             val progress = (flake.phase + seconds * flake.speed) % 1f

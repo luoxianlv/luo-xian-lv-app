@@ -1,7 +1,9 @@
 import {mount, bytesSource, httpSource} from './webwallgl.mjs';
 import {setSceneTime} from './clock.mjs';
 import {bindWallpaperLifecycle} from './lifecycle.mjs';
+import {bindWallpaperAudio} from './audio.mjs';
 const lifecycle = bindWallpaperLifecycle(window, document);
+const sound = bindWallpaperAudio(window, document);
 const suppliedMinute = new URLSearchParams(location.search).get('minute');
 setSceneTime(suppliedMinute === null ? null : Number(suppliedMinute));
 window.setWallpaperTime = setSceneTime;
@@ -33,7 +35,7 @@ try {
     source, webSandbox: 'strict',
     properties: Object.fromEntries(Object.entries(project.general?.properties || {}).map(([key, prop])=>[key,prop.value])),
     fit: 'cover', fps: 30, renderDpr: Math.min(devicePixelRatio, 1280 / Math.max(innerWidth, innerHeight)),
-    volume: 0, audio: null, media: null,
+    volume: 0, audio: null, media: null, videoAudioControls: true,
     quality: {antiAliasing:'off', particles:'low', postProcessing:'high'},
     onDiagnostic: (message, level) => {
       if (message.includes('video tex ready ')) videoFrameReady = true;
@@ -47,9 +49,10 @@ try {
     if (!videoFrameReady) throw Error('视频首帧等待超时');
   }
   lifecycle.attach(scene);
+  sound.attach(scene);
   window.wallpaperState = 'ready';
   document.title = 'wallpaper:ready';
   window.wallpaperStats = () => scene.stats;
   window.wallpaperPaused = () => scene?.paused ?? true;
-  window.stopWallpaper = () => { lifecycle.close(); scene = null; };
+  window.stopWallpaper = () => { sound.close(); lifecycle.close(); scene = null; };
 } catch (error) { failure(error); }

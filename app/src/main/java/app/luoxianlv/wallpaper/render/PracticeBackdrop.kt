@@ -21,6 +21,9 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     private var web: WebView? = null
     private var closed = false
     private var suspended = false
+    private var soundEnabled = false
+    private var initialized = false
+    private var renderingRequested = !deferRendering
     var onPrepared: (() -> Unit)? = null
     val prepared
         get() = renderState == "ready" || renderState == "static" || renderState == "error"
@@ -29,28 +32,40 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     private val posterView =
         ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
 
-    private val project = WallpaperProjectStore.root(context)
+    private var project: java.io.File? = null
 
     init {
         addView(posterView, LayoutParams(-1, -1))
         previewScope.launch {
+            project =
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        app.luoxianlv.wallpaper.data.BundledWallpaper.ensureInstalled(context)
+                    }
+                        .onFailure { AppLog.w("壁纸", "默认壁纸安装失败", it) }
+                    WallpaperProjectStore.root(context)
+                }
+            if (closed) return@launch
+            initialized = true
+            if (renderingRequested) startRendering()
             val preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, project) }
             if (!closed && renderState != "ready") {
                 posterView.setImageDrawable(preview)
                 if (!suspended) (preview as? Animatable)?.start()
-                if (project == null && !WallpaperProjectStore.hasBundled(context)) {
+                if (project == null && !WallpaperProjectStore.hasLegacyBundled(context)) {
                     renderState = "static"
                     onPrepared?.invoke()
                 }
             }
         }
-        if (!deferRendering) startRendering()
     }
 
     /** 按需启动渲染；首页可提前调用，等待真实首帧后移交演练场。 */
     fun startRendering() {
+        renderingRequested = true
+        if (!initialized) return
         if (closed || web != null || renderState == "error") return
-        if (project != null || WallpaperProjectStore.hasBundled(context)) {
+        if (project != null || WallpaperProjectStore.hasLegacyBundled(context)) {
             renderState = "loading"
             AppLog.i("壁纸", "开始加载：${project?.absolutePath ?: "内置项目"}")
             val browser = WebView(context)
@@ -94,7 +109,9 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                         view: WebView,
                         detail: RenderProcessGoneDetail,
                     ): Boolean {
-                        fail()
+                        fail(
+                            "渲染进程退出：崩溃=${detail.didCrash()}，优先级=${detail.rendererPriorityAtExit()}"
+                        )
                         return true
                     }
                 }
@@ -108,9 +125,9 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                             posterView.setImageDrawable(null)
                             browser.alpha = 1f
                             onPrepared?.invoke()
-                            if (suspended) suspendRendering()
+                            if (suspended) suspendRendering() else applySound()
                         }
-                        if (title == "wallpaper:error") fail()
+                        if (title == "wallpaper:error") fail("引擎报错，详细原因见前一条引擎日志")
                     }
 
                     override fun onConsoleMessage(message: ConsoleMessage): Boolean {
@@ -133,15 +150,16 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     delay(1000)
                     if (!suspended) activeWait++
                 }
-                if (!closed && renderState == "loading") fail()
+                if (!closed && renderState == "loading") fail("首帧等待超过 60 秒")
             }
         }
     }
 
-    private fun fail() {
+    private fun fail(reason: String) {
         if (closed || renderState == "error") return
+        val wasPlaying = renderState == "ready"
         renderState = "error"
-        AppLog.w("壁纸", "渲染失败，切换到预览背景")
+        AppLog.w("壁纸", "渲染失败，切换到预览背景：$reason")
         releaseWeb()
         previewScope.launch {
             val preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, project) }
@@ -151,7 +169,12 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
             }
         }
         onPrepared?.invoke()
-        Toast.makeText(context, "此场景暂不兼容，已使用默认背景", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+                context,
+                if (wasPlaying) "壁纸播放中断，已切换为预览" else "壁纸暂时无法加载，已使用预览",
+                Toast.LENGTH_LONG,
+            )
+            .show()
     }
 
     private fun releaseWeb() {
@@ -166,6 +189,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
 
     fun suspendRendering() {
         suspended = true
+        applySound()
         web?.let { browser ->
             // 仅调用 onPause 不会停止 JavaScript 和场景视频解码器。
             browser.evaluateJavascript(
@@ -187,6 +211,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                 null,
             )
         }
+        applySound()
         if (renderState != "ready") (posterView.drawable as? Animatable)?.start()
     }
 
@@ -197,5 +222,16 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
         (posterView.drawable as? Animatable)?.stop()
         posterView.setImageDrawable(null)
         releaseWeb()
+    }
+
+    /** 只有可见演练场能请求声音；预加载实例始终保持关闭。 */
+    fun setSoundEnabled(enabled: Boolean) {
+        soundEnabled = enabled
+        applySound()
+    }
+
+    private fun applySound() {
+        val audible = soundEnabled && !suspended && !closed
+        web?.evaluateJavascript("window.setWallpaperSoundEnabled?.($audible)", null)
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +35,7 @@ fun RemoteScoreList(
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    header: LazyListScope.() -> Unit = {},
 ) {
     val listState = rememberLazyListState()
     val nearBottom by remember {
@@ -57,9 +59,14 @@ fun RemoteScoreList(
         modifier = modifier,
         contentPadding = contentPadding,
     ) {
+        header()
         val visible = state.visibleScores
         if (visible.isNotEmpty()) {
-            itemsIndexed(visible, key = { _, remote -> remote.id }) { index, remote ->
+            itemsIndexed(
+                visible,
+                key = { _, remote -> remote.id },
+                contentType = { _, _ -> "score" },
+            ) { index, remote ->
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     // 首行两个上圆角、末行两个下圆角，其余角为 0 与相邻行拼平；
@@ -84,7 +91,7 @@ fun RemoteScoreList(
             if (state.hasMore) {
                 // 这行刻意留在卡外：它是加载状态提示（可能变成「加载失败，点击重试」），
                 // 不是列表内容。让它参与卡面的话，卡片下边缘会随加载态在中缝和底边之间跳。
-                item {
+                item(key = "load-more", contentType = "footer") {
                     Text(
                         if (state.error != null) {
                             "加载失败，点击重试"

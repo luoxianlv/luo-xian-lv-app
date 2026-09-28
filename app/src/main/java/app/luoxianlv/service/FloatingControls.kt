@@ -1,5 +1,6 @@
 package app.luoxianlv.service
 
+import android.animation.ValueAnimator
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.os.Handler
@@ -10,6 +11,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -28,7 +30,7 @@ import kotlin.math.abs
  * 悬浮窗（无障碍 overlay）。
  *
  * 视觉跟随 App 主题：白卡（92% 不透明 + 细描边 + 阴影）、品牌蓝主按钮、 深藏青标题；深色模式下白卡换成深石板蓝、字色反相（见 [palette]）。两个形态：
- * - 收起：40dp 气泡（浅色白底 / 深色深蓝底）+ 蓝音符，可拖动；
+ * - 收起：44dp 气泡（浅色白底 / 深色深蓝底）+ 蓝音符，可拖动；
  * - 展开：播放控制、倍速滑动条和底部播放进度条；播放进度条可点按/拖动 seek。 「选歌」开居中独立小窗，不再是贴面板下拉。
  */
 class FloatingControls(private val service: MusicAccessibilityService) {
@@ -49,6 +51,10 @@ class FloatingControls(private val service: MusicAccessibilityService) {
     private var params: WindowManager.LayoutParams? = null
     private var popup: View? = null
     private var marker: View? = null
+    private var dock =
+        FloatingDock.entries.firstOrNull { it.name == prefs.getString("dock", null) }
+            ?: FloatingDock.NONE
+    private var dockAnimator: ValueAnimator? = null
     private var expanded = false
     private var speedControlsVisible = false
     private var panel: FloatingPanel? = null
@@ -91,6 +97,8 @@ class FloatingControls(private val service: MusicAccessibilityService) {
 
     fun hide() {
         displayRequested = false
+        dockAnimator?.cancel()
+        dockAnimator = null
         // removeView 可能抛（视图已被系统移除）。这里必须吞掉异常并把字段清干净：
         // 一旦抛出去，root 会停在非空值上，之后 show() 会因为 root != null 永远直接返回，
         // 悬浮窗就再也打不开了。
@@ -137,7 +145,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT,
             )
-            .apply { gravity = Gravity.TOP or Gravity.START }
+            .apply { gravity = Gravity.TOP or Gravity.LEFT }
 
     private fun render(open: Boolean) {
         if (destroyed || !displayRequested || !MusicAccessibilityService.isEnabled(service)) return
@@ -189,7 +197,15 @@ class FloatingControls(private val service: MusicAccessibilityService) {
         )
         params =
             layout(width, if (open) -2 else context.dp(44)).apply {
-                x = this@FloatingControls.x.coerceIn(0, (bounds.width() - width).coerceAtLeast(0))
+                // 仅气泡允许越过屏幕边缘，面板和选歌窗始终完整可见。
+                if (!open) flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                x =
+                    (if (open) FloatingDock.NONE else dock).position(
+                        if (dock == FloatingDock.RIGHT) bounds.width() - width
+                        else this@FloatingControls.x,
+                        bounds.width(),
+                        width,
+                    )
                 y =
                     this@FloatingControls.y.coerceIn(
                         context.dp(24),
@@ -198,6 +214,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                         ),
                     )
             }
+        view.alpha = if (!open && dock != FloatingDock.NONE) DOCK_ALPHA else 1f
         try {
             wm.addView(view, params)
             root = view
@@ -237,10 +254,15 @@ class FloatingControls(private val service: MusicAccessibilityService) {
         var bx = 0
         var by = 0
         var moved = false
+        var initialDock = FloatingDock.NONE
         handle.setOnTouchListener { v, e ->
             val p = params ?: return@setOnTouchListener false
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    dockAnimator?.cancel()
+                    dockAnimator = null
+                    initialDock = dock
+                    root?.alpha = 1f
                     sx = e.rawX
                     sy = e.rawY
                     bx = p.x
@@ -260,7 +282,11 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                         p.x =
                             (bx + dx)
                                 .toInt()
-                                .coerceIn(0, (bounds.width() - (root?.width ?: 0)).coerceAtLeast(0))
+                                .coerceIn(
+                                    if (expanded) 0 else -(root?.width ?: 0) / 2,
+                                    (bounds.width() - (root?.width ?: 0) / (if (expanded) 1 else 2))
+                                        .coerceAtLeast(0),
+                                )
                         p.y =
                             (by + dy)
                                 .toInt()
@@ -275,12 +301,28 @@ class FloatingControls(private val service: MusicAccessibilityService) {
 
                 MotionEvent.ACTION_UP -> {
                     if (moved) {
-                        x = p.x
-                        y = p.y
-                        prefs.edit().putInt("x", x).putInt("y", y).apply()
+                        dock =
+                            if (expanded) FloatingDock.NONE
+                            else
+                                FloatingDock.afterDrag(
+                                    p.x,
+                                    service.screenBounds().width(),
+                                    root?.width ?: 0,
+                                    context.dp(12),
+                                )
+                        settleDock()
                     } else if (clickable) {
                         v.performClick()
                     }
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    // 系统接管手势时回到按下前的位置，不把取消误判成点击或贴边。
+                    dock = initialDock
+                    p.x = bx
+                    p.y = by
+                    settleDock()
                     true
                 }
 
@@ -289,6 +331,41 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                 }
             }
         }
+    }
+
+    private fun settleDock() {
+        val view = root ?: return
+        val p = params ?: return
+        val startX = p.x
+        val startAlpha = view.alpha
+        val targetX =
+            (if (expanded) FloatingDock.NONE else dock).position(
+                startX,
+                service.screenBounds().width(),
+                view.width,
+            )
+        val targetAlpha = if (!expanded && dock != FloatingDock.NONE) DOCK_ALPHA else 1f
+        x = targetX
+        y = p.y
+        prefs.edit().putInt("x", x).putInt("y", y).putString("dock", dock.name).apply()
+        dockAnimator?.cancel()
+        dockAnimator =
+            ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 200
+                interpolator = DecelerateInterpolator()
+                addUpdateListener {
+                    val fraction = it.animatedValue as Float
+                    if (root !== view || !view.isAttachedToWindow) return@addUpdateListener
+                    p.x = (startX + (targetX - startX) * fraction).toInt()
+                    view.alpha = startAlpha + (targetAlpha - startAlpha) * fraction
+                    wm.updateViewLayout(view, p)
+                }
+                start()
+            }
+    }
+
+    private companion object {
+        const val DOCK_ALPHA = 0.45f
     }
 
     fun refresh() {

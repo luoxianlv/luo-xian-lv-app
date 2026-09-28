@@ -30,7 +30,6 @@ import app.luoxianlv.ui.components.AccessibilityPromptDialog
 import app.luoxianlv.ui.components.ErrorDialogHost
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.library.LibraryViewModel
-import app.luoxianlv.ui.practice.StagePrewarmEffect
 import app.luoxianlv.ui.theme.LocalBackdropPalette
 
 /** 问候语下方的一言。 */
@@ -63,9 +62,6 @@ fun HomeScreen(
     val showRail = appearance.sideRailEnabled
 
     SnackbarNotice(state.notice, snackbarHostState, vm::consumeNotice)
-
-    // 演练场壁纸预热：首页存活期间常驻，开场不黑屏（入口见 HomeStagePill）。
-    StagePrewarmEffect()
 
     // 与参考实现 HomeScaffold 同构：外层 BoxWithConstraints 量出宽度算侧栏，
     // 内层 Row 放「侧栏 + 内容卡」。

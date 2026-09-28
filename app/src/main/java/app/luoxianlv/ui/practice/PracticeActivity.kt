@@ -16,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import app.luoxianlv.audio.HarmonicaSampler
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.service.MusicAccessibilityService
+import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import app.luoxianlv.wallpaper.render.PracticeBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -150,6 +151,17 @@ class PracticeActivity : AppCompatActivity() {
                         onNoteOn = { midi -> sampler?.noteOn(midi) ?: false }
                         onNoteOff = { sampler?.noteOff() }
                         onExit = { exitStage() }
+                        wallpaperSoundEnabled =
+                            WallpaperProjectStore.soundEnabled(this@PracticeActivity)
+                        onWallpaperSound = {
+                            val enabled = !WallpaperProjectStore.soundEnabled(this@PracticeActivity)
+                            WallpaperProjectStore.setSoundEnabled(this@PracticeActivity, enabled)
+                            wallpaperSoundEnabled = enabled
+                            backdrop?.setSoundEnabled(
+                                enabled && openingFinished && resumed && !exiting
+                            )
+                            announceForAccessibility(if (enabled) "壁纸声音已开启" else "壁纸声音已关闭")
+                        }
                         onWallpaper = {
                             startActivity(
                                 android.content
@@ -168,6 +180,7 @@ class PracticeActivity : AppCompatActivity() {
                         }
                     }
                 keyboard = keys
+                PracticePlaybackGate.bindSession(keys.session)
                 root.addView(keys, root.indexOfChild(veil), FrameLayout.LayoutParams(-1, -1))
                 ViewCompat.requestApplyInsets(root)
                 lifecycleScope.launch {
@@ -203,6 +216,10 @@ class PracticeActivity : AppCompatActivity() {
         super.onResume()
         resumed = true
         backdrop?.resumeRendering()
+        keyboard?.wallpaperSoundEnabled = WallpaperProjectStore.soundEnabled(this)
+        backdrop?.setSoundEnabled(
+            openingFinished && !exiting && WallpaperProjectStore.soundEnabled(this)
+        )
         curtain?.setAmbientActive(true)
         restoreAudio()
         publishReady()
@@ -211,6 +228,7 @@ class PracticeActivity : AppCompatActivity() {
     private fun exitStage() {
         if (exiting || isFinishing) return
         exiting = true
+        backdrop?.setSoundEnabled(false)
         PracticePlaybackGate.setReady(false)
         MusicAccessibilityService.instance?.pause()
         keyboard?.close()
@@ -251,6 +269,7 @@ class PracticeActivity : AppCompatActivity() {
         )
             return
         PracticePlaybackGate.setReady(true)
+        backdrop?.setSoundEnabled(WallpaperProjectStore.soundEnabled(this))
         AppLog.log("演练场已就绪：尺寸=${keyboard?.width}x${keyboard?.height}")
     }
 
@@ -276,7 +295,7 @@ class PracticeActivity : AppCompatActivity() {
         val samples = loadedSamples ?: return
         if (sampler != null || !resumed || exiting || isFinishing) return
         sampler =
-            HarmonicaSampler(this, samples) {
+            HarmonicaSampler(samples) {
                 keyboard?.silence()
                 MusicAccessibilityService.instance?.pause()
             }

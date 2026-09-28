@@ -2,9 +2,7 @@ package app.luoxianlv.audio
 
 import android.content.Context
 import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioFormat
-import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
@@ -13,9 +11,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
 
-/** 每个演练场独占音频流；构造前先在 IO 线程解码采样。 */
+/** 每个演练场持有一条口琴音频流；构造前先在 IO 线程解码采样。 */
 class HarmonicaSampler(
-    context: Context,
     samples: Map<Int, HarmonicaSample>,
     private val onInterrupted: () -> Unit,
 ) : AutoCloseable {
@@ -24,27 +21,11 @@ class HarmonicaSampler(
     private val command = AtomicReference<Command?>(null)
     private val voice = HarmonicaVoice(samples)
     private val main = Handler(Looper.getMainLooper())
-    private val manager = context.getSystemService(AudioManager::class.java)
     private val attributes =
         AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_GAME)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
-    private val focus =
-        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(attributes)
-            .setOnAudioFocusChangeListener(
-                { change ->
-                    if (change != AudioManager.AUDIOFOCUS_GAIN) {
-                        hasFocus = false
-                        noteOff()
-                        onInterrupted()
-                    }
-                },
-                main,
-            )
-            .build()
-    private var hasFocus = false
     @Volatile private var running = true
     private val track =
         AudioTrack.Builder()
@@ -113,9 +94,7 @@ class HarmonicaSampler(
 
     fun noteOn(midi: Int): Boolean {
         if (!running) return false
-        if (!hasFocus)
-            hasFocus = manager.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        if (!hasFocus) return false
+        // 口琴是前台交互音效，直接混音；不抢占或压低壁纸持有的媒体焦点。
         command.set(Command(midi))
         return true
     }
@@ -126,8 +105,6 @@ class HarmonicaSampler(
 
     override fun close() {
         running = false
-        manager.abandonAudioFocusRequest(focus)
-        hasFocus = false
         // 暂停用于唤醒阻塞写入；音轨仅由输出线程释放。
         runCatching {
             track.pause()

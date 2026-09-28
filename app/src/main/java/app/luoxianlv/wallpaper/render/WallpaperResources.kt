@@ -40,6 +40,7 @@ class WallpaperResources(private val context: Context, private val project: File
                         "/clock.mjs",
                         "/scene-video.mjs",
                         "/lifecycle.mjs",
+                        "/audio.mjs",
                     )
             ) {
                 file = null
@@ -102,22 +103,19 @@ class WallpaperResources(private val context: Context, private val project: File
                 headers["Content-Range"] = "bytes $start-$end/$size"
             }
             count?.let { headers["Content-Length"] = it.toString() }
+            // WebView 会按 Range 再定位一次，因此不能提前 skip 起点。
+            // 它不负责限制有终点的响应体；流从零开始，仅在 end + 1 处截断。
             val input = open()
-            try {
-                var remainingSkip = start
-                while (remainingSkip > 0) {
-                    val skipped = input.skip(remainingSkip)
-                    if (skipped <= 0) error("Unable to seek media")
-                    remainingSkip -= skipped
-                }
-            } catch (error: Exception) {
-                input.close()
-                throw error
-            }
             val stream =
                 count?.let { length ->
                     object : FilterInputStream(input) {
-                        var remaining = length
+                        var remaining = start + length
+
+                        override fun available() =
+                            minOf(super.available().toLong(), remaining).toInt()
+
+                        override fun skip(count: Long): Long =
+                            super.skip(count.coerceIn(0, remaining)).also { remaining -= it }
 
                         override fun read(): Int {
                             if (remaining == 0L) return -1

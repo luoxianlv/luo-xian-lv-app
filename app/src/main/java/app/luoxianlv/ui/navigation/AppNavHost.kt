@@ -38,8 +38,10 @@ import app.luoxianlv.ui.discover.SearchScreen
 import app.luoxianlv.ui.home.HomeScreen
 import app.luoxianlv.ui.importer.ImportScreen
 import app.luoxianlv.ui.library.LibraryScreen
+import app.luoxianlv.ui.practice.StagePrewarmEffect
 import app.luoxianlv.ui.settings.AboutScreen
 import app.luoxianlv.ui.settings.AnalyticsDebugScreen
+import app.luoxianlv.ui.settings.ExperimentalSettingsScreen
 import app.luoxianlv.ui.settings.LoginScreen
 import app.luoxianlv.ui.settings.PlaybackDiagnosticsScreen
 import app.luoxianlv.ui.settings.SettingsScreen
@@ -64,6 +66,7 @@ private val subPages =
         Routes.IMPORT,
         Routes.DIAGNOSTICS,
         Routes.ANALYTICS_DEBUG,
+        Routes.EXPERIMENTAL,
     )
 
 /** 「我的」在 [tabs] 中的下标：它显示时底部导航栏要隐藏。 */
@@ -77,6 +80,9 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     val pagerState = rememberPagerState(initialPage = HOME_INDEX) { tabs.size }
     var subPage by remember { mutableStateOf<String?>(null) }
 
+    // 预加载跟随导航宿主，不能随首页被 Pager 回收而反复销毁、重建 WebView。
+    StagePrewarmEffect()
+
     fun goTab(route: String) {
         val index = tabs.indexOf(route)
         if (index >= 0) scope.launch { pagerState.animateScrollToPage(index) }
@@ -89,19 +95,25 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     // Pager 不会自行纠正（表现为两页各占半屏、内容点不动）。滚动停止后若不在整页就吸回去。
     androidx.compose.runtime.LaunchedEffect(pagerState) {
         androidx.compose.runtime
-            .snapshotFlow { pagerState.isScrollInProgress to pagerState.currentPageOffsetFraction }
-            .collect { (scrolling, offset) ->
-                if (!scrolling && offset != 0f)
-                    pagerState.animateScrollToPage(pagerState.currentPage)
+            .snapshotFlow {
+                if (pagerState.isScrollInProgress) null
+                else pagerState.currentPage.takeIf { pagerState.currentPageOffsetFraction != 0f }
+            }
+            .collect { page ->
+                if (page != null) pagerState.animateScrollToPage(page)
             }
     }
 
-    // 连续页码（当前页 + 手势偏移）：导航胶囊用它跟手
+    // 只在导航胶囊绘制时读取连续页码，避免手势的每一帧都使整个导航树重组。
     val position =
-        (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(
-            0f,
-            (tabs.size - 1).toFloat(),
-        )
+        remember(pagerState) {
+            {
+                (pagerState.currentPage + pagerState.currentPageOffsetFraction).coerceIn(
+                    0f,
+                    (tabs.size - 1).toFloat(),
+                )
+            }
+        }
     val libraryActive = pagerState.currentPage == HOME_INDEX
     val updateState by appUpdates.state.collectAsState()
     val activity = LocalContext.current as android.app.Activity
@@ -166,7 +178,10 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
             GradientBackdrop()
 
             Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
                     when (tabs[page]) {
                         Routes.HOME -> {
                             HomeScreen(
@@ -211,6 +226,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                 onAbout = { subPage = Routes.ABOUT },
                                 onDiagnostics = { subPage = Routes.DIAGNOSTICS },
                                 onAnalyticsDebug = { subPage = Routes.ANALYTICS_DEBUG },
+                                onExperimental = { subPage = Routes.EXPERIMENTAL },
                                 snackbarHostState = snackbarHostState,
                             )
                         }
@@ -300,6 +316,10 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                         onBack = { subPage = null },
                                         snackbarHostState = snackbarHostState,
                                     )
+                                }
+
+                                Routes.EXPERIMENTAL -> {
+                                    ExperimentalSettingsScreen(onBack = { subPage = null })
                                 }
 
                                 Routes.ANALYTICS_DEBUG -> {

@@ -15,6 +15,7 @@ object Routes {
     const val LOGIN = "login"
     const val ABOUT = "about"
     const val DIAGNOSTICS = "diagnostics"
+    const val EXPERIMENTAL = "experimental"
 
     /** 统计诊断：友盟集成测试排障页（仅 debug 包可见入口）。 */
     const val ANALYTICS_DEBUG = "analyticsDebug"

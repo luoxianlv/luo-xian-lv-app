@@ -1,5 +1,7 @@
 package app.luoxianlv.ui.practice
 
+import app.luoxianlv.core.score.PlayMode
+import app.luoxianlv.data.KeyLayout
 import kotlin.math.min
 
 /** 按完整游戏截图中约占屏宽 70% 的键盘拟合参考裁图。 */
@@ -28,5 +30,22 @@ object PracticeGeometry {
     fun fit(width: Float, height: Float): Fit {
         val scale = min(width * .70f / WIDTH, height * .64f / HEIGHT)
         return Fit(scale, (width - WIDTH * scale) / 2f, height * .53f - HEIGHT * scale / 2f)
+    }
+
+    /** 与实际绘制共用比例；传入完整手势显示尺寸，不依赖截图或历史识别结果。 */
+    fun keyLayout(width: Int, height: Int): KeyLayout {
+        require(width > 0 && height > 0)
+        val fit = fit(width.toFloat(), height.toFloat())
+        fun x(key: Key) = (fit.left + key.x * fit.scale) / width
+        fun y(key: Key) = (fit.top + key.y * fit.scale) / height
+        return KeyLayout(
+            notes.map(::x).toFloatArray(),
+            y(notes.first()),
+            listOf(PlayMode.SEMITONE, PlayMode.RAISE, PlayMode.NATURAL, PlayMode.LOWER)
+                .mapIndexed { index, mode ->
+                    mode to floatArrayOf(x(modes[index]), y(modes[index]))
+                }
+                .toMap(),
+        )
     }
 }

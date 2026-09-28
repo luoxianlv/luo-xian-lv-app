@@ -2,7 +2,6 @@ package app.luoxianlv.ui.wallpaper
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -10,7 +9,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.luoxianlv.ui.components.ActionPill
+import app.luoxianlv.ui.components.ImportFilePicker
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.ui.theme.OnBackdropContent
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
@@ -35,24 +34,35 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var entries by remember { mutableStateOf<List<WallpaperProjectStore.Entry>>(emptyList()) }
-    var selected by remember { mutableStateOf(WallpaperProjectStore.current(context)?.name) }
+    var selected by remember { mutableStateOf(WallpaperProjectStore.selectedId(context)) }
+    var soundEnabled by remember { mutableStateOf(WallpaperProjectStore.soundEnabled(context)) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var minute by remember { mutableStateOf(WallpaperProjectStore.minute(context)) }
     suspend fun refresh() {
         entries = withContext(Dispatchers.IO) { WallpaperProjectStore.entries(context) }
     }
-    LaunchedEffect(Unit) { refresh() }
-    fun import(uri: Uri?, tree: Boolean) {
+    LaunchedEffect(Unit) {
+        busy = true
+        try {
+            refresh()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            error = e.message ?: "壁纸准备失败"
+        } finally {
+            busy = false
+        }
+    }
+    fun import(uri: Uri?) {
         if (uri == null || busy) return
         busy = true
         scope.launch {
             try {
                 withContext(Dispatchers.IO) {
                     val job = currentCoroutineContext()
-                    WallpaperProjectStore.import(context, uri, tree) { job.ensureActive() }
+                    WallpaperProjectStore.import(context, uri, false) { job.ensureActive() }
                 }
-                selected = WallpaperProjectStore.current(context)?.name
+                selected = WallpaperProjectStore.selectedId(context)
                 refresh()
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -62,14 +72,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
             }
         }
     }
-    val zip =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) {
-            import(it, false)
-        }
-    val folder =
-        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) {
-            import(it, true)
-        }
+    val zip = rememberLauncherForActivityResult(ImportFilePicker("选择壁纸 ZIP")) { import(it) }
     Box(Modifier.fillMaxSize()) {
         GradientBackdrop()
         Column(
@@ -93,7 +96,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "演练场壁纸",
+                    "演练场设置",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = OnBackdropContent,
@@ -114,19 +117,24 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
                                 )
                             )
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     icon = Icons.Default.Add,
-                    compact = true,
-                )
-                ActionPill(
-                    "项目文件夹",
-                    onClick = { if (!busy) folder.launch(null) },
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Default.FolderOpen,
                     compact = true,
                 )
             }
             Spacer(Modifier.height(12.dp))
+            app.luoxianlv.ui.components.SettingsCard {
+                app.luoxianlv.ui.components.PreferenceSwitchItem(
+                    title = "壁纸声音",
+                    summary = "不影响口琴声音",
+                    checked = soundEnabled,
+                    onCheckedChange = {
+                        soundEnabled = it
+                        WallpaperProjectStore.setSoundEnabled(context, it)
+                    },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 14.dp),

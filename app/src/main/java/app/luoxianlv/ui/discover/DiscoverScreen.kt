@@ -1,6 +1,5 @@
 package app.luoxianlv.ui.discover
 
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,46 +39,52 @@ fun DiscoverScreen(
     LaunchedEffect(Unit) { vm.loadScores() }
     SnackbarNotice(state.downloaded?.let { "已加入曲库：$it" }, snackbarHostState, vm::ackDownloaded)
 
-    Column(modifier = Modifier.fillMaxSize().padding(start = 20.dp, top = 12.dp, end = 20.dp)) {
-        PageTitle(
-            title = "发现",
-            modifier = Modifier.padding(bottom = 12.dp),
-        )
-        Card(
-            onClick = onSearch,
-            modifier = Modifier.fillMaxWidth(),
-            elevation = containerElevation(),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Filled.Search, contentDescription = null)
-                Text("搜索谱子", modifier = Modifier.padding(start = 10.dp))
+    // 标题与搜索入口共用一个滚动容器，小窗也能从页头直接滑动整页。
+    RemoteScoreList(
+        state = state,
+        onDownload = vm::download,
+        onLoadMore = vm::loadMore,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding =
+            PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = NavBarClearance),
+        header = {
+            item(key = "discover-title", contentType = "header") {
+                PageTitle(
+                    title = "发现",
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
             }
-        }
-        Text(
-            "全部谱子",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(top = 20.dp, bottom = 6.dp),
-        )
-        Text(
-            state.status,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 6.dp),
-        )
-        // 数据量大时分批渲染，滑近底部自动追加（见 RemoteScoreList）
-        RemoteScoreList(
-            state = state,
-            onDownload = vm::download,
-            onLoadMore = vm::loadMore,
-            modifier = Modifier.fillMaxSize(),
-            // 导航栏是叠层，这里自行留出它占的高度
-            contentPadding = PaddingValues(bottom = NavBarClearance),
-        )
-    }
+            item(key = "discover-search", contentType = "header") {
+                Card(
+                    onClick = onSearch,
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = containerElevation(),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Search, contentDescription = null)
+                        Text("搜索谱子", modifier = Modifier.padding(start = 10.dp))
+                    }
+                }
+            }
+            item(key = "discover-section", contentType = "header") {
+                Text(
+                    "全部谱子",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 20.dp, bottom = 6.dp),
+                )
+                Text(
+                    state.status,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
+        },
+    )
 
     ErrorDialogHost(state.error, vm::dismissError)
 }

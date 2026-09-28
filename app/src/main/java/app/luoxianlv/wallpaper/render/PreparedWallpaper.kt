@@ -12,7 +12,7 @@ object PreparedWallpaper {
     private var selection: String? = null
 
     private fun key(activity: Activity): String =
-        "${WallpaperProjectStore.root(activity)?.absolutePath}:${WallpaperProjectStore.minute(activity)}:${WallpaperProjectStore.hasBundled(activity)}"
+        "${WallpaperProjectStore.selectedId(activity)}:${WallpaperProjectStore.minute(activity)}:${WallpaperProjectStore.hasBundled(activity)}"
 
     fun prepare(activity: Activity) {
         if (PracticePlaybackGate.active || activity.isFinishing || activity.isDestroyed) return
