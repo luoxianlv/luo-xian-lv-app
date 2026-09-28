@@ -21,9 +21,18 @@ jobs:
       - run: python -m pip install --disable-pip-version-check oss2==2.19.1
       - name: Install verified ossutil
         run: bash .github/scripts/install-ossutil.sh
-      - name: Measure existing endpoint
+      - name: Compare runner TCP algorithms
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           OSS_BUCKET: ${{ vars.OSS_BUCKET }}
-        run: python -u .github/scripts/check-oss.py
+        run: |
+          set -euo pipefail
+          original=$(sysctl -n net.ipv4.tcp_congestion_control)
+          trap 'sudo sysctl -w net.ipv4.tcp_congestion_control="$original"' EXIT
+          uname -r
+          sysctl net.ipv4.tcp_congestion_control
+          OSS_TRANSPORT="$original" python -u .github/scripts/check-oss.py
+          sudo modprobe tcp_bbr
+          sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+          OSS_TRANSPORT=bbr python -u .github/scripts/check-oss.py

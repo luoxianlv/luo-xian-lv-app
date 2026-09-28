@@ -28,7 +28,8 @@ def measure():
     assert run.isdigit()
     client = os.environ["OSS_CLIENT"]
     size = int(os.environ["OSS_PROBE_SIZE"])
-    key = f"luoxianlv/ci-probes/{run}/{route}-{client}-{size}.bin"
+    transport = os.environ.get("OSS_TRANSPORT", "default")
+    key = f"luoxianlv/ci-probes/{run}/{transport}-{route}-{client}-{size}.bin"
     data = os.urandom(size)
     started = time.monotonic()
     try:
@@ -52,13 +53,16 @@ def measure():
             response.close()
         ended = time.monotonic()
         assert hashlib.sha256(data).digest() == hashlib.sha256(downloaded).digest()
-        line = f"{route}/{client}/{size}: 上传 {uploaded-started:.2f}s，回读 {ended-uploaded:.2f}s，SHA-256 一致"
+        line = f"{transport}/{route}/{client}/{size}: 上传 {uploaded-started:.2f}s，回读 {ended-uploaded:.2f}s，SHA-256 一致"
         print(line, flush=True)
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
             summary.write(line + "\n")
     finally:
         # 只删除当前运行、当前入口的测试对象。
         bucket.delete_object(key)
+        for upload in oss2.MultipartUploadIterator(bucket, prefix=key):
+            if upload.key == key:
+                bucket.abort_multipart_upload(key, upload.upload_id)
 
 
 def main():
@@ -66,7 +70,7 @@ def main():
         measure()
         return
     # 同一 runner 顺序测试；硬超时避免低速持续传输绕过 socket 空闲超时。
-    for client, size in [("python", 512*1024), ("ossutil", 512*1024), ("ossutil", 16*1024*1024)]:
+    for client, size in [("python", 512*1024), ("ossutil", 16*1024*1024)]:
         try:
             result = subprocess.run([sys.executable, "-u", __file__, "--worker"],
                                     env=dict(os.environ, OSS_ROUTE="regional", OSS_CLIENT=client, OSS_PROBE_SIZE=str(size)), timeout=95)
