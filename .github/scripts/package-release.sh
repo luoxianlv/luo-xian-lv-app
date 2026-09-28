@@ -1,5 +1,9 @@
 set -euo pipefail
 
+for name in ANDROID_KEYSTORE_BASE64 ORG_GRADLE_PROJECT_releaseStorePassword ORG_GRADLE_PROJECT_releaseKeyAlias ORG_GRADLE_PROJECT_releaseKeyPassword ANDROID_SIGNING_CERT_SHA256; do
+  test -n "${!name:-}" || { printf '缺少签名配置：%s\n' "$name" >&2; exit 1; }
+done
+
 key="$RUNNER_TEMP/release.jks"
 trap 'rm -f "$key"' EXIT
 umask 077

@@ -1,0 +1,52 @@
+name: Deploy stable update
+
+on:
+  workflow_dispatch:
+    inputs:
+      oss_run_id:
+        description: 成功的 Upload Release to OSS 运行 ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: deploy-stable
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    if: github.repository == 'luoxianlv/luo-xian-lv-app' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify manifest provenance
+        env:
+          OSS_RUN_ID: ${{ inputs.oss_run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$OSS_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$OSS_RUN_ID" > /tmp/oss-run.json
+          python .github/scripts/validate-oss-run.py /tmp/oss-run.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-stable
+          path: dist
+          run-id: ${{ inputs.oss_run_id }}
+          github-token: ${{ github.token }}
+      - name: Deploy verified stable manifest
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: bash .github/scripts/deploy-update.sh

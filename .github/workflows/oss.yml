@@ -1,0 +1,57 @@
+name: Upload Release to OSS
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 已发布的 GitHub Release 标签（如 v1.0.8）
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oss-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  upload:
+    if: github.repository == 'luoxianlv/luo-xian-lv-app' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Download and verify published release
+        run: python .github/scripts/release_package.py
+      - name: Install OSS SDK
+        run: python -m pip install --disable-pip-version-check oss2==2.19.1
+      - name: Multipart upload and verify download
+        timeout-minutes: 15
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_BUCKET: ${{ vars.OSS_BUCKET }}
+          OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+        run: python -u .github/scripts/publish-oss.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-stable
+          path: dist/stable.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Deployment instructions
+        run: |
+          printf 'OSS 校验通过。运行 Deploy stable update，oss_run_id 填写 %s。\n' "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
