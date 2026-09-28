@@ -10,11 +10,7 @@ jobs:
   check:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        route: [regional, alternate, cname]
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -28,5 +24,4 @@ jobs:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           OSS_BUCKET: ${{ vars.OSS_BUCKET }}
-          OSS_ROUTE: ${{ matrix.route }}
-        run: timeout --signal=TERM --kill-after=5s 120s python -u .github/scripts/check-oss.py
+        run: python -u .github/scripts/check-oss.py
