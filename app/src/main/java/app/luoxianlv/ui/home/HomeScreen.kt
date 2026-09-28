@@ -15,7 +15,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,6 +30,7 @@ import app.luoxianlv.ui.components.AccessibilityPromptDialog
 import app.luoxianlv.ui.components.ErrorDialogHost
 import app.luoxianlv.ui.components.SnackbarNotice
 import app.luoxianlv.ui.library.LibraryViewModel
+import app.luoxianlv.ui.practice.StagePrewarmEffect
 import app.luoxianlv.ui.theme.LocalBackdropPalette
 
 /** 问候语下方的一言。 */
@@ -64,6 +64,9 @@ fun HomeScreen(
 
     SnackbarNotice(state.notice, snackbarHostState, vm::consumeNotice)
 
+    // 演练场壁纸预热：首页存活期间常驻，开场不黑屏（入口见 HomeStagePill）。
+    StagePrewarmEffect()
+
     // 与参考实现 HomeScaffold 同构：外层 BoxWithConstraints 量出宽度算侧栏，
     // 内层 Row 放「侧栏 + 内容卡」。
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -87,7 +90,7 @@ fun HomeScreen(
             //
             // 整张卡铺同一支渐变（就是原先插画那支，画布从插画扩大到全卡）：
             // 插画不再是孤立的彩色块，蓝 → 灰白 → 粉的光晕一路铺到卡底，
-            // 问候语、一言、状态胶囊、启动按钮、版本页脚全都坐在这层渐变上，
+            // 问候语、一言、演练场入口、启动按钮、版本页脚全都坐在这层渐变上，
             // 文本区与白卡底之间不再有大反差断层。
             //
             // 内部再按参考实现的 HomeContentPanel 分配高度：
@@ -133,28 +136,10 @@ fun HomeScreen(
                         // 这里读 time.hour 就订阅了它，跨时段会自动重算，不需要额外的刷新逻辑。
                         greeting = greetingFor(time.hour),
                         headline = headline,
-                        statusText = state.statusText,
-                        statusColor =
-                            if (state.service.connected && state.service.error == null) {
-                                MaterialTheme.colorScheme.secondary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
                         minimumHeight = overviewMinHeight,
                         // 窗口真的在跑才算运行中（[LibraryUiState.floatingRunning]），
                         // 界面不再靠持久化偏好猜状态。
                         running = state.floatingRunning,
-                        // 状态胶囊：无障碍没开时直接去系统设置最快；
-                        // 其余情况一律切换悬浮窗，所以「运行中 · 点击关闭」点下去真能关。
-                        onStatusClick = {
-                            if (!state.service.accessibilityEnabled) {
-                                context.startActivity(
-                                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                )
-                            } else {
-                                vm.toggleFloating()
-                            }
-                        },
                         // 「启动 / 关闭」：同一个按钮按真实状态开或关。
                         onToggleFloating = vm::toggleFloating,
                         // 启动按钮左侧的「首页设置」：编辑一言 + 侧边栏开关
