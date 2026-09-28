@@ -121,7 +121,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
     }
 
     // Debug-only：注册导出广播，adb 可主动触发更新弹窗用于 UI 验证。
-    if (app.luoxianlv.BuildConfig.DEBUG) {
+    if (app.luoxianlv.BuildConfig.INTERNAL_BUILD) {
         val context = LocalContext.current
         androidx.compose.runtime.DisposableEffect(Unit) {
             val receiver =
@@ -172,12 +172,18 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                             HomeScreen(
                                 onLibrary = { goTab(Routes.LIBRARY) },
                                 onDiscover = { goTab(Routes.DISCOVER) },
-                                onPractice = {
+                                onPractice = { dark ->
                                     activity.startActivity(
-                                        android.content.Intent(
-                                            activity,
-                                            app.luoxianlv.ui.practice.PracticeActivity::class.java,
-                                        )
+                                        android.content
+                                            .Intent(
+                                                activity,
+                                                app.luoxianlv.ui.practice.PracticeActivity::class
+                                                    .java,
+                                            )
+                                            .putExtra(
+                                                app.luoxianlv.ui.practice.StageEntry.DARK,
+                                                dark,
+                                            )
                                     )
                                 },
                                 onSettings = { goTab(Routes.SETTINGS) },

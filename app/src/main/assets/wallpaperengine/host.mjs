@@ -1,5 +1,7 @@
 import {mount, bytesSource, httpSource} from './webwallgl.mjs';
 import {setSceneTime} from './clock.mjs';
+import {bindWallpaperLifecycle} from './lifecycle.mjs';
+const lifecycle = bindWallpaperLifecycle(window, document);
 const suppliedMinute = new URLSearchParams(location.search).get('minute');
 setSceneTime(suppliedMinute === null ? null : Number(suppliedMinute));
 window.setWallpaperTime = setSceneTime;
@@ -44,9 +46,10 @@ try {
     while (!videoFrameReady && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
     if (!videoFrameReady) throw Error('Video first frame timed out');
   }
+  lifecycle.attach(scene);
   window.wallpaperState = 'ready';
   document.title = 'wallpaper:ready';
   window.wallpaperStats = () => scene.stats;
-  document.addEventListener('visibilitychange', () => document.hidden ? scene.pause() : scene.resume());
-  window.stopWallpaper = () => { scene.destroy(); scene = null; };
+  window.wallpaperPaused = () => scene?.paused ?? true;
+  window.stopWallpaper = () => { lifecycle.close(); scene = null; };
 } catch (error) { failure(error); }

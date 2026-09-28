@@ -93,7 +93,7 @@ fun AnalyticsDebugScreen(onBack: () -> Unit) {
                         PreferenceItem(
                             title = "版本",
                             summary =
-                                "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})${if (BuildConfig.DEBUG) " · debug" else ""}",
+                                "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})${if (BuildConfig.INTERNAL_BUILD) " · debug" else ""}",
                             icon = Icons.Filled.DeveloperBoard,
                             iconTint = IconTeal,
                         )

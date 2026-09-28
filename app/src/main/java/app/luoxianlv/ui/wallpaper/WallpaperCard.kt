@@ -46,7 +46,14 @@ internal fun WallpaperCard(
             var preview by
                 remember(entry.id) { mutableStateOf<android.graphics.drawable.Drawable?>(null) }
             LaunchedEffect(entry.id) {
-                preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, entry.root) }
+                preview =
+                    withContext(Dispatchers.IO) {
+                        WallpaperPreview.load(
+                            context,
+                            entry.root,
+                            (112 * context.resources.displayMetrics.density).toInt(),
+                        )
+                    }
             }
             Box(
                 Modifier.size(112.dp, 70.dp)

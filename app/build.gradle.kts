@@ -17,12 +17,15 @@ plugins {
 val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toInt() ?: 12
 val appVersionName = project.findProperty("appVersionName") as String? ?: "1.0.7"
 
+val compactDebug = providers.gradleProperty("compactDebug").orNull == "true"
+
 android {
     namespace = "app.luoxianlv"
     compileSdk = 37
 
     defaultConfig {
         applicationId = "app.luoxianlv"
+        buildConfigField("boolean", "INTERNAL_BUILD", "false")
         testInstrumentationRunner = project.findProperty("practiceTestRunner") as String? ?: "app.luoxianlv.PracticeInstrumentation"
         minSdk = 26
         targetSdk = 37
@@ -68,6 +71,12 @@ android {
         }
         // 复现调试包：与正式包共存（独立包名），供导出诊断 ZIP 排查手势坐标问题。
         debug {
+            // A compact test distribution keeps debug behavior without disabling R8 optimization.
+            isDebuggable = !compactDebug
+            buildConfigField("boolean", "INTERNAL_BUILD", "true")
+            isMinifyEnabled = compactDebug
+            isShrinkResources = compactDebug
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
@@ -121,7 +130,7 @@ dependencies {
     releaseImplementation(libs.umeng.asms)
     releaseImplementation(libs.umeng.uyumao)
     releaseImplementation(libs.umeng.apm)
-    debugImplementation(libs.compose.ui.tooling)
+    if (!compactDebug) debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
     testImplementation(libs.json)

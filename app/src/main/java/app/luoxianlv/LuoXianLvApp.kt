@@ -9,6 +9,15 @@ import app.luoxianlv.core.Analytics
  * - 正式 init 必须等用户同意免责协议后由 [app.luoxianlv.core.Analytics] 触发，见 MainActivity。
  */
 class LuoXianLvApp : Application() {
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        app.luoxianlv.wallpaper.render.WallpaperPreview.clearCache()
+        // Only the unused home cache is owned here; never destroy the active stage.
+        if (level >= TRIM_MEMORY_BACKGROUND || level == TRIM_MEMORY_RUNNING_CRITICAL) {
+            app.luoxianlv.wallpaper.render.PreparedWallpaper.clear()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         Analytics.preInitialize(this)

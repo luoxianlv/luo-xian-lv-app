@@ -3,11 +3,8 @@ package app.luoxianlv.ui.practice
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.ProgressBar
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -30,11 +27,21 @@ class PracticeActivity : AppCompatActivity() {
     private var sampler: HarmonicaSampler? = null
     private var keyboard: PracticeKeyboard? = null
     private var backdrop: PracticeBackdrop? = null
+    private var gravityLens: StageGravityLens? = null
     private var resumed = false
+    private var curtain: StageCurtain? = null
+    private var exiting = false
+    private var keyboardReady = false
+    private var openingFinished = false
+    private var loadedSamples: Map<Int, app.luoxianlv.audio.HarmonicaSample>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        window.attributes =
+            window.attributes.apply {
+                rotationAnimation = WindowManager.LayoutParams.ROTATION_ANIMATION_CROSSFADE
+            }
         window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.rgb(6, 8, 7)))
         if (Build.VERSION.SDK_INT >= 28) {
             window.attributes =
@@ -53,39 +60,41 @@ class PracticeActivity : AppCompatActivity() {
         PracticePlaybackGate.enter()
         MusicAccessibilityService.instance?.pause()
         val root = FrameLayout(this).apply { setBackgroundColor(Color.rgb(6, 8, 7)) }
-        // Begin the selected scene before audio loading and opening choreography.
+        // Transfer the prepared renderer; the curtain stays opaque until its first frame is ready.
         backdrop =
-            PracticeBackdrop(this).also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
-        val progress = ProgressBar(this)
-        root.addView(progress, FrameLayout.LayoutParams(80, 80, Gravity.CENTER))
-        val exit =
-            TextView(this).apply {
-                text = "返回"
-                setTextColor(Color.LTGRAY)
-                gravity = Gravity.CENTER
-                textSize = 16f
-                setOnClickListener { finish() }
+            app.luoxianlv.wallpaper.render.PreparedWallpaper.take(this).also {
+                root.addView(it, FrameLayout.LayoutParams(-1, -1))
             }
-        root.addView(exit, FrameLayout.LayoutParams(160, 120, Gravity.TOP or Gravity.START))
+        if (Build.VERSION.SDK_INT >= 33) {
+            gravityLens = StageGravityLens(checkNotNull(backdrop))
+            backdrop?.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                gravityLens?.update(curtain?.openingProgress ?: .4f)
+            }
+        }
+        val systemDark =
+            resources.configuration.uiMode and
+                android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+        val dark = app.luoxianlv.data.AppearanceStore.settings.value.themeMode.isDark(systemDark)
+        val veil = StageCurtain(this, intent.getBooleanExtra(StageEntry.DARK, dark))
+        curtain = veil
+        root.addView(veil, FrameLayout.LayoutParams(-1, -1))
+        veil.isClickable = true
         setContentView(root)
+        // Orientation is requested by the manifest at launch, before any opening animation.
         // Background fills the cutout area. Only controls, never the root, get safe insets.
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             keyboard?.safeRight = cutout.right
             keyboard?.safeLeft = cutout.left
             keyboard?.safeTop = cutout.top
-            (exit.layoutParams as FrameLayout.LayoutParams).apply {
-                leftMargin = cutout.left
-                topMargin = cutout.top
-                exit.layoutParams = this
-            }
             insets
         }
         onBackPressedDispatcher.addCallback(
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    finish()
+                    exitStage()
                 }
             },
         )
@@ -93,45 +102,56 @@ class PracticeActivity : AppCompatActivity() {
             try {
                 val samples =
                     withContext(Dispatchers.IO) { HarmonicaSampler.load(applicationContext) }
+                loadedSamples = samples
+                while (!resumed && !isFinishing) delay(50)
                 if (isFinishing) return@launch
                 // Wait for a usable stable landscape area, bounded for tablets/multi-window
                 // overrides.
-                var lastSize = 0 to 0
+                var lastSize = Triple(0, 0, -1)
                 var stable = 0
-                repeat(30) {
-                    val size = root.width to root.height
+                var attempts = 0
+                while (attempts < 80 && !isFinishing && !exiting) {
+                    if (!resumed) {
+                        delay(50)
+                        continue
+                    }
+                    attempts++
+                    val size = Triple(root.width, root.height, root.display?.rotation ?: -1)
                     stable =
                         if (
                             size == lastSize &&
+                                hasWindowFocus() &&
+                                resources.configuration.orientation ==
+                                    android.content.res.Configuration.ORIENTATION_LANDSCAPE &&
                                 size.first > size.second &&
                                 size.second >= 200 * resources.displayMetrics.density
                         )
                             stable + 1
                         else 0
                     lastSize = size
-                    if (stable < 2) delay(50)
+                    if (stable >= 8) break
+                    delay(50)
                 }
-                if (stable < 2) {
+                if (isFinishing || exiting) return@launch
+                if (stable < 8) {
                     Toast.makeText(this@PracticeActivity, "请使用横屏或放大窗口后进入演奏", Toast.LENGTH_LONG)
                         .show()
                     finish()
                     return@launch
                 }
-                if (isFinishing || !resumed) return@launch
-                val audio =
-                    HarmonicaSampler(this@PracticeActivity, samples) {
-                        keyboard?.silence()
-                        MusicAccessibilityService.instance?.pause()
-                        Toast.makeText(this@PracticeActivity, "音频已中断，请重新进入演奏", Toast.LENGTH_SHORT)
-                            .show()
-                        finish()
-                    }
-                sampler = audio
+                while (!resumed && !isFinishing && !exiting) delay(50)
+                if (isFinishing || exiting) return@launch
+                // Keep the opaque light surface until the actual wallpaper is ready.
+                while (backdrop?.prepared == false && !isFinishing && !exiting) delay(50)
+                while (!resumed && !isFinishing) delay(50)
+                if (isFinishing || exiting) return@launch
+                veil.backgroundReady = true
+                restoreAudio()
                 val keys =
                     PracticeKeyboard(this@PracticeActivity).apply {
-                        onNoteOn = audio::noteOn
-                        onNoteOff = audio::noteOff
-                        onExit = { finish() }
+                        onNoteOn = { midi -> sampler?.noteOn(midi) ?: false }
+                        onNoteOff = { sampler?.noteOff() }
+                        onExit = { exitStage() }
                         onWallpaper = {
                             startActivity(
                                 android.content
@@ -143,17 +163,35 @@ class PracticeActivity : AppCompatActivity() {
                             )
                             finish()
                         }
+                        alpha = 0f
                         onReady = {
-                            PracticePlaybackGate.setReady(true)
-                            PlaybackDebugLog.log("practice ready ${width}x$height")
+                            keyboardReady = true
+                            publishReady()
                         }
                     }
                 keyboard = keys
-                root.removeView(progress)
-                root.removeView(exit)
-                root.addView(keys, FrameLayout.LayoutParams(-1, -1))
+                root.addView(keys, root.indexOfChild(veil), FrameLayout.LayoutParams(-1, -1))
                 ViewCompat.requestApplyInsets(root)
-                keys.post { if (!isFinishing && resumed) keys.open() }
+                lifecycleScope.launch {
+                    while (!resumed && !isFinishing && !exiting) delay(50)
+                    if (!isFinishing && resumed && !exiting) {
+                        veil.reveal(
+                            onProgress = { p ->
+                                if (Build.VERSION.SDK_INT >= 33) gravityLens?.update(p)
+                                keys.alpha = StageLightRenderer.smooth(.88f, 1f, p)
+                                val zoom = 1.18f - .18f * StageLightRenderer.smooth(.64f, 1f, p)
+                                backdrop?.scaleX = zoom
+                                backdrop?.scaleY = zoom
+                            },
+                            onKeys = { if (!exiting && !isFinishing) keys.open(650) },
+                            onFinished = {
+                                if (Build.VERSION.SDK_INT >= 33) gravityLens?.clear()
+                                openingFinished = true
+                                publishReady()
+                            },
+                        )
+                    }
+                }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
                 PlaybackDebugLog.log("practice load failed ${error.message}")
@@ -166,9 +204,61 @@ class PracticeActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        backdrop?.resumeRendering()
+        curtain?.setAmbientActive(true)
+        restoreAudio()
+        publishReady()
+    }
+
+    private fun exitStage() {
+        if (exiting || isFinishing) return
+        exiting = true
+        PracticePlaybackGate.setReady(false)
+        MusicAccessibilityService.instance?.pause()
+        keyboard?.close()
+        sampler?.close()
+        sampler = null
+        val veil = curtain ?: return finish()
+        // Request rotation immediately; gathering runs concurrently, never before it.
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (Build.VERSION.SDK_INT >= 33) gravityLens?.clear()
+        veil.gatherExit(
+            onProgress = { p -> keyboard?.alpha = 1 - StageLightRenderer.smooth(0f, .18f, p) },
+            onFinished = {
+                lifecycleScope.launch {
+                    var stable = 0
+                    var previous = 0 to 0
+                    for (attempt in 0 until 50) {
+                        if (isFinishing) return@launch
+                        val size = veil.width to veil.height
+                        stable = if (size == previous && size.second > size.first) stable + 1 else 0
+                        previous = size
+                        if (stable >= 3) break
+                        delay(50)
+                    }
+                    finish()
+                }
+            },
+        )
+    }
+
+    private fun publishReady() {
+        if (
+            !keyboardReady ||
+                !openingFinished ||
+                exiting ||
+                !resumed ||
+                isFinishing ||
+                PracticePlaybackGate.ready
+        )
+            return
+        PracticePlaybackGate.setReady(true)
+        PlaybackDebugLog.log("practice ready ${keyboard?.width}x${keyboard?.height}")
     }
 
     private fun stopSession() {
+        if (Build.VERSION.SDK_INT >= 33) gravityLens?.clear()
+        curtain?.close()
         PracticePlaybackGate.setReady(false)
         MusicAccessibilityService.instance?.pause()
         backdrop?.close()
@@ -181,14 +271,29 @@ class PracticeActivity : AppCompatActivity() {
         // Stop immediately on exit, including while the window's exit transition is still running.
         stopSession()
         super.finish()
+        overridePendingTransition(0, 0)
+    }
+
+    private fun restoreAudio() {
+        val samples = loadedSamples ?: return
+        if (sampler != null || !resumed || exiting || isFinishing) return
+        sampler =
+            HarmonicaSampler(this, samples) {
+                keyboard?.silence()
+                MusicAccessibilityService.instance?.pause()
+            }
     }
 
     override fun onPause() {
         resumed = false
-        stopSession()
+        PracticePlaybackGate.setReady(false)
+        MusicAccessibilityService.instance?.pause()
+        keyboard?.silence()
+        sampler?.close()
+        sampler = null
+        backdrop?.suspendRendering()
+        curtain?.setAmbientActive(false)
         super.onPause()
-        // Backgrounding ends the session rather than retaining hidden gestures/audio.
-        if (!isChangingConfigurations) finish()
     }
 
     override fun onDestroy() {

@@ -48,7 +48,7 @@ private const val HOME_QUOTE = "天空你是否知晓一切？"
 fun HomeScreen(
     onLibrary: () -> Unit,
     onDiscover: () -> Unit,
-    onPractice: () -> Unit,
+    onPractice: (Boolean) -> Unit,
     onSettings: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: LibraryViewModel = viewModel(),
@@ -128,6 +128,7 @@ fun HomeScreen(
                 Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                     HomeHero(height = heroHeight)
                     HomeOverview(
+                        onPractice = onPractice,
                         // 直接从 time 派生：rememberHomeTime() 每分钟写回一个 MutableState，
                         // 这里读 time.hour 就订阅了它，跨时段会自动重算，不需要额外的刷新逻辑。
                         greeting = greetingFor(time.hour),
@@ -156,7 +157,6 @@ fun HomeScreen(
                         },
                         // 「启动 / 关闭」：同一个按钮按真实状态开或关。
                         onToggleFloating = vm::toggleFloating,
-                        onPractice = onPractice,
                         // 启动按钮左侧的「首页设置」：编辑一言 + 侧边栏开关
                         settingsButton = {
                             HomePageSettings(

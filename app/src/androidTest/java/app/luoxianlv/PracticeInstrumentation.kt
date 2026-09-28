@@ -19,10 +19,12 @@ import java.io.File
  */
 class PracticeInstrumentation : Instrumentation() {
     private var testWallpaper = false
+    private var argumentsEntryOnly = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         testWallpaper = arguments?.getString("wallpaper") == "true"
+        argumentsEntryOnly = arguments?.getString("entryOnly") == "true"
         start()
     }
 
@@ -30,6 +32,19 @@ class PracticeInstrumentation : Instrumentation() {
         var stage: PracticeActivity? = null
         val result = Bundle()
         try {
+            checkStageEntry()
+            if (argumentsEntryOnly) {
+                finish(
+                    -1,
+                    Bundle().apply {
+                        putString(
+                            "stream",
+                            "Stage entry: home window, double click, landscape reveal and portrait return passed.\n",
+                        )
+                    },
+                )
+                return
+            }
             if (testWallpaper) {
                 val source = File(targetContext.getExternalFilesDir(null), "blackhole-original.zip")
                 check(source.isFile) { "Missing original-project fixture" }
@@ -239,13 +254,17 @@ class PracticeInstrumentation : Instrumentation() {
                         descendants(picker.window.decorView)
                             .filterIsInstance<android.widget.ImageView>()
                             .any {
-                                (it.drawable as? android.graphics.drawable.Animatable)?.isRunning ==
-                                    true
+                                if (
+                                    testWallpaper || WallpaperProjectStore.hasBundled(targetContext)
+                                )
+                                    (it.drawable as? android.graphics.drawable.Animatable)
+                                        ?.isRunning == true
+                                else it.drawable != null
                             }
                 }
                 if (!previewReady) Thread.sleep(100)
             }
-            check(previewReady) { "Animated project preview did not load" }
+            check(previewReady) { "Project preview did not load" }
             val pickerFrame =
                 Bitmap.createBitmap(
                     picker.window.decorView.width,
@@ -306,7 +325,7 @@ class PracticeInstrumentation : Instrumentation() {
             }
             result.putString(
                 "stream",
-                "Practice: six mode states recognized, synchronous modifiers, real touches, exit, portrait GIF picker, early backdrop and interrupted entry passed.\n",
+                "Practice: six mode states recognized, synchronous modifiers, real touches, exit, portrait preview picker, early backdrop and interrupted entry passed.\n",
             )
             finish(-1, result)
         } catch (failure: Throwable) {

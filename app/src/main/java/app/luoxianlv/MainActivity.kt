@@ -60,18 +60,20 @@ class MainActivity : AppCompatActivity() {
         // （首次使用或协议更新后）就拦截在协议页，同意前不渲染正常 App。
         // 读不到协议文件时不拦截，避免资源缺失把用户挡在门外。
         disclaimerText =
-            if (BuildConfig.DEBUG) ""
+            if (BuildConfig.INTERNAL_BUILD) ""
             else runCatching { DisclaimerStore.readAsset(this) }.getOrElse { "" }
         val disclaimerSha = DisclaimerStore.sha256(disclaimerText)
         disclaimerAccepted =
-            BuildConfig.DEBUG ||
+            BuildConfig.INTERNAL_BUILD ||
                 (disclaimerText.isNotEmpty() && DisclaimerStore(this).agreedSha() == disclaimerSha)
         // 同意过协议：本次启动直接初始化友盟统计（Application 里已 preInit）。
         if (disclaimerAccepted) Analytics.initialize(this)
         // 权限引导只在首次启动弹一次，此后不再打扰；
         // 之后的运行时检查在「我的」页悬浮窗开关处（LibraryViewModel.setFloatingEnabled）
         showOnboarding =
-            !BuildConfig.DEBUG && isFirstLaunch() && !MusicAccessibilityService.isEnabled(this)
+            !BuildConfig.INTERNAL_BUILD &&
+                isFirstLaunch() &&
+                !MusicAccessibilityService.isEnabled(this)
         setContent {
             val appearance by AppearanceStore.settings.collectAsState()
             // 深浅色：偏好（跟随系统 / 浅色 / 深色）叠加系统设置算出最终结果。
@@ -168,7 +170,7 @@ class MainActivity : AppCompatActivity() {
         // 启动和每次回前台都调用即可，离线时静默失败。
         MidiCoreFixer.kick(this)
         if (
-            !BuildConfig.DEBUG &&
+            !BuildConfig.INTERNAL_BUILD &&
                 android.os.Build.VERSION.SDK_INT >= 33 &&
                 repository.floatingEnabled &&
                 appPrefs.getBoolean("auto_start_asked", false) &&
@@ -182,7 +184,7 @@ class MainActivity : AppCompatActivity() {
         }
         // 无障碍服务可能在本应用暂停期间被启用；回到前台时按持久化偏好重新对齐悬浮窗
         MusicAccessibilityService.instance?.showFloating(repository.floatingEnabled)
-        if (!BuildConfig.DEBUG && disclaimerAccepted) {
+        if (!BuildConfig.INTERNAL_BUILD && disclaimerAccepted) {
             if (!updateCheckOnOpenDone) {
                 checkUpdatesAfterDisclaimer()
             } else {
@@ -199,14 +201,14 @@ class MainActivity : AppCompatActivity() {
         if (!UpdateAutoCheck.isEnabled(this)) return
         updateCheckOnOpenDone = true
         // Debug 包不触发启动检测更新；回前台节流检查与手动「检查新版本」不受影响。
-        if (BuildConfig.DEBUG) return
+        if (BuildConfig.INTERNAL_BUILD) return
         appUpdates.check(force = true)
     }
 
     /** 每项引导仅显示一次；展示前保存记录，返回设置、重开无障碍或应用都不重复。 */
     private fun requestBackgroundPermissionsOnce() {
         if (
-            BuildConfig.DEBUG ||
+            BuildConfig.INTERNAL_BUILD ||
                 !disclaimerAccepted ||
                 showOnboarding ||
                 showBatteryPrompt ||

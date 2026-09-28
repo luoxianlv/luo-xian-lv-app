@@ -233,7 +233,17 @@ class WallpaperImportInstrumentation : Instrumentation() {
                 WallpaperProjectStore.scenePackage(WallpaperProjectStore.root(targetContext)!!)!!
                     .length() == 84230588L
             )
-            WallpaperProjectStore.reset(targetContext)
+            // Instrumentation ends the process immediately; flush fixture cleanup first.
+            check(
+                targetContext
+                    .getSharedPreferences(
+                        "practice_wallpaper",
+                        android.content.Context.MODE_PRIVATE,
+                    )
+                    .edit()
+                    .remove("project")
+                    .commit()
+            )
             result.putString(
                 "stream",
                 "System VIEW/SEND ZIP and octet-stream associations, content URI import, image/video/web rendering, sandboxed web fetch, invalid rollback and original folder ZIP passed.\n",

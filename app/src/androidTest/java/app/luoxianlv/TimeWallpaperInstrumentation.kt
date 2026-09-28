@@ -17,9 +17,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/**
- * Verifies the bundled original project, original ZIP import and all four supplied clock periods.
- */
+/** Verifies an external original ZIP fixture and all four supplied clock periods. */
 class TimeWallpaperInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
@@ -34,6 +32,11 @@ class TimeWallpaperInstrumentation : Instrumentation() {
                 targetContext
             ) // Apply bundled-default migration before explicit selection.
             WallpaperProjectStore.reset(targetContext)
+            val fixture = File(targetContext.getExternalFilesDir(null), "elaina-original.zip")
+            check(fixture.isFile) {
+                "Push elaina-original.zip to app external files before running this optional test"
+            }
+            WallpaperProjectStore.import(targetContext, android.net.Uri.fromFile(fixture), false)
             WallpaperProjectStore.setMinute(targetContext, 480)
             activity =
                 startActivitySync(
@@ -58,7 +61,7 @@ class TimeWallpaperInstrumentation : Instrumentation() {
                 if (backdrop?.renderState != "ready") Thread.sleep(200)
             }
             check(backdrop?.renderState == "ready") {
-                "Bundled project failed: ${backdrop?.renderState}"
+                "Imported project failed: ${backdrop?.renderState}"
             }
             lateinit var browser: WebView
             runOnMainSync {
@@ -170,6 +173,30 @@ class TimeWallpaperInstrumentation : Instrumentation() {
                 check(latch.await(5, TimeUnit.SECONDS))
                 return time
             }
+            // Repeated pauses must keep the resume list and release all scene decoders.
+            runOnMainSync {
+                backdrop!!.suspendRendering()
+                backdrop!!.suspendRendering()
+            }
+            Thread.sleep(500)
+            check(videoTime() == -1.0) { "Suspended scene retained a video decoder" }
+            runOnMainSync { backdrop!!.resumeRendering() }
+            var resumed = false
+            val resumeDeadline = android.os.SystemClock.uptimeMillis() + 30000
+            while (!resumed && android.os.SystemClock.uptimeMillis() < resumeDeadline) {
+                val latch = CountDownLatch(1)
+                runOnMainSync {
+                    browser.evaluateJavascript(
+                        "(()=>{const v=[...document.querySelectorAll('video')].filter(v=>v.hasAttribute('src'));return v.length===1 && !v[0].paused && v[0].readyState>=2})()"
+                    ) {
+                        resumed = it == "true"
+                        latch.countDown()
+                    }
+                }
+                check(latch.await(5, TimeUnit.SECONDS))
+                if (!resumed) Thread.sleep(250)
+            }
+            check(resumed) { "Resume restarted hidden video layers or lost the active layer" }
             // SwiftShader and 4K software decode need not produce a new frame within 1.2s.
             // Require both media-clock progress and a genuinely changed rendered frame.
             val startTime = videoTime()
@@ -205,7 +232,7 @@ class TimeWallpaperInstrumentation : Instrumentation() {
             WallpaperProjectStore.setMinute(targetContext, null)
             result.putString(
                 "stream",
-                "Elaina: bundled scene, four time periods, animation at fixed time, original ZIP import and immediate exit passed.\n",
+                "Elaina: imported scene, four time periods, animation at fixed time, original ZIP import and immediate exit passed.\n",
             )
             finish(-1, result)
         } catch (error: Throwable) {

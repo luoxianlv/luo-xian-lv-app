@@ -12,7 +12,23 @@ import java.nio.ByteBuffer
 
 /** Bounded preview decode shared by the picker and the stage's first frame. */
 object WallpaperPreview {
-    fun load(context: Context, root: File?): Drawable? = runCatching {
+    private var cachedKey: String? = null
+    private var cachedBytes: ByteArray? = null
+
+    fun preload(context: Context, root: File?) {
+        runCatching { bytes(context, root) }
+    }
+
+    @Synchronized
+    private fun bytes(context: Context, root: File?): ByteArray {
+        val preview = root?.let(WallpaperProjectStore::preview)
+        val key =
+            preview?.let { "${it.absolutePath}:${it.lastModified()}:${it.length()}" }
+                ?: "bundled:${WallpaperProjectStore.hasBundled(context)}"
+        if (cachedKey == key)
+            cachedBytes?.let {
+                return it
+            }
         val file = root?.let(WallpaperProjectStore::preview)
         val bytes =
             if (file != null && file.length() <= 16L * 1024 * 1024) file.readBytes()
@@ -24,12 +40,30 @@ object WallpaperPreview {
                         else "practice-sunset.jpg"
                     )
                     .use { it.readBytes() }
+        cachedKey = key
+        cachedBytes = bytes
+        return bytes
+    }
+
+    @Synchronized
+    fun clearCache() {
+        cachedKey = null
+        cachedBytes = null
+    }
+
+    fun load(context: Context, root: File?, maxEdge: Int = 960): Drawable? = runCatching {
+        val bytes = bytes(context, root)
         if (Build.VERSION.SDK_INT >= 28)
             ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) {
                 decoder,
                 info,
                 _ ->
-                val scale = minOf(1f, 960f / maxOf(info.size.width, info.size.height))
+                val scale =
+                    minOf(
+                        1f,
+                        maxEdge.coerceAtLeast(1).toFloat() /
+                            maxOf(info.size.width, info.size.height),
+                    )
                 decoder.setTargetSize(
                     maxOf(1, (info.size.width * scale).toInt()),
                     maxOf(1, (info.size.height * scale).toInt()),
@@ -41,7 +75,8 @@ object WallpaperPreview {
             val options =
                 BitmapFactory.Options().apply {
                     while (
-                        maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > 960
+                        maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize >
+                            maxEdge.coerceAtLeast(1)
                     ) inSampleSize *= 2
                 }
             BitmapDrawable(

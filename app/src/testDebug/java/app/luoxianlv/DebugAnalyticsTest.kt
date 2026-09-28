@@ -8,7 +8,7 @@ import org.junit.Test
 class DebugAnalyticsTest {
     @Test
     fun debugTelemetryIsAbsentAndCallsStoreNothing() {
-        assertTrue(BuildConfig.DEBUG)
+        assertTrue(BuildConfig.INTERNAL_BUILD)
         val context = ContextWrapper(null)
         Analytics.preInitialize(context)
         Analytics.initialize(context)

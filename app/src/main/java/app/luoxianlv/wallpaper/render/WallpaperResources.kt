@@ -42,6 +42,7 @@ class WallpaperResources(private val context: Context, private val project: File
                         "/compat.mjs",
                         "/clock.mjs",
                         "/scene-video.mjs",
+                        "/lifecycle.mjs",
                     )
             ) {
                 file = null

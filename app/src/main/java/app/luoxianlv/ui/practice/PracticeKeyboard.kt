@@ -70,7 +70,7 @@ class PracticeKeyboard(context: Context) : View(context) {
         contentDescription = "口琴演奏区，八个音符、半音、升调、自然音、降调"
     }
 
-    fun open() {
+    fun open(durationMs: Long = 1070) {
         animator?.cancel()
         if (!ValueAnimator.areAnimatorsEnabled()) {
             elapsed = 1070f
@@ -81,7 +81,7 @@ class PracticeKeyboard(context: Context) : View(context) {
         }
         animator =
             ValueAnimator.ofFloat(0f, 1070f).apply {
-                duration = 1070
+                duration = durationMs
                 interpolator = LinearInterpolator()
                 addUpdateListener {
                     elapsed = it.animatedValue as Float
@@ -208,6 +208,16 @@ class PracticeKeyboard(context: Context) : View(context) {
                         2 -> session.mode == PracticeSession.Mode.NATURAL
                         else -> session.mode == PracticeSession.Mode.LOWER
                     }
+            // The faint window ellipses widen and settle into the exact playable circles.
+            canvas.save()
+            if (note && !ready) {
+                val settle = progress(0f, 720f)
+                val eased = 1f - (1f - settle) * (1f - settle) * (1f - settle)
+                val startX = 985f + (key.x - 985f) * .58f
+                val startY = 245f
+                canvas.translate((startX - key.x) * (1f - eased), (startY - key.y) * (1f - eased))
+                canvas.scale(.68f + .32f * eased, .42f + .58f * eased, key.x, key.y)
+            }
             circle(canvas, key.x, key.y, key.radius, Color.rgb(6, 8, 7), ring * .66f)
             if (selected) {
                 val alpha = if (ready) 1f else progress(770f, 300f)
@@ -257,6 +267,7 @@ class PracticeKeyboard(context: Context) : View(context) {
                 }
             } else
                 text(canvas, listOf("半音", "升调", "自然音", "降调")[modeIndex], key.x, key.y, 31f, label)
+            canvas.restore()
         }
         canvas.restore()
         val exit = exitBounds

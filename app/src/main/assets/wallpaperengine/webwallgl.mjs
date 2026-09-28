@@ -30870,6 +30870,7 @@ function createRenderer(canvas, opts = {}) {
   const shaderResolver = opts.shaderResolver || (async () => null);
   const diag = opts.diag || (() => {
   });
+  const maxVideoTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 0;
   const videoCanvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
   if (videoCanvas) {
     videoCanvas.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0";
@@ -32743,7 +32744,7 @@ function createRenderer(canvas, opts = {}) {
           let vw = v.videoWidth || texObj.width;
           let vh = v.videoHeight || texObj.height;
           const targetMax = Math.max(width || 0, height || 0);
-          const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 0;
+          const maxTex = maxVideoTextureSize;
           let limit = VIDEO_TEX_HARD_CAP;
           if (maxTex > 0) limit = Math.min(limit, maxTex);
           if (targetMax > 0) limit = Math.min(limit, targetMax);
@@ -32801,7 +32802,7 @@ function createRenderer(canvas, opts = {}) {
           let vw = img.naturalWidth || texObj.width;
           let vh = img.naturalHeight || texObj.height;
           const targetMax = Math.max(width || 0, height || 0);
-          const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 0;
+          const maxTex = maxVideoTextureSize;
           let limit = VIDEO_TEX_HARD_CAP;
           if (maxTex > 0) limit = Math.min(limit, maxTex);
           if (targetMax > 0) limit = Math.min(limit, targetMax);
@@ -47419,15 +47420,19 @@ function createScene(el, options) {
       return boundEl;
     },
     pause() {
+      if (rt.paused) return;
       rt.paused = true;
       rt.sceneCtl?.pause();
       for (const p of rt.videoPairs ?? []) p.pause();
       if (!rt.videoPairs?.length) rt.video?.pause();
     },
     resume() {
+      if (!rt.paused) return;
       rt.paused = false;
       resetFrameMeter(rt);
       rt.sceneCtl?.resume();
+      // Scene controllers restore only previously playing layers, not hidden video pairs.
+      if (rt.cfg.type === "scene") return;
       if (rt.videoPairs?.length) {
         for (const p of rt.videoPairs) p.resume();
       } else if (rt.video) {

@@ -9,13 +9,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.sp
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.ui.components.ActionPill
 import app.luoxianlv.ui.theme.OnBackdropContent
-import app.luoxianlv.ui.wallpaper.WallpaperButton
 
 /** 插画下方的信息与操作区。 */
 @Composable
@@ -51,7 +50,7 @@ internal fun HomeOverview(
     running: Boolean,
     onStatusClick: () -> Unit,
     onToggleFloating: () -> Unit,
-    onPractice: () -> Unit,
+    onPractice: (Boolean) -> Unit,
     settingsButton: @Composable () -> Unit,
 ) {
     // heightIn(min) 保证信息区至少占满「整列高度 - 插画高度」，
@@ -80,6 +79,11 @@ internal fun HomeOverview(
             color = OnBackdropContent,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        HomeStageWindow(
+            onPractice = onPractice,
+            modifier = Modifier.align(Alignment.End).offset(x = 20.dp),
         )
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -117,18 +121,6 @@ internal fun HomeOverview(
                 label = if (running) "关闭" else "启动",
                 onClick = onToggleFloating,
                 icon = if (running) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-                modifier = Modifier.weight(1f),
-            )
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            app.luoxianlv.ui.wallpaper.WallpaperButton()
-            Spacer(modifier = Modifier.width(10.dp))
-            ActionPill(
-                label = "进入演练场",
-                onClick = onPractice,
-                icon = Icons.Filled.MusicNote,
                 modifier = Modifier.weight(1f),
             )
         }

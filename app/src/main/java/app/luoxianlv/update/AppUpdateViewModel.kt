@@ -95,7 +95,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                                 BuildConfig.VERSION_CODE,
                                 baseUrl,
                                 BuildConfig.UPDATE_SOURCE,
-                                BuildConfig.DEBUG,
+                                BuildConfig.INTERNAL_BUILD,
                             )
                         } finally {
                             connection.disconnect()
@@ -185,7 +185,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                 if (status in listOf(301, 302, 303, 307, 308)) {
                     val location = connection.getHeaderField("Location") ?: error("下载地址无效")
                     connection.disconnect()
-                    next = validatedUpdateUrl(location, next, BuildConfig.DEBUG)
+                    next = validatedUpdateUrl(location, next, BuildConfig.INTERNAL_BUILD)
                 } else {
                     break
                 }
@@ -354,7 +354,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** Debug-only: adb 可主动触发更新弹窗（am broadcast -a app.luoxianlv.DEBUG_TRIGGER_UPDATE）。 */
     fun debugTriggerUpdate() {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.INTERNAL_BUILD) return
         val code = BuildConfig.VERSION_CODE + 1
         _state.update {
             it.copy(
@@ -382,7 +382,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     private fun open(url: String): HttpURLConnection =
-        (URL(validatedUpdateUrl(url, baseUrl, BuildConfig.DEBUG)).openConnection()
+        (URL(validatedUpdateUrl(url, baseUrl, BuildConfig.INTERNAL_BUILD)).openConnection()
                 as HttpURLConnection)
             .apply {
                 ClientVersion.attach(this)
