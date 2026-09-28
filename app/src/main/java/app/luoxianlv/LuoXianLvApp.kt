@@ -27,10 +27,6 @@ class LuoXianLvApp : Application() {
                     app.luoxianlv.storage.AppStorage.migrate(this) {
                         app.luoxianlv.debug.AppLog.i("存储", it)
                     }
-                    runCatching {
-                        app.luoxianlv.wallpaper.data.BundledWallpaper.ensureInstalled(this)
-                    }
-                        .onFailure { app.luoxianlv.debug.AppLog.w("壁纸", "默认壁纸安装失败，稍后重试", it) }
                 },
                 "storage-migration",
             )

@@ -42,6 +42,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
     suspend fun refresh() {
         entries = withContext(Dispatchers.IO) { WallpaperProjectStore.entries(context) }
     }
+    val requestWallpaper = rememberWallpaperRequest { scope.launch { refresh() } }
     LaunchedEffect(Unit) {
         busy = true
         try {
@@ -123,6 +124,9 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
                 )
             }
             Spacer(Modifier.height(12.dp))
+            if (!app.luoxianlv.wallpaper.data.DefaultWallpaper.installed(context)) {
+                TextButton(onClick = { if (!busy) requestWallpaper(true) {} }) { Text("下载默认动态壁纸") }
+            }
             app.luoxianlv.ui.components.SettingsCard {
                 app.luoxianlv.ui.components.PreferenceSwitchItem(
                     title = "壁纸声音",
@@ -199,7 +203,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
                 "进入演练场",
                 onClick = {
                     if (!busy) {
-                        onEnterPractice()
+                        requestWallpaper(false, onEnterPractice)
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),

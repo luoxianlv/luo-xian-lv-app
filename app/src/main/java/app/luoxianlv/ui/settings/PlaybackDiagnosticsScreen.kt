@@ -53,6 +53,7 @@ import app.luoxianlv.ui.components.NavBarClearance
 import app.luoxianlv.ui.components.PreferenceGroupCaption
 import app.luoxianlv.ui.components.PreferenceItem
 import app.luoxianlv.ui.components.SettingsCard
+import app.luoxianlv.ui.components.showNotice
 import kotlinx.coroutines.launch
 
 /** 播放诊断页：与设置主页同一套 QQ 分组语言 —— 组标题小灰字贴在卡上方， 每项彩色圆角方块图标 + 标题 + 摘要；只读状态行不带箭头（可点项才有）。 */
@@ -211,7 +212,7 @@ fun PlaybackDiagnosticsScreen(
                                     exporting = true
                                     val ok = DebugExport.exportAndShare(context.applicationContext)
                                     exporting = false
-                                    snackbarHostState.showSnackbar(
+                                    snackbarHostState.showNotice(
                                         if (ok) "已打开分享面板" else "导出失败，请稍后重试"
                                     )
                                 }

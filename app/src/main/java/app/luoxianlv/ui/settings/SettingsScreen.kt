@@ -70,6 +70,7 @@ import app.luoxianlv.ui.components.PreferenceItem
 import app.luoxianlv.ui.components.PreferenceSwitchItem
 import app.luoxianlv.ui.components.SettingsCard
 import app.luoxianlv.ui.components.SnackbarNotice
+import app.luoxianlv.ui.components.showNotice
 import kotlinx.coroutines.launch
 
 /** 设置页：QQ 式分组 —— 一组一张白卡，组标题小灰字贴在卡上方， 每项一个彩色圆角方块图标 + 标题 + 摘要 + 右侧箭头；网站登录在对话框中完成。 */
@@ -289,7 +290,7 @@ fun SettingsScreen(
                     ) {
                         if (!openAuthor(context)) {
                             scope.launch {
-                                snackbarHostState.showSnackbar("无法打开主页，请在哔哩哔哩搜索 UID 498496565")
+                                snackbarHostState.showNotice("无法打开主页，请在哔哩哔哩搜索 UID 498496565")
                             }
                         }
                     }

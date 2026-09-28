@@ -13,7 +13,7 @@ import app.luoxianlv.ui.practice.PracticeActivity
 import app.luoxianlv.ui.practice.PracticeKeyboard
 import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.ui.practice.WallpaperPickerActivity
-import app.luoxianlv.wallpaper.data.BundledWallpaper
+import app.luoxianlv.wallpaper.data.DefaultWallpaper
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import java.io.File
 import java.security.MessageDigest
@@ -77,40 +77,44 @@ class WallpaperSoundInstrumentation : Instrumentation() {
         val previousSound = prefs.getBoolean("sound", false)
         try {
             runOnMainSync {}
-            BundledWallpaper.ensureInstalled(targetContext)
-            val root = BundledWallpaper.folder(targetContext)
+            kotlinx.coroutines.runBlocking { DefaultWallpaper.download(targetContext) { _, _ -> } }
+            val root = DefaultWallpaper.folder(targetContext)
             check(root.path.startsWith(targetContext.getExternalFilesDir(null)!!.path))
             check(File(root, ".root").isFile)
             checkWallpaperRanges(root)
-            ZipInputStream(targetContext.assets.open("default-wallpaper.zip")).use { zip ->
-                while (true) {
-                    val entry = zip.nextEntry ?: break
-                    if (!entry.isDirectory) {
-                        val expected = MessageDigest.getInstance("SHA-256")
-                        val buffer = ByteArray(65536)
-                        while (true) {
-                            val count = zip.read(buffer)
-                            if (count < 0) break
-                            expected.update(buffer, 0, count)
-                        }
-                        val actual = MessageDigest.getInstance("SHA-256")
-                        File(root, entry.name).inputStream().use { input ->
+            ZipInputStream(
+                    File(targetContext.getExternalFilesDir(null), "default-wallpaper-source.zip")
+                        .inputStream()
+                )
+                .use { zip ->
+                    while (true) {
+                        val entry = zip.nextEntry ?: break
+                        if (!entry.isDirectory) {
+                            val expected = MessageDigest.getInstance("SHA-256")
+                            val buffer = ByteArray(65536)
                             while (true) {
-                                val count = input.read(buffer)
+                                val count = zip.read(buffer)
                                 if (count < 0) break
-                                actual.update(buffer, 0, count)
+                                expected.update(buffer, 0, count)
+                            }
+                            val actual = MessageDigest.getInstance("SHA-256")
+                            File(root, entry.name).inputStream().use { input ->
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    actual.update(buffer, 0, count)
+                                }
+                            }
+                            check(expected.digest().contentEquals(actual.digest())) {
+                                "默认项目文件不完整：${entry.name}"
                             }
                         }
-                        check(expected.digest().contentEquals(actual.digest())) {
-                            "默认项目文件不完整：${entry.name}"
-                        }
+                        zip.closeEntry()
                     }
-                    zip.closeEntry()
                 }
-            }
             val stamp = File(root, "project.json").lastModified()
             prefs.edit().putString("project", "已有用户选择").commit()
-            BundledWallpaper.ensureInstalled(targetContext)
+            kotlinx.coroutines.runBlocking { DefaultWallpaper.download(targetContext) { _, _ -> } }
             check(prefs.getString("project", null) == "已有用户选择")
             check(File(root, "project.json").lastModified() == stamp)
             check(root.parentFile!!.listFiles().orEmpty().none { it.name.startsWith(".install-") })

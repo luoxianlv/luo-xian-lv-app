@@ -39,10 +39,6 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
         previewScope.launch {
             project =
                 withContext(Dispatchers.IO) {
-                    runCatching {
-                        app.luoxianlv.wallpaper.data.BundledWallpaper.ensureInstalled(context)
-                    }
-                        .onFailure { AppLog.w("壁纸", "默认壁纸安装失败", it) }
                     WallpaperProjectStore.root(context)
                 }
             if (closed) return@launch

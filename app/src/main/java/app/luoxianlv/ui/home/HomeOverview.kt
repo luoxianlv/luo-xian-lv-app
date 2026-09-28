@@ -125,8 +125,11 @@ private fun HomeStagePill(
     val dark = MaterialTheme.colorScheme.background.luminance() < .5f
     // 位置只在点击时使用；页面滑动更新窗口坐标时无需触发重组。
     val bounds = remember { RectF() }
+    val requestWallpaper = app.luoxianlv.ui.wallpaper.rememberWallpaperRequest()
     Surface(
-        onClick = { openPracticeStage(context, RectF(bounds), dark, onPractice) },
+        onClick = {
+            requestWallpaper(false) { openPracticeStage(context, RectF(bounds), dark, onPractice) }
+        },
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceVariant,
         modifier =

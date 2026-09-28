@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -32,6 +31,7 @@ import app.luoxianlv.core.Analytics
 import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.ui.components.FloatingNavBar
 import app.luoxianlv.ui.components.NavBarClearance
+import app.luoxianlv.ui.components.NoticeSnackbarHost
 import app.luoxianlv.ui.discover.DiscoverScreen
 import app.luoxianlv.ui.discover.PlatformScreen
 import app.luoxianlv.ui.discover.SearchScreen
@@ -125,12 +125,11 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
         Analytics.pageStart(currentPage)
         onDispose { Analytics.pageEnd(currentPage) }
     }
-    androidx.compose.runtime.LaunchedEffect(updateState.message) {
-        updateState.message?.let {
-            snackbarHostState.showSnackbar(it)
-            appUpdates.consumeMessage()
-        }
-    }
+    app.luoxianlv.ui.components.SnackbarNotice(
+        updateState.message,
+        snackbarHostState,
+        appUpdates::consumeMessage,
+    )
 
     // 仅内部测试版：注册导出广播，adb 可主动触发更新弹窗用于 UI 验证。
     if (app.luoxianlv.BuildConfig.INTERNAL_BUILD) {
@@ -164,7 +163,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
         // 现在内边距只由系统栏决定，恒定的。
         // Snackbar 需要自己抬高，否则会被浮层胶囊盖住。
         snackbarHost = {
-            SnackbarHost(
+            NoticeSnackbarHost(
                 hostState = snackbarHostState,
                 modifier = Modifier.padding(bottom = NavBarClearance),
             )

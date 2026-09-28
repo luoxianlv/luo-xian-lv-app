@@ -14,7 +14,7 @@ object WallpaperProjectStore {
         context.getSharedPreferences("practice_wallpaper", Context.MODE_PRIVATE)
 
     fun hasBundled(context: Context) =
-        BundledWallpaper.available(context) || hasLegacyBundled(context)
+        DefaultWallpaper.installed(context) || hasLegacyBundled(context)
 
     fun hasLegacyBundled(context: Context) =
         context.assets.list("default-wallpaper")?.contains("scene.pkg") == true
@@ -36,7 +36,7 @@ object WallpaperProjectStore {
     }
 
     fun current(context: Context): File? {
-        val id = selectedId(context) ?: BundledWallpaper.ID
+        val id = selectedId(context) ?: DefaultWallpaper.ID
         if (!id.matches(Regex("[a-f0-9-]{36}"))) return null
         return AppStorage.wallpaperRoots(context)
             .map { File(it, id) }
@@ -189,14 +189,15 @@ object WallpaperProjectStore {
     data class Entry(val id: String?, val title: String, val root: File?)
 
     fun entries(context: Context): List<Entry> {
-        runCatching { BundledWallpaper.ensureInstalled(context) }
-            .onFailure { app.luoxianlv.debug.AppLog.w("壁纸", "默认壁纸尚未安装，仍可选择其他项目", it) }
-        val defaultRoot = BundledWallpaper.folder(context).takeIf { File(it, ".root").isFile }
+        val defaultRoot =
+            AppStorage.wallpaperRoots(context)
+                .map { File(it, DefaultWallpaper.ID) }
+                .firstOrNull { File(it, ".root").isFile }
         val defaults =
             listOf(
                 Entry(
                     null,
-                    if (defaultRoot != null) BundledWallpaper.TITLE
+                    if (defaultRoot != null) DefaultWallpaper.TITLE
                     else if (hasLegacyBundled(context)) "窗旁の伊蕾娜" else "默认背景",
                     defaultRoot,
                 )
@@ -204,7 +205,7 @@ object WallpaperProjectStore {
         val imported =
             AppStorage.wallpaperRoots(context)
                 .flatMap { it.listFiles().orEmpty().toList() }
-                .filter { it.name != BundledWallpaper.ID && File(it, ".root").isFile }
+                .filter { it.name != DefaultWallpaper.ID && File(it, ".root").isFile }
                 .distinctBy { it.name }
                 .mapNotNull { folder ->
                     if (
