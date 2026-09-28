@@ -3,6 +3,8 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 import time
 
 import oss2
@@ -24,12 +26,23 @@ def measure():
     )
     run = os.environ["GITHUB_RUN_ID"]
     assert run.isdigit()
-    key = f"luoxianlv/ci-probes/{run}/{route}.bin"
-    data = os.urandom(512 * 1024)
+    client = os.environ["OSS_CLIENT"]
+    size = int(os.environ["OSS_PROBE_SIZE"])
+    key = f"luoxianlv/ci-probes/{run}/{route}-{client}-{size}.bin"
+    data = os.urandom(size)
     started = time.monotonic()
     try:
-        print(f"测试 {route}：512 KiB 上传", flush=True)
-        bucket.put_object(key, data)
+        print(f"测试 {route}/{client}：{size} 字节上传", flush=True)
+        if client == "python":
+            bucket.put_object(key, data)
+        else:
+            with tempfile.TemporaryDirectory() as directory:
+                file = Path(directory)/"probe.bin"
+                file.write_bytes(data)
+                subprocess.run(["ossutil", "cp", str(file), f"oss://{bucket.bucket_name}/{key}",
+                                "--region", "cn-shanghai", "--endpoint", endpoint,
+                                "--parallel", "4", "--part-size", "4Mi", "--bigfile-threshold", "1Mi",
+                                "--force"], check=True, timeout=65)
         uploaded = time.monotonic()
         print(f"{route} 上传已确认：{uploaded-started:.2f}s", flush=True)
         response = bucket.get_object(key)
@@ -39,7 +52,7 @@ def measure():
             response.close()
         ended = time.monotonic()
         assert hashlib.sha256(data).digest() == hashlib.sha256(downloaded).digest()
-        line = f"{route}: 上传 {uploaded-started:.2f}s，回读 {ended-uploaded:.2f}s，SHA-256 一致"
+        line = f"{route}/{client}/{size}: 上传 {uploaded-started:.2f}s，回读 {ended-uploaded:.2f}s，SHA-256 一致"
         print(line, flush=True)
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
             summary.write(line + "\n")
@@ -53,13 +66,13 @@ def main():
         measure()
         return
     # 同一 runner 顺序测试；硬超时避免低速持续传输绕过 socket 空闲超时。
-    for route in ROUTES:
+    for client, size in [("python", 512*1024), ("ossutil", 512*1024), ("ossutil", 16*1024*1024)]:
         try:
             result = subprocess.run([sys.executable, "-u", __file__, "--worker"],
-                                    env=dict(os.environ, OSS_ROUTE=route), timeout=75)
-            print(f"{route} 检查结束：退出码 {result.returncode}", flush=True)
+                                    env=dict(os.environ, OSS_ROUTE="regional", OSS_CLIENT=client, OSS_PROBE_SIZE=str(size)), timeout=95)
+            print(f"{client}/{size} 检查结束：退出码 {result.returncode}", flush=True)
         except subprocess.TimeoutExpired:
-            print(f"{route} 超过 75 秒，终止本次测试", flush=True)
+            print(f"{client}/{size} 超过 95 秒，终止本次测试", flush=True)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install --disable-pip-version-check oss2==2.19.1
+      - name: Install verified ossutil
+        run: bash .github/scripts/install-ossutil.sh
       - name: Measure existing endpoint
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
