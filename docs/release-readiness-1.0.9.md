@@ -53,4 +53,4 @@ adb shell am instrument -w -e stress true -e label anr109 app.luoxianlv.debug.te
 
 ## 后续发布要求
 
-CI 检查后发布签名 v1.0.9；GitHub Release、OSS 上传与稳定更新部署按独立流程顺序执行。OSS 使用已实测的 BBR 配置，上传后完整回读并核对 SHA-256，成功后才部署更新清单。保留旧公开版本，手机端仅展示三条简短修复说明。
+CI 检查后发布签名 v1.0.9；GitHub Release、OSS 上传与稳定更新部署按独立流程顺序执行。OSS 使用已实测的 BBR 配置，上传后完整回读并核对 SHA-256，成功后才部署更新清单。保留旧公开版本，手机端按用户要求仅展示「修复了卡顿问题。」。
