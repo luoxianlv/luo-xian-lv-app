@@ -96,21 +96,6 @@ data class LibraryUiState(
      */
     val floatingRunning: Boolean
         get() = service.connected && service.floatingVisible
-
-    /**
-     * 首页状态胶囊文案。
-     *
-     * 四种情况都要能被用户分辨，且都能给出下一步动作： 无障碍没开就去设置、服务没绑上就再试一次、运行中/已关闭都可以点胶囊切换。 只把 [ServiceStatus.error]
-     * 留在「窗口没运行」时显示：窗口在跑时它的状态行 本来就会把错误写出来，胶囊这时候更该回答「关掉它要点哪里」。
-     */
-    val statusText: String
-        get() =
-            when {
-                !service.accessibilityEnabled -> "无障碍未开启 · 点击去开启"
-                !service.connected -> "无障碍服务未就绪 · 点击重试"
-                floatingRunning -> "悬浮窗运行中 · 点击关闭"
-                else -> service.error ?: "悬浮窗已关闭 · 点击开启"
-            }
 }
 
 /** 服务状态轮询间隔：只在页面订阅期间运行。 */

@@ -1,34 +1,37 @@
 package app.luoxianlv.ui.home
 
-import androidx.compose.foundation.background
+import android.graphics.RectF
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MusicVideo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -37,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.ui.components.ActionPill
+import app.luoxianlv.ui.practice.openPracticeStage
 import app.luoxianlv.ui.theme.OnBackdropContent
 
 /** 插画下方的信息与操作区。 */
@@ -44,11 +48,8 @@ import app.luoxianlv.ui.theme.OnBackdropContent
 internal fun HomeOverview(
     greeting: String,
     headline: String,
-    statusText: String,
-    statusColor: Color,
     minimumHeight: Dp,
     running: Boolean,
-    onStatusClick: () -> Unit,
     onToggleFloating: () -> Unit,
     onPractice: (Boolean) -> Unit,
     settingsButton: @Composable () -> Unit,
@@ -80,39 +81,15 @@ internal fun HomeOverview(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
-        Spacer(modifier = Modifier.height(6.dp))
-        HomeStageWindow(
-            onPractice = onPractice,
-            modifier = Modifier.align(Alignment.End).offset(x = 20.dp),
-        )
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 状态胶囊：无障碍 / 悬浮窗的连接状态
-        Surface(
-            onClick = onStatusClick,
-            shape = RoundedCornerShape(50),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(statusColor))
-                Spacer(modifier = Modifier.width(7.dp))
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = OnBackdropContent.copy(alpha = 0.72f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
+        // 演练场入口：原来这里是状态胶囊（「无障碍未开启 · 点击去开启」），
+        // 现在换成同款圆角按钮，幕布从按钮自身展开。
+        HomeStagePill(onPractice = onPractice)
 
         Spacer(modifier = Modifier.height(22.dp))
 
-        // 宽胶囊：启动 / 关闭，按真实运行状态切换。
-        // 动作对象由上方状态胶囊（“悬浮窗运行中 · 点击关闭”）交代，按钮只留动词，文案更短。
+        // 宽胶囊：启动 / 关闭，按真实运行状态切换；按钮只留动词，文案更短。
         // 左侧固定一枚「首页设置」图标（编辑一言 / 侧边栏开关）。
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             settingsButton()
@@ -133,6 +110,52 @@ internal fun HomeOverview(
             horizontalArrangement = Arrangement.Center,
         ) {
             VersionFooter()
+        }
+    }
+}
+
+/**
+ * 演练场入口：与状态胶囊同款的圆角按钮。
+ *
+ * 按钮自身的窗口坐标就是开场幕布的展开原点（退出时的碎光也飞回这里），
+ * 所以位置变化不影响转场，只要量的是实际布局边界。
+ */
+@Composable
+private fun HomeStagePill(
+    onPractice: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val dark = MaterialTheme.colorScheme.background.luminance() < .5f
+    var bounds by remember { mutableStateOf(RectF()) }
+    Surface(
+        onClick = { openPracticeStage(context, bounds, dark, onPractice) },
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier =
+            modifier.onGloballyPositioned {
+                val r = it.boundsInWindow()
+                bounds = RectF(r.left, r.top, r.right, r.bottom)
+            },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.MusicVideo,
+                contentDescription = null,
+                tint = OnBackdropContent.copy(alpha = 0.72f),
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(modifier = Modifier.width(7.dp))
+            Text(
+                text = "演练场",
+                style = MaterialTheme.typography.labelMedium,
+                color = OnBackdropContent.copy(alpha = 0.72f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
