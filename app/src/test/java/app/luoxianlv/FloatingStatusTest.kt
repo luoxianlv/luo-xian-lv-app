@@ -21,15 +21,16 @@ class FloatingStatusTest {
         accessibilityEnabled: Boolean = true,
         floatingVisible: Boolean = false,
         error: String? = null,
-    ) = LibraryUiState(
-        service =
-            ServiceStatus(
-                connected = connected,
-                accessibilityEnabled = accessibilityEnabled,
-                floatingVisible = floatingVisible,
-                error = error,
-            ),
-    )
+    ) =
+        LibraryUiState(
+            service =
+                ServiceStatus(
+                    connected = connected,
+                    accessibilityEnabled = accessibilityEnabled,
+                    floatingVisible = floatingVisible,
+                    error = error,
+                )
+        )
 
     @Test
     fun `只有服务在线且窗口可见才算运行中`() {

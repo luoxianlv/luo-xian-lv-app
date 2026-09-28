@@ -9,14 +9,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * 演练场入口的公共后勤。入口在首页的状态胶囊位（见 HomeOverview 的 HomeStagePill），
- * 这里放两件与入口形态无关的事：首页存活期间预热壁纸渲染器，以及带开幕动画的跳转。
+ * 演练场入口的公共后勤。入口在首页的状态胶囊位（见 HomeOverview 的 HomeStagePill）， 这里放两件与入口形态无关的事：首页存活期间预热壁纸渲染器，以及带开幕动画的跳转。
  */
 
-/**
- * 壁纸预热：resume 后延迟 500ms 准备（避开首页自身的进场动画）， pause 挂起渲染省电，销毁时彻底清理。
- * 挂在首页根部组合里，只要「我的」页还在就持续有效。
- */
+/** 壁纸预热：resume 后延迟 500ms 准备（避开首页自身的进场动画）， pause 挂起渲染省电，销毁时彻底清理。 挂在首页根部组合里，只要「我的」页还在就持续有效。 */
 @Composable
 fun StagePrewarmEffect() {
     val context = LocalContext.current

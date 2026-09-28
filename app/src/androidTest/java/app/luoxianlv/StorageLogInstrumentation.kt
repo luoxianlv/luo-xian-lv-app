@@ -29,6 +29,14 @@ class StorageLogInstrumentation : Instrumentation() {
         val previous = prefs.getString("project", null)
         val oldLog = File(targetContext.filesDir, "playback-debug/play-debug-迁移测试-$id.log")
         try {
+            // 等启动迁移结束再创建旧版样本，避免后台线程抢先迁移导致前置断言失效。
+            Thread.getAllStackTraces()
+                .keys
+                .filter { it.name == "storage-migration" }
+                .forEach {
+                    it.join(30000)
+                    check(!it.isAlive) { "启动迁移未结束" }
+                }
             check(
                 AppStorage.root(targetContext).canonicalFile ==
                     targetContext.getExternalFilesDir(null)!!.canonicalFile
