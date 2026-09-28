@@ -30,6 +30,29 @@ def load_script(name):
 
 publish = load_script("publish-oss")
 provenance = load_script("validate-oss-run")
+probe = load_script("check-oss")
+
+
+class ProbeTests(unittest.TestCase):
+    def test_rejects_non_test_paths(self):
+        for run, transport in (("../release", "bbr"), ("123", "../release")):
+            with patch.dict(os.environ, GITHUB_RUN_ID=run, OSS_TRANSPORT=transport):
+                with self.assertRaises(ValueError):
+                    probe.test_key()
+
+    def test_timeout_cleans_only_exact_object_and_preserves_failure(self):
+        key = "luoxianlv/ci-probes/123/bbr-production.bin"
+        bucket = Mock()
+        uploads = [Mock(key=key, upload_id="owned"), Mock(key=key + ".other", upload_id="other")]
+        with patch.dict(os.environ, GITHUB_RUN_ID="123", OSS_TRANSPORT="bbr"), \
+             patch.object(sys, "argv", ["check-oss.py"]), \
+             patch.object(probe, "create_bucket", return_value=bucket), \
+             patch.object(probe.oss2, "MultipartUploadIterator", return_value=uploads), \
+             patch.object(probe.subprocess, "run", side_effect=probe.subprocess.TimeoutExpired("probe", 90)):
+            with self.assertRaises(probe.subprocess.TimeoutExpired):
+                probe.main()
+        bucket.delete_object.assert_called_once_with(key)
+        bucket.abort_multipart_upload.assert_called_once_with(key, "owned")
 
 
 class ReleaseTests(unittest.TestCase):
