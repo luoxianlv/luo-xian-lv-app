@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "AutoPlayMusic"
 include(":app")
+include(":hot-core")
