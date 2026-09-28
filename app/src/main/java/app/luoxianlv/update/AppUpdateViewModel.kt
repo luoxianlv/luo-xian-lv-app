@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.data.Kv
+import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -41,14 +42,14 @@ data class AppUpdateState(
     val message: String? = null,
 )
 
-/** Activity-scoped state shared by foreground checks, About and the single dialog host. */
+/** Activity 级更新状态，由前台检查、关于页和唯一弹窗宿主共享。 */
 class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
     private val prefs = Kv.of(app, "app_updates")
     private val _state = MutableStateFlow(AppUpdateState())
     val state = _state.asStateFlow()
     private var job: Job? = null
     private val baseUrl = BuildConfig.UPDATE_BASE_URL.trimEnd('/')
-    private val cacheDir = File(app.cacheDir, "updates").apply { mkdirs() }
+    private val cacheDir = AppStorage.updates(app)
 
     init {
         cleanupCache()
@@ -177,7 +178,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         val partial = File(cacheDir, target.name + ".part")
         var connection: HttpURLConnection? = null
         try {
-            // Validate every redirect; GitHub redirects to release-assets.githubusercontent.com.
+            // 逐次校验重定向；GitHub 会跳至 release-assets.githubusercontent.com。
             var next = url
             for (redirect in 0..5) {
                 connection = open(next)
@@ -291,7 +292,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
     private fun sha256Hex(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    /** Remove interrupted downloads and retain only the two newest APKs. */
+    /** 清理中断下载，仅保留最新两个 APK。 */
     private fun cleanupCache() {
         runCatching {
             cacheDir.listFiles()?.filter { it.name.endsWith(".part") }?.forEach { it.delete() }
@@ -352,7 +353,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
-    /** Debug-only: adb 可主动触发更新弹窗（am broadcast -a app.luoxianlv.DEBUG_TRIGGER_UPDATE）。 */
+    /** 仅内部测试版: adb 可主动触发更新弹窗（am broadcast -a app.luoxianlv.DEBUG_TRIGGER_UPDATE）。 */
     fun debugTriggerUpdate() {
         if (!BuildConfig.INTERNAL_BUILD) return
         val code = BuildConfig.VERSION_CODE + 1

@@ -20,14 +20,8 @@ data class Song(
     val needsFix: Boolean = false,
 ) {
     /**
-     * 谱面事件：解析失败退化为空谱面，**绝不向上抛**。
-     *
-     * 解析是惰性的，而列表行渲染要读 [durationMs]（→ 这里），[ScoreParser] 对不合法 谱面抛
-     * IllegalArgumentException；一旦抛在组合期，整个曲库页直接闪退。 坏谱面（导入时未校验的 MIDI 编译结果、热更下发、旧版本写入的旧格式）
-     * 以后只表现为「0:00、播放不起来」，不再把 App 带崩。
-     *
-     * 空事件在播放侧是安全的：[PlaybackTimeline] 的 offsets 恒有 events.size + 1 个元素（durationMs 为
-     * 0），MusicAccessibilityService.play() 也会在 events 为空时早退。
+     * 惰性解析谱面，失败返回空事件，避免 [durationMs] 在组合期间触发崩溃。空谱时长为 0；PlaybackTimeline 仍保留 events.size + 1
+     * 个偏移，播放端直接返回。
      */
     val events: List<NoteEvent> by lazy {
         runCatching { trimLeadIn(ScoreParser.parse(score), bpm) }.getOrDefault(emptyList())
@@ -38,12 +32,7 @@ data class Song(
     val noteCount: Int
         get() = events.count { !it.rest }
 
-    /**
-     * 是否由 MIDI 编译而来。
-     *
-     * 同时决定列表图标与「MIDI / 简谱」筛选归类： source 的取值（"MIDI · Rust 编译" / "MIDI · 引擎编译" / "简谱" / "平台下载" …）
-     * 都由本文件写入，所以判断规则也放在这里，界面不再自己拼字符串。
-     */
+    /** 按 source 的 MIDI 前缀统一判定来源，供列表图标和筛选使用。 */
     val isMidi: Boolean
         get() = source.startsWith("MIDI")
 }

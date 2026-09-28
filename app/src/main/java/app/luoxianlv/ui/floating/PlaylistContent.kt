@@ -17,7 +17,7 @@ internal data class PlaylistContent(
     val list: LinearLayout,
 )
 
-/** Local list rendering; window placement and playback remain with the service. */
+/** 负责本地列表绘制；窗口位置和播放由服务管理。 */
 internal fun createPlaylistContent(
     context: Context,
     palette: PlayerUiPalette,

@@ -11,8 +11,6 @@ internal object UpdateAutoCheck {
     // 强制开启检查，忽略旧版本保存的关闭状态；保留原读取逻辑供恢复。
     @Suppress("UNUSED_PARAMETER") fun isEnabled(context: Context): Boolean = true
 
-    // fun isEnabled(context: Context): Boolean = Kv.of(context, STORE).getBoolean(KEY, true)
-
     fun setEnabled(
         context: Context,
         enabled: Boolean,

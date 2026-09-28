@@ -1,4 +1,4 @@
-/** Native suspension and document visibility are independent reasons to pause. */
+/** 原生暂停和页面隐藏是两个独立的暂停条件。 */
 export function bindWallpaperLifecycle(host, doc) {
   let scene = null;
   let suspended = !!host.wallpaperSuspended;

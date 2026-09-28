@@ -14,7 +14,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import app.luoxianlv.audio.HarmonicaSampler
-import app.luoxianlv.debug.PlaybackDebugLog
+import app.luoxianlv.debug.AppLog
 import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.wallpaper.render.PracticeBackdrop
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** A separate window owns landscape/system bars; leaving restores the untouched main window. */
+/** 演练场独占横屏系统栏；退出后恢复首页窗口。 */
 class PracticeActivity : AppCompatActivity() {
     private var sampler: HarmonicaSampler? = null
     private var keyboard: PracticeKeyboard? = null
@@ -60,7 +60,7 @@ class PracticeActivity : AppCompatActivity() {
         PracticePlaybackGate.enter()
         MusicAccessibilityService.instance?.pause()
         val root = FrameLayout(this).apply { setBackgroundColor(Color.rgb(6, 8, 7)) }
-        // Transfer the prepared renderer; the curtain stays opaque until its first frame is ready.
+        // 移交已预加载的渲染器；真实壁纸首帧就绪前保持幕层不透明。
         backdrop =
             app.luoxianlv.wallpaper.render.PreparedWallpaper.take(this).also {
                 root.addView(it, FrameLayout.LayoutParams(-1, -1))
@@ -81,8 +81,7 @@ class PracticeActivity : AppCompatActivity() {
         root.addView(veil, FrameLayout.LayoutParams(-1, -1))
         veil.isClickable = true
         setContentView(root)
-        // Orientation is requested by the manifest at launch, before any opening animation.
-        // Background fills the cutout area. Only controls, never the root, get safe insets.
+        // 清单在启动时请求横屏；背景铺满刘海区，仅控件应用安全边距。
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             keyboard?.safeRight = cutout.right
@@ -105,8 +104,7 @@ class PracticeActivity : AppCompatActivity() {
                 loadedSamples = samples
                 while (!resumed && !isFinishing) delay(50)
                 if (isFinishing) return@launch
-                // Wait for a usable stable landscape area, bounded for tablets/multi-window
-                // overrides.
+                // 等待横屏尺寸稳定；为平板和多窗口限制设置等待上限。
                 var lastSize = Triple(0, 0, -1)
                 var stable = 0
                 var attempts = 0
@@ -141,7 +139,7 @@ class PracticeActivity : AppCompatActivity() {
                 }
                 while (!resumed && !isFinishing && !exiting) delay(50)
                 if (isFinishing || exiting) return@launch
-                // Keep the opaque light surface until the actual wallpaper is ready.
+                // 真实壁纸就绪前保持遮罩不透明。
                 while (backdrop?.prepared == false && !isFinishing && !exiting) delay(50)
                 while (!resumed && !isFinishing) delay(50)
                 if (isFinishing || exiting) return@launch
@@ -194,7 +192,7 @@ class PracticeActivity : AppCompatActivity() {
                 }
             } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
-                PlaybackDebugLog.log("practice load failed ${error.message}")
+                AppLog.e("演练场", "加载失败", error)
                 Toast.makeText(this@PracticeActivity, "口琴音源加载失败，请重新进入重试", Toast.LENGTH_LONG).show()
                 finish()
             }
@@ -219,7 +217,7 @@ class PracticeActivity : AppCompatActivity() {
         sampler?.close()
         sampler = null
         val veil = curtain ?: return finish()
-        // Request rotation immediately; gathering runs concurrently, never before it.
+        // 立即请求转屏，同时执行粒子回收，不先等待动画。
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         if (Build.VERSION.SDK_INT >= 33) gravityLens?.clear()
         veil.gatherExit(
@@ -253,7 +251,7 @@ class PracticeActivity : AppCompatActivity() {
         )
             return
         PracticePlaybackGate.setReady(true)
-        PlaybackDebugLog.log("practice ready ${keyboard?.width}x${keyboard?.height}")
+        AppLog.log("演练场已就绪：尺寸=${keyboard?.width}x${keyboard?.height}")
     }
 
     private fun stopSession() {
@@ -268,7 +266,7 @@ class PracticeActivity : AppCompatActivity() {
     }
 
     override fun finish() {
-        // Stop immediately on exit, including while the window's exit transition is still running.
+        // 退出即停止播放，包括窗口退出动画尚未结束时。
         stopSession()
         super.finish()
         overridePendingTransition(0, 0)

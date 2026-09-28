@@ -5,7 +5,7 @@ import java.io.File
 internal object DiagnosticRetention {
     const val MAX_BYTES = 50L * 1024 * 1024
 
-    /** Only diagnostic files are eligible; downloaded update APKs are never touched. */
+    /** 仅清理诊断文件，不删除下载的更新 APK。 */
     fun trim(logDirectory: File, exportDirectory: File, limit: Long = MAX_BYTES) {
         val files =
             logDirectory.walkTopDown().filter { it.isFile }.toList() +

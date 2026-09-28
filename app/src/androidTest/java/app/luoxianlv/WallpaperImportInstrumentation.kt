@@ -165,7 +165,8 @@ class WallpaperImportInstrumentation : Instrumentation() {
                             all(activity.window.decorView)
                                 .filterIsInstance<PracticeBackdrop>()
                                 .firstOrNull()
-                                ?.renderState == "ready"
+                                ?.renderState == "ready" &&
+                                app.luoxianlv.ui.practice.PracticePlaybackGate.ready
                     }
                     if (!ready) Thread.sleep(200)
                 }
@@ -233,7 +234,7 @@ class WallpaperImportInstrumentation : Instrumentation() {
                 WallpaperProjectStore.scenePackage(WallpaperProjectStore.root(targetContext)!!)!!
                     .length() == 84230588L
             )
-            // Instrumentation ends the process immediately; flush fixture cleanup first.
+            // 测试结束会立即终止进程，须先同步写入样本清理结果。
             check(
                 targetContext
                     .getSharedPreferences(

@@ -15,7 +15,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Black-box checks for the actual R8 distribution: no dependency on stripped app internals. */
+/** 验证实际 R8 分发包的外部行为，不依赖已裁剪的应用内部类。 */
 public final class CompactRenderInstrumentation extends Instrumentation {
     @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
     private void require(boolean value, String message) {

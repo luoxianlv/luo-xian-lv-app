@@ -8,7 +8,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import app.luoxianlv.ui.floating.PlayerUi.dp
 
-/** Progress painting and seek input, independent of overlay window management. */
+/** 负责进度绘制和拖动输入，不管理悬浮窗口。 */
 internal class FloatingProgressView(
     context: Context,
     palette: PlayerUiPalette,

@@ -6,7 +6,7 @@ import app.luoxianlv.data.SongRepository
 import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.service.MusicAccessibilityService
 
-/** Runs content updates in the background without exposing a manual control. */
+/** 后台更新内容，不提供额外手动入口。 */
 class HotUpdateCoordinator(
     context: Context,
     private val repository: SongRepository,

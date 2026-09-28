@@ -1,5 +1,4 @@
-// A hidden time-of-day layer must release its decoder. Four 4K layers plus
-// double-buffered looping can exhaust Android codecs even while paused.
+// 隐藏视频图层须释放解码器；多个 4K 图层叠加双缓冲循环，即使暂停也可能耗尽 Android 解码资源。
 export function createSceneVideo(src, options) {
   const active = document.createElement('video');
   const standby = document.createElement('video'); // API placeholder, never allocates a decoder.

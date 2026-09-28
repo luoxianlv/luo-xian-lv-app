@@ -9,19 +9,19 @@ let scene;
 let videoFrameReady = false;
 window.wallpaperState = 'loading';
 function failure(error) {
-  console.error('Wallpaper: ' + String(error));
+  console.error('壁纸加载失败：' + String(error));
   window.wallpaperState = 'error';
   document.title = 'wallpaper:error';
 }
 try {
   const projectResponse = await fetch('/project/project.json', {cache:'no-store'});
-  if (!projectResponse.ok) throw Error('project.json missing');
+  if (!projectResponse.ok) throw Error('缺少 project.json');
   const project = await projectResponse.json();
   project.type = String(project.type).toLowerCase();
   let source;
   if (project.type === 'scene') {
     const response = await fetch('/project/scene.pkg', {cache:'no-store'});
-    if (!response.ok) throw Error('scene.pkg missing');
+    if (!response.ok) throw Error('缺少 scene.pkg');
     source = bytesSource(await response.arrayBuffer(), project, String(project.workshopid || 'local'));
   } else {
     const file = String(project.file || (project.type === 'web' ? 'index.html' : '')).replaceAll('\\','/');
@@ -37,14 +37,14 @@ try {
     quality: {antiAliasing:'off', particles:'low', postProcessing:'high'},
     onDiagnostic: (message, level) => {
       if (message.includes('video tex ready ')) videoFrameReady = true;
-      console.log('Wallpaper ' + level + ': ' + message);
+      console.log('壁纸引擎诊断（' + level + '）：' + message);
     },
     onError: failure,
   });
   if (project.type === 'scene' && document.querySelector('video[src]')) {
     const deadline = performance.now() + 45000;
     while (!videoFrameReady && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
-    if (!videoFrameReady) throw Error('Video first frame timed out');
+    if (!videoFrameReady) throw Error('视频首帧等待超时');
   }
   lifecycle.attach(scene);
   window.wallpaperState = 'ready';

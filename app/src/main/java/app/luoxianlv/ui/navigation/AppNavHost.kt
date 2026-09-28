@@ -120,7 +120,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
         }
     }
 
-    // Debug-only：注册导出广播，adb 可主动触发更新弹窗用于 UI 验证。
+    // 仅内部测试版：注册导出广播，adb 可主动触发更新弹窗用于 UI 验证。
     if (app.luoxianlv.BuildConfig.INTERNAL_BUILD) {
         val context = LocalContext.current
         androidx.compose.runtime.DisposableEffect(Unit) {

@@ -8,10 +8,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-/**
- * Recover low-contrast labels, then complete a partially observed row. Long scenery edges are
- * excluded before connected-component grouping.
- */
+/** 恢复低对比标签并补全缺失项；连通域分组前先排除场景长边缘。 */
 internal fun locateModeText(
     luma: FloatArray,
     w: Int,
@@ -70,11 +67,7 @@ internal fun locateModeText(
     return completeModeRow(evidence, xs, y, spacing, noteH)
 }
 
-/**
- * Fit translation from at least two distinct, aligned labels. A single bright scene feature is
- * never enough to invent a row of mode buttons. h=0 marks inferred labels so their occluded state
- * remains unknown.
- */
+/** 至少用两个不同且对齐的标签拟合平移，禁止由单个亮点推算整行；推算标签的 h=0，遮挡时状态仍为未知。 */
 internal fun completeModeRow(
     evidence: List<Label>,
     xs: FloatArray,

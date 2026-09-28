@@ -14,9 +14,7 @@ import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.ui.theme.LuoXianLvTheme
 import app.luoxianlv.ui.wallpaper.WallpaperPickerScreen
 
-/**
- * Portrait library of original project previews; selection applies before the next stage starts.
- */
+/** 竖屏预览原始壁纸；选择在下次进入演练场前生效。 */
 class WallpaperPickerActivity : AppCompatActivity() {
     private fun returnFromPicker() {
         if (intent.getBooleanExtra("returnToPractice", false))

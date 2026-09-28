@@ -29,7 +29,7 @@ class DebugAnalyticsTest {
                 Class.forName(name)
                 fail("Debug must not contain $name")
             } catch (_: ClassNotFoundException) {
-                // Build-type dependency isolation, not just a runtime toggle.
+                // 通过构建依赖隔离统计 SDK，而不是只关闭运行时开关。
             }
         }
     }

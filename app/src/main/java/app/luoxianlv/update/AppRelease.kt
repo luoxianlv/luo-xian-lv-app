@@ -55,7 +55,7 @@ private fun parseReleaseNotes(value: Any?): List<ReleaseNoteSection> {
         .filter { it.items.isNotEmpty() }
 }
 
-/** Strictly newer APKs only; channel URLs must refer to the same signed artifact. */
+/** 仅接受更高版本；各渠道链接必须指向同一签名安装包。 */
 fun parseAppRelease(
     json: JSONObject,
     currentCode: Int,

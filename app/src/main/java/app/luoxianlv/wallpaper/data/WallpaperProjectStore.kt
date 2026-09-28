@@ -3,11 +3,12 @@ package app.luoxianlv.wallpaper.data
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.util.UUID
 import org.json.JSONObject
 
-/** Copies originals into private storage; a failed import never replaces the selected project. */
+/** 复制原始项目到应用专属外部目录；导入失败不改变当前选择。 */
 object WallpaperProjectStore {
     private fun prefs(context: Context) =
         context.getSharedPreferences("practice_wallpaper", Context.MODE_PRIVATE)
@@ -39,7 +40,9 @@ object WallpaperProjectStore {
         initializeDefault(context)
         val id = prefs(context).getString("project", null) ?: return null
         if (!id.matches(Regex("[a-f0-9-]{36}"))) return null
-        return File(context.filesDir, "wallpapers/$id").takeIf { File(it, ".root").isFile }
+        return AppStorage.wallpaperRoots(context)
+            .map { File(it, id) }
+            .firstOrNull { File(it, ".root").isFile }
     }
 
     fun reset(context: Context) {
@@ -62,7 +65,7 @@ object WallpaperProjectStore {
     fun import(context: Context, uri: Uri, tree: Boolean, checkpoint: () -> Unit = {}): String {
         initializeDefault(context)
         val id = UUID.randomUUID().toString()
-        val staging = File(context.filesDir, "wallpapers/$id").apply { mkdirs() }
+        val staging = File(AppStorage.wallpapers(context), id).apply { mkdirs() }
         val budget = WallpaperArchive.Budget(staging, checkpoint)
         var archive: File? = null
         try {
@@ -114,9 +117,10 @@ object WallpaperProjectStore {
                 }
                 walk(DocumentsContract.getTreeDocumentId(uri), "", 0)
             } else {
-                val copiedArchive = File.createTempFile("wallpaper-", ".zip", context.cacheDir)
+                val copiedArchive =
+                    File.createTempFile("wallpaper-", ".zip", AppStorage.imports(context))
                 archive = copiedArchive
-                val archiveBudget = WallpaperArchive.Budget(context.cacheDir, checkpoint)
+                val archiveBudget = WallpaperArchive.Budget(AppStorage.imports(context), checkpoint)
                 requireNotNull(resolver.openInputStream(uri)).use {
                     archiveBudget.copy(it, copiedArchive)
                 }
@@ -168,16 +172,16 @@ object WallpaperProjectStore {
                 require(WallpaperArchive.resolve(projectRoot, entry) != null) { "项目入口文件不存在：$entry" }
             }
             checkpoint()
-            // ZIPs may have one enclosing directory. Keep the originals and record its relative
-            // root.
+            // ZIP 可含一层外目录；保留原文件，并记录项目根的相对路径。
             require(!File(staging, ".root").exists()) { "项目包含保留文件名" }
             File(staging, ".root")
                 .writeText(projectFile.parentFile!!.relativeTo(staging).path, Charsets.UTF_8)
             check(prefs(context).edit().putString("project", id).commit()) { "无法保存项目选择" }
+            app.luoxianlv.debug.AppLog.i("壁纸", "导入成功：项目=$id；类型=$type；目录=${staging.absolutePath}")
             return project.optString("title", "壁纸项目")
         } catch (error: Exception) {
-            // Only this newly-created UUID directory is removed, never the source or previous
-            // project.
+            // 失败只删除本次新建的 UUID 目录，不触碰源文件和已有项目。
+            app.luoxianlv.debug.AppLog.w("壁纸", "导入失败：项目=$id", error)
             staging.deleteRecursively()
             throw error
         } finally {
@@ -190,9 +194,10 @@ object WallpaperProjectStore {
     fun entries(context: Context): List<Entry> {
         val defaults = listOf(Entry(null, if (hasBundled(context)) "窗旁の伊蕾娜" else "默认背景", null))
         val imported =
-            File(context.filesDir, "wallpapers")
-                .listFiles()
-                .orEmpty()
+            AppStorage.wallpaperRoots(context)
+                .flatMap { it.listFiles().orEmpty().toList() }
+                .filter { File(it, ".root").isFile }
+                .distinctBy { it.name }
                 .mapNotNull { folder ->
                     if (
                         !folder.name.matches(Regex("[a-f0-9-]{36}")) ||
@@ -216,7 +221,7 @@ object WallpaperProjectStore {
                     }
                         .getOrNull()
                 }
-                .sortedByDescending { File(context.filesDir, "wallpapers/${it.id}").lastModified() }
+                .sortedByDescending { it.root?.lastModified() ?: 0L }
         return defaults + imported
     }
 

@@ -1,9 +1,6 @@
 package app.luoxianlv.audio
 
-/**
- * Mono PCM renderer, independent of Android. Loop overlap keeps the original attack out of the
- * sustain.
- */
+/** 独立于 Android 的单声道 PCM 渲染器；循环交叠避开起音渐强段，保持延音连续。 */
 data class HarmonicaSample(
     val pcm: ShortArray,
     val loopStart: Int,

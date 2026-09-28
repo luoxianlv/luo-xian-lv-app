@@ -8,11 +8,7 @@ data class HotUpdate(
     val payload: JSONObject,
 )
 
-/**
- * A score returned by the platform library endpoint. The optional fields keep the client compatible
- * with both the current demo API and the signed content records used by production (`contentUrl`,
- * `updatedAt`).
- */
+/** 平台曲目记录；可选的 contentUrl、updatedAt 兼容演示接口与正式签名内容。 */
 data class SyncedScore(
     val id: String,
     val title: String,

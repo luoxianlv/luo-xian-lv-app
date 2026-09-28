@@ -5,9 +5,7 @@ import android.os.Build
 import kotlin.math.*
 import kotlin.random.Random
 
-/**
- * White sphere and irregular 3D shards. Cached geometry is projected and depth-sorted each frame.
- */
+/** 白色球体及不规则立体碎片；复用几何，每帧投影并按深度排序。 */
 internal class StageLightRenderer(private val dark: Boolean) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()

@@ -11,6 +11,7 @@ import app.luoxianlv.BuildConfig
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.Kv
 import app.luoxianlv.service.MusicAccessibilityService
+import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -22,16 +23,18 @@ import org.json.JSONObject
 
 /** 打包调试信息（日志/截图/布局/设备信息）成 ZIP 并通过 FileProvider 分享。 */
 object DebugExport {
+    /** 只生成诊断包，不启动分享界面；导出前等待后台日志写入。 */
+    suspend fun create(context: Context): File =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            AppLog.init(context)
+            AppLog.flush()
+            AppLog.withSnapshot { export(context) }
+        }
+
     suspend fun exportAndShare(context: Context): Boolean {
         val file =
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
-                    PlaybackDebugLog.init(context)
-                    PlaybackDebugLog.flush()
-                    PlaybackDebugLog.withSnapshot { export(context) }
-                }
-                    .getOrNull()
-            } ?: return false
+            runCatching { create(context) }.onFailure { AppLog.e("诊断", "生成诊断包失败", it) }.getOrNull()
+                ?: return false
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
             runCatching {
                 val uri =
@@ -51,11 +54,11 @@ object DebugExport {
     }
 
     private fun export(context: Context): File {
-        val dir = PlaybackDebugLog.directory()
+        val dir = AppLog.directory()
         val zipFile =
             File(
-                context.cacheDir,
-                "updates/luoxianlv-debug-" +
+                AppStorage.diagnostics(context),
+                "luoxianlv-debug-" +
                     SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) +
                     ".zip",
             )
@@ -66,6 +69,15 @@ object DebugExport {
             ?.drop(2)
             ?.forEach { it.delete() }
         ZipOutputStream(FileOutputStream(zipFile)).use { zip ->
+            zip.putNextEntry(ZipEntry("说明.txt"))
+            zip.write(
+                ("落弦律诊断包（UTF-8）\n" +
+                        "日志：logs；截图：shots；设备原始字段：device.json；播放与识别状态：diagnostics.json。\n" +
+                        "文件目录：${AppStorage.root(context).absolutePath}\n" +
+                        "技术字段及异常原文保持原样，便于定位问题。\n")
+                    .toByteArray(Charsets.UTF_8)
+            )
+            zip.closeEntry()
             zip.putNextEntry(ZipEntry("device.json"))
             zip.write(deviceInfo(context).toString(2).toByteArray(Charsets.UTF_8))
             zip.closeEntry()
@@ -84,7 +96,7 @@ object DebugExport {
                 zip.closeEntry()
             }
         }
-        PlaybackDebugLog.trim()
+        AppLog.trim()
         check(zipFile.isFile) { "诊断文件超过留存上限" }
         return zipFile
     }

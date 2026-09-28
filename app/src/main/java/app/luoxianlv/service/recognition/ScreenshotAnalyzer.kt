@@ -3,13 +3,12 @@ package app.luoxianlv.service.recognition
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
 import android.os.SystemClock
-import android.util.Log
-import app.luoxianlv.debug.PlaybackDebugLog
+import app.luoxianlv.debug.AppLog
 import app.luoxianlv.profile.ScreenRecognizer
 import app.luoxianlv.service.MusicAccessibilityService
 
 internal object ScreenshotAnalyzer {
-    /** Worker-only image conversion/analysis; never touches playback or views. */
+    /** 图像转换和识别仅在工作线程执行，不操作播放状态或视图。 */
     fun recognize(screenshot: AccessibilityService.ScreenshotResult): ScreenRecognizer.Result? {
         val started = SystemClock.uptimeMillis()
         val result = runCatching {
@@ -26,29 +25,28 @@ internal object ScreenshotAnalyzer {
                     hardware?.recycle()
                 }
             try {
-                bitmap?.let(PlaybackDebugLog::saveScreenshot)
-                PlaybackDebugLog.log("screenshot ${bitmap?.width}x${bitmap?.height} analyze start")
+                bitmap?.let(AppLog::saveScreenshot)
+                AppLog.log("开始分析截图：尺寸=${bitmap?.width}x${bitmap?.height}")
                 bitmap?.let(ScreenRecognizer::fromBitmap)
             } finally {
                 bitmap?.recycle()
             }
         }
             .onFailure {
-                Log.w(MusicAccessibilityService.TAG, "截图识别失败", it)
-                PlaybackDebugLog.log("recognize failure: ${it.message}")
+                AppLog.w(MusicAccessibilityService.TAG, "截图识别失败", it)
             }
             .getOrNull()
-        PlaybackDebugLog.log("recognition elapsedMs=${SystemClock.uptimeMillis() - started}")
-        PlaybackDebugLog.log(
+        AppLog.log("识别耗时毫秒=${SystemClock.uptimeMillis() - started}")
+        AppLog.log(
             result?.let { r ->
-                "recognized noteX=" +
+                "识别结果：音符横坐标=" +
                     r.layout.noteX.joinToString(",") { "%.3f".format(it) } +
-                    " noteY=" +
+                    " 音符纵坐标=" +
                     "%.3f".format(r.layout.noteY) +
-                    " mode=${r.mode} half=${r.halfTone}" +
-                    " observedNotes=${r.observedNotes}/8 observedModes=${r.observedModes}/4" +
-                    " noteBorders=${r.noteBorders}/8 modeBorders=${r.modeBorders}/4"
-            } ?: "recognize returned null"
+                    " 音区=${r.mode} 半音=${r.halfTone}" +
+                    " 直接识别音符=${r.observedNotes}/8 直接识别音区=${r.observedModes}/4" +
+                    " 音符边框=${r.noteBorders}/8 音区边框=${r.modeBorders}/4"
+            } ?: "识别结果为空"
         )
         return result
     }

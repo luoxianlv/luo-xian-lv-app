@@ -1,6 +1,6 @@
 package app.luoxianlv.service
 
-/** An interruption and the finger tap that caused it are one user action. */
+/** 手势中断与引发中断的点击视为同一次用户操作。 */
 internal class PlaybackInterruptionGuard {
     private var interruptedAt: Long? = null
 

@@ -53,7 +53,7 @@ class PlaybackButtonInstrumentation : Instrumentation() {
                 }
                 touch(MotionEvent.ACTION_DOWN)
                 check(!active && pauses == 1) { "Pause was not immediate" }
-                // Cancellation callback/state redraw happens before the finger is lifted.
+                // 模拟手指尚未抬起时，手势取消回调已触发状态重绘。
                 active = false
                 touch(MotionEvent.ACTION_UP)
                 check(!active && toggles == 0) { "Lifting pause finger restarted playback" }

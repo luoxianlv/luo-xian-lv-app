@@ -12,7 +12,7 @@ class LuoXianLvApp : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         app.luoxianlv.wallpaper.render.WallpaperPreview.clearCache()
-        // Only the unused home cache is owned here; never destroy the active stage.
+        // 仅回收首页闲置缓存，不销毁正在使用的演练场。
         if (level >= TRIM_MEMORY_BACKGROUND || level == TRIM_MEMORY_RUNNING_CRITICAL) {
             app.luoxianlv.wallpaper.render.PreparedWallpaper.clear()
         }
@@ -20,6 +20,19 @@ class LuoXianLvApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        app.luoxianlv.debug.AppLog.init(this)
+        Thread(
+                {
+                    app.luoxianlv.storage.AppStorage.migrate(this) {
+                        app.luoxianlv.debug.AppLog.i("存储", it)
+                    }
+                },
+                "storage-migration",
+            )
+            .apply {
+                isDaemon = true
+                start()
+            }
         Analytics.preInitialize(this)
     }
 }

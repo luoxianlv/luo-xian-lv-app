@@ -10,7 +10,7 @@ import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import java.io.File
 import java.nio.ByteBuffer
 
-/** Bounded preview decode shared by the picker and the stage's first frame. */
+/** 选择器和舞台首帧共用有尺寸上限的预览解码。 */
 object WallpaperPreview {
     private var cachedKey: String? = null
     private var cachedBytes: ByteArray? = null

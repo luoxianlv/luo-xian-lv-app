@@ -16,7 +16,7 @@ import app.luoxianlv.service.bindPlaybackButton
 import app.luoxianlv.ui.floating.PlayerUi.dp
 import kotlin.math.roundToInt
 
-/** Expanded overlay controls. Window placement and lifecycle belong to FloatingControls. */
+/** 展开态悬浮控件；窗口定位和生命周期由 FloatingControls 管理。 */
 internal class FloatingPanel(
     context: Context,
     private val palette: PlayerUiPalette,

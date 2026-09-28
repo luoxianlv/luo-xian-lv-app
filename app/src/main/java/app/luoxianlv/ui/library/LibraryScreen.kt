@@ -248,14 +248,8 @@ private fun SongFilterRow(
 }
 
 /**
- * 分段按钮配色。
- *
- * 三个都是被底色逼出来的选择：
- * 1. 未选中态必须给 surface 白底 —— Material 默认是透明色， 透明容器直接压在渐变底上就只剩一圈细边框，看着像控件失效。
- * 2. 选中态用主题的 [LocalBackdropPalette.segmentSelected] 而不是 primaryContainer： primaryContainer
- *    是浅蓝，压在同为蓝灰的渐变底上， 和白底的未选中态几乎分不出来，选中的那一格会「消失」。 这个块深浅两套各给一个值：浅色是半透明深藏青， 深色反过来要比未选中的 surface
- *    更亮才叫「选中」（见 Backdrop.kt）。
- * 3. 两态的边框全透明：outlineVariant 的灰框会让整行看起来像 三个描边小盒拼在一起，和圆角卡片格格不入；去掉后整行融成 一个圆角长条（选中格是唯一强调），分隔交给底色对比完成。
+ * 未选中态使用 surface，避免透明底在渐变上难以辨认；选中态使用 [LocalBackdropPalette.segmentSelected]（浅色为深藏青，深色比 surface
+ * 更亮）。两态边框透明，仅靠底色区分，保持连续圆角条。
  */
 @Composable
 private fun filterSegmentColors(): SegmentedButtonColors =

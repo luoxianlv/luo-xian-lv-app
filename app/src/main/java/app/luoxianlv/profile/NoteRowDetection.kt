@@ -8,11 +8,7 @@ import app.luoxianlv.profile.KeyboardReference.MODE_Y_OFFSET
 import kotlin.math.abs
 import kotlin.math.sqrt
 
-/**
- * Rank distinct eight-key grids, rejecting smaller adjacent sharp signs. Three-glyph candidates are
- * only proposals; both border rows must validate them in resolveLayout before they can be used for
- * playback.
- */
+/** 对八键网格排序并排除较小的相邻升号；仅有三个字形时只是候选，须经 resolveLayout 的两行圆框验证后才能用于播放。 */
 internal fun findNoteRows(
     glyphs: List<Glyph>,
     width: Int,
@@ -25,8 +21,7 @@ internal fun findNoteRows(
             abs(it.cy - seed.cy) <= 0.4f * seed.h && it.h >= seed.h * 0.67f && it.h <= seed.h * 1.5f
         }
         if (band.size < minObserved) continue
-        // Match a grid rather than requiring adjacent components in the
-        // component list: sharp signs and scenery may sit between digits.
+        // 按网格匹配，不要求连通域相邻，因为升号或场景可能夹在数字之间。
         for (second in band) {
             for (gap in 1..(9 - minObserved)) {
                 val step = (second.cx - seed.cx) / gap
@@ -42,8 +37,7 @@ internal fun findNoteRows(
                         }
                     val observed = grid.filterNotNull()
                     if (observed.size < minObserved) continue
-                    // Missing edge digits make the grid's index ambiguous. Validate
-                    // the origin against the separate mode row (or nearby sharps).
+                    // 边缘数字缺失会造成整键偏移；用独立音区行或邻近升号验证网格起点。
                     val ambiguousEdge =
                         listOf(0, 7).any { index ->
                             grid[index] == null &&
@@ -99,10 +93,7 @@ internal fun findNoteRows(
                     if (maxY - minY > 0.45f * meanH) continue
                     val xs = window.map { it.cx }
                     val meanSp = (xs.last() - xs.first()) / 7f
-                    // The eight sharp signs form an exceptionally regular row,
-                    // but are much smaller than the digits next to them. Reject
-                    // a row when most candidates have a taller glyph just right
-                    // and below them (the actual note digit).
+                    // 升号同样组成规则八键行，但比数字小；若多数候选右下方存在更高的字形，则拒绝该升号行。
                     val accidentals = observed.count { candidate ->
                         glyphs.any { digit ->
                             digit.h >= candidate.h * 1.4f &&
@@ -111,8 +102,7 @@ internal fun findNoteRows(
                         }
                     }
                     if (accidentals >= observed.size * .75f) continue
-                    // A row of HUD text can also be evenly spaced. Piano keys
-                    // must span a substantial width with gaps larger than digits.
+                    // HUD 文字也可能等距；琴键行须覆盖足够宽度，且间距大于字形宽度。
                     if (meanSp < meanH * 1.8f || xs.last() - xs.first() < width * 0.30f) continue
                     val cv =
                         sqrt(

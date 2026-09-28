@@ -13,7 +13,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
@@ -26,7 +25,7 @@ import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.KeyLayout
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
-import app.luoxianlv.debug.PlaybackDebugLog
+import app.luoxianlv.debug.AppLog
 import app.luoxianlv.service.recognition.ScreenshotAnalyzer
 import app.luoxianlv.update.MidiCoreFixer
 import java.util.concurrent.Executors
@@ -48,7 +47,7 @@ class MusicAccessibilityService : AccessibilityService() {
         var instance: MusicAccessibilityService? = null
             private set
 
-        const val TAG = "落弦律Gesture"
+        const val TAG = "无障碍手势"
 
         /**
          * 系统无障碍设置中本服务是否已开启（instance 只在服务运行期间非空，不能用于判断）。 走 AccessibilityManager 已启用服务列表按包名匹配：
@@ -74,7 +73,7 @@ class MusicAccessibilityService : AccessibilityService() {
     var playing = false
         private set
 
-    /** True while the pre-play screenshot recognition is in flight. */
+    /** 播放前的截图识别尚未完成时为 true。 */
     var preparing = false
         private set
 
@@ -95,7 +94,7 @@ class MusicAccessibilityService : AccessibilityService() {
     /** 当前选中曲目是否已经尝试过播放前自动修复（每次选中重置，避免内部 resume 反复重试）。 */
     private var fixAttemptedForSong = false
     private var playbackDisplay: DisplayState? = null
-    // Pixel coordinates come from the accepted accessibility screenshot, not OEM display metrics.
+    // 像素坐标以接受的无障碍截图为准，不使用厂商显示尺寸换算。
     private var screenshotFrame: PlaybackCoordinates.Frame? = null
     private val interruptionGuard = PlaybackInterruptionGuard()
 
@@ -135,12 +134,12 @@ class MusicAccessibilityService : AccessibilityService() {
         }
 
     private fun beginDisplayRecovery() {
-        PlaybackDebugLog.log(
-            "display recovery begin playback=$playbackDisplay current=" +
+        AppLog.log(
+            "开始恢复显示：播放显示=$playbackDisplay 当前显示=" +
                 displayState() +
-                " wasPlaying=" +
+                " 原播放状态=" +
                 playing +
-                " preparing=" +
+                " 准备中=" +
                 preparing
         )
         if (recoveringDisplay) return
@@ -171,7 +170,7 @@ class MusicAccessibilityService : AccessibilityService() {
                     floating.refresh()
                     return
                 }
-                // The logical display and screenshot producer settle at different times.
+                // 逻辑显示状态和截图生产端可能在不同时刻稳定。
                 if (!displayStability.ready(current, SystemClock.uptimeMillis())) {
                     handler.postDelayed(this, 120)
                     return
@@ -202,7 +201,7 @@ class MusicAccessibilityService : AccessibilityService() {
         }
 
     private fun finishDisplayRecovery(resume: Boolean) {
-        PlaybackDebugLog.log("display recovery finish resume=$resume")
+        AppLog.log("显示恢复完成：恢复播放=$resume")
         recoveringDisplay = false
         preparing = false
         handler.removeCallbacks(recoverDisplay)
@@ -240,9 +239,9 @@ class MusicAccessibilityService : AccessibilityService() {
     private val next = Runnable { drive() }
 
     override fun onServiceConnected() {
-        PlaybackDebugLog.init(this)
-        PlaybackDebugLog.log(
-            "service connected ${Build.MANUFACTURER}/${Build.MODEL} sdk=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) display=${displayState()}"
+        AppLog.init(this)
+        AppLog.log(
+            "无障碍服务已连接：${Build.MANUFACTURER}/${Build.MODEL} 系统 API=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) 显示=${displayState()}"
         )
         repository = SongRepository(this)
         keys = ConfigStore.load(this)
@@ -268,7 +267,7 @@ class MusicAccessibilityService : AccessibilityService() {
         playing = false
         generation++
         handler.removeCallbacksAndMessages(null)
-        // Let accepted screenshot jobs finish their finally blocks and release buffers.
+        // 允许已接受的截图任务执行 finally，确保缓冲区释放。
         recognitionExecutor.shutdown()
         recoveringDisplay = false
         if (::floating.isInitialized) floating.destroy()
@@ -301,7 +300,7 @@ class MusicAccessibilityService : AccessibilityService() {
 
     fun play() {
         if (!canStartPlayback()) {
-            PlaybackDebugLog.log("play ignored: within 300ms of gesture interruption")
+            AppLog.log("忽略播放：距离手势中断不足 300 毫秒")
             return
         }
         if (
@@ -323,14 +322,10 @@ class MusicAccessibilityService : AccessibilityService() {
             return
         }
         error = null
-        // Sync with the real screen once before the first note: locate the
-        // keyboard by image recognition (stored ratios break on tablets and
-        // other aspect ratios) and read back the pitch state in case the user
-        // toggled 半音/升降调 directly in the game. Screenshot needs API 30;
-        // below that the stored layout is used as before.
+        // 首音前通过截图定位键盘并读取音区，兼容平板比例及用户在游戏内切换半音、音区的情况；截图需 API 30，低版本沿用已保存布局。
         playbackDisplay = displayState()
         screenshotFrame = null
-        PlaybackDebugLog.log("play() display=$playbackDisplay baseMs=$baseMs speed=$speed")
+        AppLog.log("开始播放：显示=$playbackDisplay 起点毫秒=$baseMs 速度=$speed")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             preparing = true
             val token = ++generation
@@ -340,7 +335,7 @@ class MusicAccessibilityService : AccessibilityService() {
                     generation++
                     preparing = false
                     error = "截图识别超时，请重试"
-                    PlaybackDebugLog.log("initial recognition timeout")
+                    AppLog.log("首次识别超时")
                     floating.refresh()
                 }
             }
@@ -356,9 +351,7 @@ class MusicAccessibilityService : AccessibilityService() {
                 }
                 if (!recognized) {
                     error = "未能确认琴键位置，请保持游戏琴键界面可见后重试"
-                    PlaybackDebugLog.log(
-                        "play blocked: recognition failed display=" + displayState()
-                    )
+                    AppLog.log("识别失败，阻止播放：显示=" + displayState())
                     floating.refresh()
                     return@syncWithScreen
                 }
@@ -408,10 +401,7 @@ class MusicAccessibilityService : AccessibilityService() {
         floating.refresh()
     }
 
-    /**
-     * Takes a screenshot, recognizes the keyboard, persists the layout and syncs the pitch state.
-     * The callback runs on the main thread.
-     */
+    /** 截图识别后保存布局并同步音区；回调在主线程执行。 */
     private fun syncWithScreen(
         token: Int,
         done: (Boolean) -> Unit,
@@ -428,8 +418,8 @@ class MusicAccessibilityService : AccessibilityService() {
                     override fun onSuccess(screenshot: ScreenshotResult) {
                         val currentDisplay = displayState()
                         if (token != generation || playbackDisplay != currentDisplay) {
-                            PlaybackDebugLog.log(
-                                "screenshot mismatch tokenAlive=${token == generation} playback=$playbackDisplay current=$currentDisplay shot=${screenshot.hardwareBuffer.width}x${screenshot.hardwareBuffer.height}"
+                            AppLog.log(
+                                "截图请求已过期：令牌有效=${token == generation} 播放显示=$playbackDisplay 当前显示=$currentDisplay 截图尺寸=${screenshot.hardwareBuffer.width}x${screenshot.hardwareBuffer.height}"
                             )
                             screenshot.hardwareBuffer.close()
                             done(false)
@@ -440,9 +430,7 @@ class MusicAccessibilityService : AccessibilityService() {
                                 screenshot.hardwareBuffer.width,
                                 screenshot.hardwareBuffer.height,
                             )
-                        PlaybackDebugLog.log(
-                            "accessibility frame=${frame.width}x${frame.height} display=$currentDisplay"
-                        )
+                        AppLog.log("无障碍截图尺寸=${frame.width}x${frame.height} 显示=$currentDisplay")
                         recognitionExecutor.execute {
                             val result = ScreenshotAnalyzer.recognize(screenshot)
                             handler.post {
@@ -458,7 +446,7 @@ class MusicAccessibilityService : AccessibilityService() {
                                     ConfigStore.save(this@MusicAccessibilityService, result.layout)
                                     result.mode?.let { pitchMode = it }
                                     result.halfTone?.let { halfToneOn = it }
-                                    Log.i(TAG, "按键识别成功 mode=${result.mode} half=${result.halfTone}")
+                                    AppLog.i(TAG, "按键识别成功 音区=${result.mode} 半音=${result.halfTone}")
                                     floating.refresh()
                                 }
                                 done(valid)
@@ -467,20 +455,19 @@ class MusicAccessibilityService : AccessibilityService() {
                     }
 
                     override fun onFailure(errorCode: Int) {
-                        PlaybackDebugLog.log("screenshot failure errorCode=$errorCode")
-                        Log.w(TAG, "截图失败 errorCode=$errorCode")
+                        AppLog.w(TAG, "截图失败：错误码=$errorCode")
                         done(false)
                     }
                 },
             )
         } catch (failure: Exception) {
-            Log.w(TAG, "无法请求截图", failure)
+            AppLog.w(TAG, "无法请求截图", failure)
             done(false)
         }
     }
 
     fun pause() {
-        PlaybackDebugLog.log("pause() playing=$playing preparing=$preparing")
+        AppLog.log("暂停播放：播放中=$playing 准备中=$preparing")
         if (recoveringDisplay) {
             generation++
             busy = false
@@ -548,7 +535,7 @@ class MusicAccessibilityService : AccessibilityService() {
                     startService(Intent(this, PlaybackForegroundService::class.java))
                 }
             }
-                .onFailure { Log.w(TAG, "启动播放前台服务失败", it) }
+                .onFailure { AppLog.w(TAG, "启动播放前台服务失败", it) }
         } else {
             floating.hide()
             stopService(Intent(this, PlaybackForegroundService::class.java))
@@ -630,7 +617,7 @@ class MusicAccessibilityService : AccessibilityService() {
         if (!success) {
             pause()
             error = gestureFailure ?: "手势未完成"
-            Log.w(TAG, error ?: "手势未完成")
+            AppLog.w(TAG, error ?: "手势未完成")
         } else if (playing) {
             handler.post(next)
         }
@@ -674,8 +661,7 @@ class MusicAccessibilityService : AccessibilityService() {
         done: (Boolean) -> Unit,
     ) {
         val point = keys.modes.getValue(mode)
-        // Pitch controls are toggle taps. Keep the configured 1 ms click so
-        // switching remains instantaneous and never turns into a hold.
+        // 音区按钮是切换点击；保留 1 毫秒手势，保证立即切换且不会成为长按。
         press(point[0], point[1], 1, { true }, done)
     }
 
@@ -706,18 +692,18 @@ class MusicAccessibilityService : AccessibilityService() {
                     return
                 }
         val bounds = Rect(0, 0, frame.width, frame.height)
-        // Use the same pixel space that produced the recognized normalized keys.
+        // 使用产生归一化识别坐标的同一截图像素空间。
         if (!PlaybackCoordinates.validPoint(x, y)) {
             gestureFailure = "按键坐标无效，请重新识别"
-            PlaybackDebugLog.log("invalid coordinate x=$x y=$y display=$currentDisplay")
+            AppLog.log("坐标无效：x=$x y=$y 显示=$currentDisplay")
             done(false)
             return
         }
         val (px, py) = frame.point(x, y)
         gestureFailure = null
-        lastCoordinates = "ratio=($x,$y) px=($px,$py) display=$currentDisplay"
-        PlaybackDebugLog.log(
-            "press ratio=($x,$y) -> ${px.toInt()},${py.toInt()} bounds=${bounds.width()}x${bounds.height()} display=$currentDisplay duration=$duration"
+        lastCoordinates = "ratio=($x,$y) px=($px,$py) 显示=$currentDisplay"
+        AppLog.log(
+            "按下：归一化坐标=($x,$y) -> ${px.toInt()},${py.toInt()} 边界=${bounds.width()}x${bounds.height()} 显示=$currentDisplay 时长毫秒=$duration"
         )
         val path = Path().apply { moveTo(px, py) }
         var completed = false
@@ -734,9 +720,7 @@ class MusicAccessibilityService : AccessibilityService() {
                 done(value)
             }
         }
-        // Dispatch one complete static stroke per note. Splitting a long note
-        // across several dispatchGesture calls is not supported consistently
-        // by Android/OEM accessibility implementations and causes cancellation.
+        // 每个音符发送一条完整静态手势；将长音拆成多次 dispatchGesture 在部分系统上会被取消。
         val length = duration.coerceIn(1, GestureDescription.getMaxGestureDuration())
         try {
             val stroke = GestureDescription.StrokeDescription(path, 0, length, false)
@@ -747,7 +731,7 @@ class MusicAccessibilityService : AccessibilityService() {
                     object : GestureResultCallback() {
                         override fun onCompleted(gestureDescription: GestureDescription) {
                             if (token != generation) return
-                            PlaybackDebugLog.log("gesture completed at ${px.toInt()},${py.toInt()}")
+                            AppLog.log("手势完成：坐标=${px.toInt()},${py.toInt()}")
                             floating.mark(px, py)
                             finish(true)
                         }
@@ -755,7 +739,7 @@ class MusicAccessibilityService : AccessibilityService() {
                         override fun onCancelled(gestureDescription: GestureDescription) {
                             if (token != generation) return
                             interruptionGuard.interrupted(SystemClock.uptimeMillis())
-                            PlaybackDebugLog.log("gesture cancelled at ${px.toInt()},${py.toInt()}")
+                            AppLog.log("手势被取消：坐标=${px.toInt()},${py.toInt()}")
                             gestureFailure =
                                 "手势被系统取消 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
                             finish(false)
@@ -764,14 +748,13 @@ class MusicAccessibilityService : AccessibilityService() {
                     handler,
                 )
             if (!accepted) {
-                PlaybackDebugLog.log("gesture rejected by system at ${px.toInt()},${py.toInt()}")
+                AppLog.log("系统拒绝手势：坐标=${px.toInt()},${py.toInt()}")
                 gestureFailure =
                     "系统拒绝手势 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
                 finish(false)
             }
         } catch (failure: Exception) {
-            Log.w(TAG, "无法发送播放手势", failure)
-            PlaybackDebugLog.log("dispatch exception: ${failure.message}")
+            AppLog.w(TAG, "无法发送播放手势", failure)
             gestureFailure = "无法发送播放手势，请重新开启无障碍后重试"
             finish(false)
         }

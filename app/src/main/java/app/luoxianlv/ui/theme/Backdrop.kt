@@ -11,12 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 
-/**
- * 主题里**不属于 Material 色板**的那部分配色。
- *
- * 这套设计的层次是「整屏渐变底 + 半透明容器」，而渐变底、压在底上的字色、 「我的」页内容卡的渐变、曲库分段按钮的选中块都是本项目自造的取值， Material 的 colorScheme
- * 里没有对应角色（硬塞进 primary/tertiary 只会更难维护）。 集中在这里，深浅两套并列，改配色只看这一个文件。
- */
+/** 集中管理 Material 色板之外的渐变、前景字色和选中块；深浅主题成对定义，保证半透明容器与背景协调。 */
 @Immutable
 data class BackdropPalette(
     /** 顶级页面的整屏渐变底。 */

@@ -4,11 +4,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 internal object ButtonStateReader {
-    /**
-     * Active pitch buttons show a light filled disc; inactive ones darken the scene behind them.
-     * Comparing the interior median against the surrounding scene cancels out arbitrary backgrounds
-     * (bright sky, dark rocks).
-     */
+    /** 选中的音区按钮是浅色实心圆，未选中时压暗背景；比较圆内中位亮度与周围背景，抵消天空、岩石等场景差异。 */
     fun contrast(
         luma: FloatArray,
         w: Int,

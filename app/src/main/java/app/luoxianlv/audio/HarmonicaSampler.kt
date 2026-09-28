@@ -13,7 +13,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
 
-/** One stream per stage; asset decoding happens before construction on an IO thread. */
+/** 每个演练场独占音频流；构造前先在 IO 线程解码采样。 */
 class HarmonicaSampler(
     context: Context,
     samples: Map<Int, HarmonicaSample>,
@@ -128,7 +128,7 @@ class HarmonicaSampler(
         running = false
         manager.abandonAudioFocusRequest(focus)
         hasFocus = false
-        // Pausing unblocks a pending write; the output thread alone releases the track.
+        // 暂停用于唤醒阻塞写入；音轨仅由输出线程释放。
         runCatching {
             track.pause()
             track.flush()

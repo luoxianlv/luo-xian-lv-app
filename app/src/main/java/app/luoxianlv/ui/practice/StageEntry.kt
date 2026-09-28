@@ -10,7 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** Owns only the home window's curtain; never retains an Activity or WebView globally. */
+/** 仅管理首页光幕，不在全局保留 Activity 或 WebView。 */
 object StageEntry {
     const val DARK = "stageCurtainDark"
     private const val TAG = "practice-entry-curtain"
@@ -22,7 +22,7 @@ object StageEntry {
         val portrait =
             activity.resources.configuration.orientation ==
                 android.content.res.Configuration.ORIENTATION_PORTRAIT
-        // LOCKED can lock the currently resumed landscape display on some systems.
+        // 部分系统使用 LOCKED 会锁住当前横屏，因此需明确请求方向。
         activity.requestedOrientation =
             if (portrait) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -91,7 +91,7 @@ object StageEntry {
                 }
             }
         activity.lifecycle.addObserver(observer)
-        // Launch in this click's event loop: rotation must not wait for a portrait animation.
+        // 点击事件内立即启动，让转屏先于竖屏动画。
         launched = true
         try {
             launch()

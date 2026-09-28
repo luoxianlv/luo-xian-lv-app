@@ -14,8 +14,7 @@ class SongRepository(context: Context) {
     private val builtIns: List<Song> by lazy { loadBuiltIns() }
 
     init {
-        // Older test builds persisted the temporary 2x playback experiment.
-        // Keep MIDI timing at real speed unless a later settings screen opts in.
+        // 清除旧测试版遗留的两倍速实验配置；没有新的用户设置时按 MIDI 原速播放。
         if (!prefs.getBoolean("speed_migrated_v2", false)) {
             prefs.edit().putFloat("speed", 1f).putBoolean("speed_migrated_v2", true).apply()
         }
@@ -86,10 +85,7 @@ class SongRepository(context: Context) {
         return merged.values.toList()
     }
 
-    /**
-     * Merge records downloaded from GET /api/client/library. Content is versioned; an older
-     * response never replaces a newer local copy.
-     */
+    /** 合并 GET /api/client/library 的版本化内容；旧响应不得覆盖较新的本地副本。 */
     fun applySyncedScores(records: List<SyncedScore>): SyncApplyResult {
         val current = runCatching {
             JSONArray(prefs.getString("synced_songs", "[]"))

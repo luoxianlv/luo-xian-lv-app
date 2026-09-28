@@ -4,7 +4,7 @@ import android.graphics.*
 import kotlin.math.*
 import kotlin.random.Random
 
-/** Two windows share a normalized gather/return timeline; geometry survives rotation. */
+/** 两个窗口共享归一化汇聚与归巢进度，转屏时保持几何连续。 */
 internal class StageExitRenderer(private val dark: Boolean) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()

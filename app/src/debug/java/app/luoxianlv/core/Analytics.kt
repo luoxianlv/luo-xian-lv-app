@@ -2,7 +2,7 @@ package app.luoxianlv.core
 
 import android.content.Context
 
-/** Debug deliberately has no telemetry SDK, initialization, event storage or reporting. */
+/** 内部测试版不包含统计 SDK，也不初始化、存储或上报统计事件。 */
 @Suppress("UNUSED_PARAMETER")
 object Analytics {
     const val APP_KEY = ""

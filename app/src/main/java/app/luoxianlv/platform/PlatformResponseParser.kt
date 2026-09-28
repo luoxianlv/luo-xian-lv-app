@@ -2,7 +2,7 @@ package app.luoxianlv.platform
 
 import org.json.JSONObject
 
-/** Response compatibility and defaults; no HTTP or account state. */
+/** 仅处理响应兼容和默认值，不负责 HTTP 或账户状态。 */
 internal class PlatformResponseParser(private val baseUrl: String) {
     fun parsePlatformScores(root: JSONObject): List<PlatformScore> {
         val items = root.optJSONArray("items") ?: org.json.JSONArray()

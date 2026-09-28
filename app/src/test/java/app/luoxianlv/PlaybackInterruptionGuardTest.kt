@@ -13,7 +13,7 @@ class PlaybackInterruptionGuardTest {
         assertFalse(guard.canStart(1000))
         assertFalse(guard.canStart(1299))
         assertTrue(guard.canStart(1300))
-        // Ignored taps do not prolong the window; a new interruption does.
+        // 被忽略的点击不延长保护窗口；新的中断会重新计时。
         assertTrue(guard.canStart(1301))
         guard.interrupted(1400)
         assertFalse(guard.canStart(1500))

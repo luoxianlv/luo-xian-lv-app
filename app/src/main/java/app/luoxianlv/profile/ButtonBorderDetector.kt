@@ -8,11 +8,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/**
- * Local circle fitting on image gradients. Text supplies a search window, never the final radius.
- * Several angular sectors must support the same edge polarity, so a wall edge crossing a button is
- * not mistaken for its border.
- */
+/** 在局部梯度上拟合圆；文字只限定搜索区域。多个角区须具有一致的边缘极性，避免把穿过按钮的墙边当作圆框。 */
 internal class ButtonBorderDetector(
     luma: FloatArray,
     private val width: Int,
@@ -101,7 +97,7 @@ internal class ButtonBorderDetector(
         return best?.takeIf { it.score >= 3f }
     }
 
-    // Cache radius-dependent sampling offsets across all twelve buttons.
+    // 十二个按钮共用按半径缓存的采样偏移。
     private val rings = mutableMapOf<Int, IntArray>()
 
     private fun offsets(radius: Int): IntArray =
@@ -154,8 +150,7 @@ internal class ButtonBorderDetector(
         }
         val minCount = if (relaxed) 12 else 26
         val minSectors = if (relaxed) 3 else 6
-        // A handful of very bright scenery edges must not outweigh a weak but
-        // continuous ring. Reward angular coverage, not just edge magnitude.
+        // 按角度覆盖度评分，避免少数高亮场景边缘压过较暗但连续的按钮圆环。
         val p =
             if (positiveCount >= minCount && positiveSectors >= minSectors)
                 positive / SAMPLES * positiveCount / SAMPLES * positiveCount / SAMPLES

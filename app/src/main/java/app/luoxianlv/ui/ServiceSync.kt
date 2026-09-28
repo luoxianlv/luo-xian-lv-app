@@ -2,8 +2,8 @@ package app.luoxianlv.ui
 
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import app.luoxianlv.data.Song
+import app.luoxianlv.debug.AppLog
 import app.luoxianlv.service.MusicAccessibilityService
 
 /**
@@ -15,7 +15,7 @@ import app.luoxianlv.service.MusicAccessibilityService
 fun syncSelectionToService(song: Song) {
     val select = Runnable {
         runCatching { MusicAccessibilityService.instance?.select(song) }
-            .onFailure { Log.w("ServiceSync", "曲目已保存，但悬浮窗同步失败", it) }
+            .onFailure { AppLog.w("悬浮窗同步", "曲目已保存，但悬浮窗同步失败", it) }
     }
     if (Looper.myLooper() == Looper.getMainLooper()) select.run()
     else Handler(Looper.getMainLooper()).post(select)

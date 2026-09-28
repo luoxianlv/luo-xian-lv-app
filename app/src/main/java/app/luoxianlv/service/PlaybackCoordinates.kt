@@ -11,7 +11,7 @@ internal object PlaybackCoordinates {
 
         fun point(x: Float, y: Float): Pair<Float, Float> {
             require(validPoint(x, y))
-            // Recognizer divides positions by full image dimensions; use that exact inverse.
+            // 识别坐标以完整图像尺寸归一化，转换时使用同一尺寸作逆运算。
             return (x * width).coerceAtMost((width - 1).toFloat()) to
                 (y * height).coerceAtMost((height - 1).toFloat())
         }

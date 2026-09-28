@@ -6,7 +6,7 @@ import java.nio.charset.Charset
 import java.util.zip.CRC32
 import java.util.zip.ZipFile
 
-/** ZIP container policy shared by system-open and in-app imports. No Android dependencies. */
+/** 系统打开和应用内导入共用的 ZIP 校验策略，不依赖 Android。 */
 object WallpaperArchive {
     const val LIMIT = 1024L * 1024 * 1024
 
@@ -72,7 +72,7 @@ object WallpaperArchive {
             } catch (_: IllegalArgumentException) {
                 ZipFile(archive, Charset.forName("GB18030"))
             } catch (error: java.util.zip.ZipException) {
-                // Legacy Windows ZIPs often use GBK names without the UTF-8 flag.
+                // 旧 Windows ZIP 可能未标记 UTF-8，文件名需兼容 GBK。
                 if (error.message?.contains("entry name", ignoreCase = true) == true)
                     ZipFile(archive, Charset.forName("GB18030"))
                 else throw error
@@ -91,7 +91,7 @@ object WallpaperArchive {
         }
     }
 
-    /** Resolve Windows-authored asset paths on Android without allowing directory traversal. */
+    /** 兼容 Windows 项目路径，同时禁止越界访问。 */
     fun resolve(root: File, raw: String): File? {
         val path = runCatching { normalize(raw) }.getOrNull() ?: return null
         var file = root

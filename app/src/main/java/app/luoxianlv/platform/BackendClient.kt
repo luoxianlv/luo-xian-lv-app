@@ -7,7 +7,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
 
-/** HTTP transport and session refresh; callbacks stay on their existing worker thread. */
+/** 负责 HTTP 传输和会话刷新；回调仍在当前工作线程执行。 */
 internal class BackendClient(private val baseUrl: String, private val sessionStore: SessionStore) {
     fun get(url: String): String = requestText(url, null)
 

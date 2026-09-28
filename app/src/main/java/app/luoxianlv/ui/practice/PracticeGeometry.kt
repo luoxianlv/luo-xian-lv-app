@@ -2,7 +2,7 @@ package app.luoxianlv.ui.practice
 
 import kotlin.math.min
 
-/** Reference crop, fitted to the ~70% screen-width keyboard in full game captures. */
+/** 按完整游戏截图中约占屏宽 70% 的键盘拟合参考裁图。 */
 object PracticeGeometry {
     const val WIDTH = 1970f
     const val HEIGHT = 512f

@@ -14,9 +14,7 @@ import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import app.luoxianlv.wallpaper.render.PracticeBackdrop
 import java.io.File
 
-/**
- * Framework-only integration runner: real Android drawing, audio preparation and touch dispatch.
- */
+/** 仅使用 Android Framework 验证实际绘制、音频准备和触摸分发。 */
 class PracticeInstrumentation : Instrumentation() {
     private var testWallpaper = false
     private var argumentsEntryOnly = false
@@ -73,7 +71,10 @@ class PracticeInstrumentation : Instrumentation() {
                 check(WallpaperProjectStore.current(targetContext) == selected) {
                     "Failed import replaced selected wallpaper"
                 }
-                check(!File(targetContext.filesDir, "wallpapers/escape.txt").exists())
+                check(
+                    !File(app.luoxianlv.storage.AppStorage.wallpapers(targetContext), "escape.txt")
+                        .exists()
+                )
             } else WallpaperProjectStore.reset(targetContext)
             stage =
                 startActivitySync(
@@ -172,7 +173,7 @@ class PracticeInstrumentation : Instrumentation() {
             }
             for (modeIndex in listOf(2, 1, 3)) for (half in listOf(false, true)) {
                 touch(PracticeGeometry.modes[modeIndex], MotionEvent.ACTION_DOWN)
-                // Assert before UP: modifiers are synchronous on DOWN.
+                // 在 UP 前断言，验证音区在 DOWN 时同步切换。
                 check(
                     keyboard.session.mode ==
                         listOf(
@@ -218,8 +219,7 @@ class PracticeInstrumentation : Instrumentation() {
                 touch(PracticeGeometry.notes[0], MotionEvent.ACTION_UP)
                 check(keyboard.session.active == null)
             }
-            // Stage toolbar opens a portrait library; GIF preview runs before returning to
-            // landscape.
+            // 工具栏打开竖屏壁纸库，GIF 预览先于再次进入横屏运行。
             val pickerMonitor = addMonitor(WallpaperPickerActivity::class.java.name, null, false)
             runOnMainSync {
                 val density = keyboard.resources.displayMetrics.density
@@ -309,8 +309,7 @@ class PracticeInstrumentation : Instrumentation() {
             runOnMainSync { activity.finish() }
             waitForIdleSync()
             check(!PracticePlaybackGate.ready)
-            // A new stage interrupted while loading/animating must not publish a delayed ready
-            // callback.
+            // 加载或开场被中断后，不允许延迟回调将演练场重新标记为就绪。
             stage =
                 startActivitySync(
                     Intent(targetContext, PracticeActivity::class.java)

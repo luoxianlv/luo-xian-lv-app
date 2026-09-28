@@ -6,7 +6,7 @@ import android.os.Build
 import android.view.View
 import androidx.annotation.RequiresApi
 
-/** Warps the actual rendered backdrop; no screenshot readback or decorative ring. */
+/** 直接扭曲实际背景，不读回截图，也不绘制装饰圆环。 */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 internal class StageGravityLens(private val backdrop: View) {
     private val shader =

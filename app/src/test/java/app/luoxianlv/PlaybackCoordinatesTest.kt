@@ -16,7 +16,7 @@ class PlaybackCoordinatesTest {
 
     @Test
     fun huaweiScreenshotCoordinatesRemainInTheCapturedPixelSpace() {
-        // Reported display is 2400x1128, but accessibility captured 2400x1176.
+        // 系统显示为 2400×1128，但无障碍截图为 2400×1176。
         val frame = PlaybackCoordinates.Frame(2400, 1176)
         val (x, y) = frame.point(1200f / 2400f, 1000f / 1176f)
         assertEquals(1200f, x, .001f)

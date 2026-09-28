@@ -1,6 +1,6 @@
 package app.luoxianlv.ui.practice
 
-/** Pure single-voice touch state. A stale finger-up must never release a newer note. */
+/** 纯单音触摸状态；旧手指抬起不能结束新音符。 */
 class PracticeSession {
     enum class Mode(val semitones: Int, val label: String) {
         LOWER(-12, "降调"),

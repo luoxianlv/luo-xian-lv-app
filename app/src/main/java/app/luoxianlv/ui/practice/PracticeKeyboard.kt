@@ -10,9 +10,9 @@ import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.LinearInterpolator
-import app.luoxianlv.debug.PlaybackDebugLog
+import app.luoxianlv.debug.AppLog
 
-/** The same geometry draws and hit-tests physical and accessibility-generated MotionEvents. */
+/** 真实触摸与无障碍注入的 MotionEvent 共用绘制及命中几何。 */
 class PracticeKeyboard(context: Context) : View(context) {
     val session = PracticeSession()
     var onNoteOn: (Int) -> Boolean = { false }
@@ -146,7 +146,7 @@ class PracticeKeyboard(context: Context) : View(context) {
             else Typeface.create("sans-serif", Typeface.NORMAL)
         val bounds = android.graphics.Rect()
         paint.getTextBounds(text, 0, text.length, bounds)
-        // Center the visible glyph, not the font line box (CJK and chevrons differ).
+        // 按可见字形居中，不按字体行框居中；汉字与箭头的边界不同。
         canvas.drawText(
             text,
             x - bounds.exactCenterX(),
@@ -160,7 +160,7 @@ class PracticeKeyboard(context: Context) : View(context) {
         val darkness = progress(0f, 220f)
         canvas.drawColor(Color.argb((255 - 125 * darkness).toInt(), 6, 8, 7))
         val fit = PracticeGeometry.fit(width.toFloat(), height.toFloat())
-        // Keep a stable dark field behind the game controls even with a bright imported scene.
+        // 即使壁纸很亮，也在游戏控件后保留稳定的暗底。
         paint.style = Paint.Style.FILL
         paint.alpha = (255 * darkness).toInt()
         paint.shader =
@@ -208,7 +208,7 @@ class PracticeKeyboard(context: Context) : View(context) {
                         2 -> session.mode == PracticeSession.Mode.NATURAL
                         else -> session.mode == PracticeSession.Mode.LOWER
                     }
-            // The faint window ellipses widen and settle into the exact playable circles.
+            // 入口椭圆逐渐展开，最终对齐实际可演奏的圆形按键。
             canvas.save()
             if (note && !ready) {
                 val settle = progress(0f, 720f)
@@ -252,7 +252,7 @@ class PracticeKeyboard(context: Context) : View(context) {
                     label,
                     true,
                 )
-                // Game capture: sharp is approximately half the numeral height, at its upper left.
+                // 游戏截图中的升号约为数字高度一半，位于左上方。
                 if (session.half) text(canvas, "#", key.x - 39f, key.y - 22f, 40f, label, true)
                 val register = session.mode.semitones / 12 + if (index == 7) 1 else 0
                 repeat(kotlin.math.abs(register)) { dot ->
@@ -343,16 +343,16 @@ class PracticeKeyboard(context: Context) : View(context) {
                     if (!onNoteOn(note.midi)) {
                         silence()
                     }
-                    PlaybackDebugLog.log("practice noteOn key=$hit midi=${note.midi} pointer=$id")
+                    AppLog.log("演练场按下：按键=$hit midi=${note.midi} 触点=$id")
                 } else {
-                    // Switch on DOWN, with no animation/debounce and no wait for UP.
+                    // DOWN 立即切换，不等待动画、防抖或 UP。
                     when (hit) {
                         8 -> session.toggleHalf()
                         9 -> session.select(PracticeSession.Mode.RAISE)
                         10 -> session.select(PracticeSession.Mode.NATURAL)
                         11 -> session.select(PracticeSession.Mode.LOWER)
                     }
-                    PlaybackDebugLog.log("practice mode=${session.mode} half=${session.half}")
+                    AppLog.log("演练场切换：音区=${session.mode} 半音=${session.half}")
                 }
                 invalidate()
             }
@@ -361,7 +361,7 @@ class PracticeKeyboard(context: Context) : View(context) {
                 if (session.release(id)) {
                     onNoteOff()
                     invalidate()
-                    PlaybackDebugLog.log("practice noteOff pointer=$id")
+                    AppLog.log("演练场松开：触点=$id")
                 }
                 if (wallpaperPointer == id) {
                     wallpaperPointer = null

@@ -1,11 +1,11 @@
 package app.luoxianlv.update
 
 import android.content.Context
-import android.util.Log
 import app.luoxianlv.core.harmonica.RustCompiledMidi
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
+import app.luoxianlv.debug.AppLog
 import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.ui.AppEvents
 import java.util.concurrent.CountDownLatch
@@ -13,18 +13,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * MIDI 编译核心版本看门狗。
- *
- * 服务端修复了编译核心（剪掉 MIDI 开头空白）后，旧客户端缓存的编译结果仍带超长前导静音。 这里在回前台时（距上次检查 ≥ [CHECK_INTERVAL_MS] 才实际发起）：
- * 1. 拉 /api/midi-core-version 与本地保存的版本比较；
- * 2. 顺带从 /api/scores/latest 按标题给老记录回填 remoteId（匹配不到的跳过，播放兜底已覆盖）；
- * 3. 版本变化时静默批量重编：有 remoteId 的歌回源下载、重新编译、覆盖本地缓存； 每首最多 [MAX_ATTEMPTS] 次（429 / 网络错误退避），仍失败置 needsFix，
- *    由曲库列表的「修复」按钮或悬浮窗播放前的自动修复兜底。
- *
- * 项目没有 WorkManager，也没有常驻进程：全部工作在后台线程完成，主线程零阻塞。
+ * 回前台时按 [CHECK_INTERVAL_MS] 节流检查 /api/midi-core-version，并从 /api/scores/latest 回填缺失
+ * remoteId。核心版本变化后回源重编 MIDI；每首最多尝试 [MAX_ATTEMPTS] 次，429 或网络错误退避，最终失败标记 needsFix。全部在后台执行，不使用常驻任务。
  */
 object MidiCoreFixer {
-    private const val TAG = "MidiCoreFixer"
+    private const val TAG = "曲目修复"
     private const val STORE = "midi_core_fix"
     private const val KEY_LAST_CHECK = "last_check_ms"
     private const val KEY_KNOWN_VERSION = "known_version"
@@ -49,7 +42,7 @@ object MidiCoreFixer {
             try {
                 runCheck(app)
             } catch (t: Throwable) {
-                Log.w(TAG, "编译版本检查失败", t)
+                AppLog.w(TAG, "编译版本检查失败", t)
             } finally {
                 running.set(false)
             }
@@ -98,7 +91,7 @@ object MidiCoreFixer {
             prefs.edit().putString(KEY_KNOWN_VERSION, remoteVersion).apply()
             return
         }
-        Log.i(TAG, "编译核心 $known -> $remoteVersion，批量重编 ${targets.size} 首")
+        AppLog.i(TAG, "编译核心 $known -> $remoteVersion，批量重编 ${targets.size} 首")
         targets.forEach { song ->
             val ok = recompileWithRetry(app, song, remoteVersion)
             if (!ok) repository.markNeedsFix(song.id, true)
@@ -120,12 +113,12 @@ object MidiCoreFixer {
                 // 简谱文本回源没有重新编译（midiCoreVersion 为空），保留原版本号避免误标。
                 val newVersion = compiled.midiCoreVersion.ifBlank { song.coreVersion }
                 repository.updateCompiled(song.id, compiled.score, compiled.bpm, newVersion)
-                Log.i(TAG, "重编完成《${song.title}》")
+                AppLog.i(TAG, "重编完成《${song.title}》")
                 return true
             }
             val message = result.exceptionOrNull()?.message.orEmpty()
             val rateLimited = message.startsWith("HTTP 429")
-            Log.w(TAG, "重编失败《${song.title}》第 ${attempt + 1} 次：$message")
+            AppLog.w(TAG, "重编失败《${song.title}》第 ${attempt + 1} 次：$message")
             if (attempt < MAX_ATTEMPTS - 1) {
                 val backoff =
                     (attempt + 1) * 2_000L + if (rateLimited) RATE_LIMIT_BACKOFF_MS else 0L
@@ -156,11 +149,11 @@ object MidiCoreFixer {
             if (candidates.isEmpty()) return
             val filled = SongRepository(app).backfillRemoteIds(candidates)
             if (filled > 0) {
-                Log.i(TAG, "已回填 $filled 首曲目的 remoteId")
+                AppLog.i(TAG, "已回填 $filled 首曲目的 remoteId")
                 AppEvents.notifyLibraryChanged()
             }
         }
-            .onFailure { Log.w(TAG, "remoteId 回填失败", it) }
+            .onFailure { AppLog.w(TAG, "remoteId 回填失败", it) }
     }
 
     private fun fetchVersionBlocking(app: Context): String? {

@@ -17,7 +17,7 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Verifies an external original ZIP fixture and all four supplied clock periods. */
+/** 验证外部原始 ZIP 导入及四个指定时段。 */
 class TimeWallpaperInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
@@ -173,7 +173,7 @@ class TimeWallpaperInstrumentation : Instrumentation() {
                 check(latch.await(5, TimeUnit.SECONDS))
                 return time
             }
-            // Repeated pauses must keep the resume list and release all scene decoders.
+            // 重复暂停须保留恢复列表，并释放全部场景解码器。
             runOnMainSync {
                 backdrop!!.suspendRendering()
                 backdrop!!.suspendRendering()
@@ -197,8 +197,7 @@ class TimeWallpaperInstrumentation : Instrumentation() {
                 if (!resumed) Thread.sleep(250)
             }
             check(resumed) { "Resume restarted hidden video layers or lost the active layer" }
-            // SwiftShader and 4K software decode need not produce a new frame within 1.2s.
-            // Require both media-clock progress and a genuinely changed rendered frame.
+            // SwiftShader 和 4K 软件解码可能超过 1.2 秒才出新帧；同时验证媒体时钟推进和实际画面变化。
             val startTime = videoTime()
             val first = capture()
             val animationDeadline = android.os.SystemClock.uptimeMillis() + 10000

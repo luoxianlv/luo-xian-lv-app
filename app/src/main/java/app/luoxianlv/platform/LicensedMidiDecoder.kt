@@ -11,7 +11,7 @@ internal fun ByteArray.startsWithMidi() =
 
 internal fun ByteArray.looksLikeLicense() = toString(Charsets.UTF_8).trimStart().startsWith('{')
 
-/** Decrypt licensed MIDI in memory; the caller owns downloading and compiling. */
+/** 在内存中解密授权 MIDI；下载和编译由调用方负责。 */
 internal class LicensedMidiDecoder(private val download: (String) -> ByteArray) {
     fun decode(license: JSONObject): ByteArray {
         require(license.optString("alg") == "aes-256-gcm") { "许可证算法不支持" }

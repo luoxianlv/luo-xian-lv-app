@@ -6,7 +6,7 @@ import android.graphics.RuntimeShader
 import android.os.Build
 import androidx.annotation.RequiresApi
 
-/** Moving liquid-energy surface, evaluated only within the white core bounds. */
+/** 液态能量表面，仅在白色核心包围区域计算。 */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 internal class WhiteSphereShader {
     private val shader =
@@ -18,7 +18,7 @@ internal class WhiteSphereShader {
             uniform float time;
             half4 main(float2 xy) {
                 float2 q = (xy - center) / radius;
-                // Broad travelling lobes deform the silhouette, not just the surface light.
+                // 大尺度移动波瓣改变轮廓，而不仅改变表面光照。
                 q.x /= 1.02 + 0.018*sin(time*0.91);
                 q.y /= 1.0 + 0.015*cos(time*0.73);
                 q += float2(sin(q.y*2.8+time*1.1),cos(q.x*2.6-time*0.8))*0.022;
@@ -50,7 +50,7 @@ internal class WhiteSphereShader {
                 float3 light=normalize(float3(-0.5,0.7,1.0));
                 float diffuse=max(0.0,dot(n,light));
                 float spec=pow(max(0.0,dot(n,normalize(light+float3(0.0,0.0,1.0)))),32.0);
-                // Pale moving folds and broad highlights; no colored rim, ring or outline.
+                // 浅色流动褶皱与宽高光，不绘制彩色边缘、圆环或描边。
                 float folds=smoothstep(0.06,0.28,abs(fluid+0.08));
                 float value=0.59+0.27*diffuse+0.11*folds+0.22*spec;
                 value=mix(value,0.86,0.16*pow(1.0-sphereNormal.z,2.0));

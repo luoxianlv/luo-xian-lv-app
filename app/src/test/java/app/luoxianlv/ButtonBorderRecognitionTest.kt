@@ -21,7 +21,7 @@ class ButtonBorderRecognitionTest {
     }
 
     private fun eraseText(f: Fixture, x: Float, y: Float, halfW: Float, halfH: Float) {
-        // Preserve the disc fill and border; erase only its foreground label.
+        // 保留按钮填充与圆框，仅擦除前景标签。
         val fill = f.pixels[(y - halfH - 2).roundToInt() * f.w + x.roundToInt()]
         for (yy in (y - halfH).roundToInt()..(y + halfH).roundToInt()) {
             for (xx in (x - halfW).roundToInt()..(x + halfW).roundToInt()) f.pixels[yy * f.w + xx] =

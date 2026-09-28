@@ -25,14 +25,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import app.luoxianlv.ui.theme.containerElevation
 
-/**
- * 悬浮窗开关。
- *
- * 用 Material 的 [ListItem] 承载「图标 + 标题 + 状态 + 开关」： 标题与状态各占一行，不再像原来那样把「已连接」和开关挤在同一行里； 图标底色与图标色统一使用
- * primaryContainer / onPrimaryContainer 一对角色 （原来底色是 primaryContainer、图标却是 secondary，颜色对不上）。
- *
- * 整行可点，触控面积不再只有那个 40×22 的小开关。
- */
+/** 播放状态条：标题和状态分行，图标使用成对的 primaryContainer / onPrimaryContainer，开关控制悬浮窗。 */
 @Composable
 fun PlaybackBar(
     floatingEnabled: Boolean,

@@ -6,7 +6,7 @@ import android.widget.FrameLayout
 import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 
-/** One application-context renderer, attached behind the home content until handed to the stage. */
+/** 缓存一个应用上下文渲染器，预加载时挂在首页背后，进入演练场时直接移交。 */
 object PreparedWallpaper {
     private var cached: PracticeBackdrop? = null
     private var selection: String? = null

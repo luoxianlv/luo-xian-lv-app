@@ -15,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import app.luoxianlv.ui.theme.LuoXianLvTheme
 import app.luoxianlv.ui.wallpaper.WallpaperImportModel
 
-/** System file associations hand over granted content URIs; no storage permission is requested. */
+/** 系统文件关联传入已授权的内容 URI，无需申请存储权限。 */
 class WallpaperImportActivity : AppCompatActivity() {
     private val model: WallpaperImportModel by viewModels()
 

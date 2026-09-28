@@ -205,8 +205,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
             handler.post(tick)
         } catch (_: WindowManager.BadTokenException) {
             root = null
-            // Some OEMs bind the accessibility window a moment after the
-            // callback. Retry once the window token is available.
+            // 部分系统稍后才绑定无障碍窗口；取得窗口令牌后重试。
             retryShow()
         } catch (_: IllegalStateException) {
             root = null

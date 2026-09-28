@@ -12,10 +12,7 @@ internal data class BorderRow(
         get() = observed.count { it }
 }
 
-/**
- * Robust affine row fit: the image determines offset AND scale. Reject isolated scene circles by
- * their row height, radius and grid residual.
- */
+/** 从图像拟合行的平移和缩放；按行高、半径及网格残差排除孤立的场景圆形。 */
 internal fun fitBorderRow(
     circles: List<ButtonBorderDetector.Circle?>,
     units: FloatArray,

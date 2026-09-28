@@ -11,7 +11,7 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import org.json.JSONObject
 
-/** PKCE login and callback validation. */
+/** 负责 PKCE 登录及回调校验。 */
 internal class ShushuLogin(
     private val context: Context,
     private val baseUrl: String,

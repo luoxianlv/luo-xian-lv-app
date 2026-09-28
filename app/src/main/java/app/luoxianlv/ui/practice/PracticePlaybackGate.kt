@@ -1,6 +1,6 @@
 package app.luoxianlv.ui.practice
 
-/** Readiness only. Coordinates and song events must still go through screenshot recognition. */
+/** 仅控制就绪状态；坐标和曲目事件仍须经过截图识别。 */
 object PracticePlaybackGate {
     var active = false
         private set

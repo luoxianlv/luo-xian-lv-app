@@ -8,7 +8,7 @@ import app.luoxianlv.ui.practice.PracticeActivity
 import app.luoxianlv.ui.practice.PracticePlaybackGate
 import java.io.File
 
-/** Exercises the actual Compose entrance through its accessibility click action. */
+/** 通过无障碍点击实际 Compose 入口，验证完整进入流程。 */
 internal fun Instrumentation.checkStageEntry() {
     val fixture = File(targetContext.cacheDir, "preload-check.zip")
     java.util.zip.ZipOutputStream(fixture.outputStream()).use { zip ->
@@ -107,7 +107,7 @@ internal fun Instrumentation.checkStageEntry() {
     runOnMainSync { originalPortrait = home.window.decorView.height > home.window.decorView.width }
     val originalOrientation = home.requestedOrientation
     check(entrance!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-    // Repeated taps must not schedule a second activity.
+    // 重复点击不能创建第二个演练场。
     entrance!!.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     val stage =
         waitForMonitorWithTimeout(monitor, 20000) as? PracticeActivity

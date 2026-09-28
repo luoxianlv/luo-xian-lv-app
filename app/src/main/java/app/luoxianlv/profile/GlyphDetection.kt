@@ -5,9 +5,9 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
-/** Thresholding, connected components and label grouping, independent of the keyboard layout. */
+/** 负责阈值分割、连通域和字形分组，不依赖键盘布局。 */
 internal object GlyphDetection {
-    /** Box mean via a summed-area table. */
+    /** 利用积分图计算邻域均值。 */
     fun localMean(
         luma: FloatArray,
         w: Int,
@@ -39,10 +39,7 @@ internal object GlyphDetection {
         }
     }
 
-    /**
-     * Connected components of [mask], filtered to glyph-sized blobs, with vertically stacked parts
-     * (the dotted "i") merged back together.
-     */
+    /** 提取 [mask] 中字形大小的连通域，并合并上下分离的同一字符，例如带点的 i。 */
     fun glyphs(
         mask: BooleanArray,
         w: Int,
@@ -102,7 +99,7 @@ internal object GlyphDetection {
         return merged
     }
 
-    /** Groups the 2–3 glyphs of each pitch-mode label. */
+    /** 将每个音区标签的 2～3 个字形合并。 */
     fun modeLabels(
         glyphs: List<Glyph>,
         noteY: Float,
@@ -145,7 +142,7 @@ internal object GlyphDetection {
         }
     }
 
-    /** A fully observed mode row must have aligned, similarly sized labels. */
+    /** 完整音区行的标签须对齐且大小接近。 */
     fun coherent(
         labels: List<Label>,
         spacing: Float,

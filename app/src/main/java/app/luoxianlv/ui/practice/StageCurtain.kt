@@ -10,7 +10,7 @@ import android.graphics.RectF
 import android.os.SystemClock
 import android.view.View
 
-/** Shared home/stage light surface; phase changes are cancelled with the owning window. */
+/** 首页和演练场共用的光幕；所属窗口结束时取消阶段动画。 */
 class StageCurtain(context: Context, dark: Boolean) : View(context) {
     var backgroundReady = false
         set(value) {
@@ -196,7 +196,7 @@ class StageCurtain(context: Context, dark: Boolean) : View(context) {
         val saved = canvas.save()
         if (expansion < 1f) {
             clip.rewind()
-            // Home entrance is flush with the card's right edge.
+            // 首页入口贴齐卡片右边缘。
             corners[0] = radius
             corners[1] = radius
             corners[6] = radius

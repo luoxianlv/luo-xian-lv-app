@@ -89,7 +89,7 @@ class ScreenRecognizerTest {
             assertNotNull("Missing $missing", result)
             assertEquals(5, result!!.observedNotes)
             for (i in 0..7) assertEquals(original.layout.noteX[i], result.layout.noteX[i], 0.005f)
-            // Digit ink and disc centers differ slightly; allow three analysis pixels.
+            // 字形中心与圆盘中心略有偏差，允许三个分析像素误差。
             assertEquals(original.layout.noteY * h, result.layout.noteY * h, 3f)
         }
     }
@@ -177,7 +177,7 @@ class ScreenRecognizerTest {
         val height = 600
         val pixels = FloatArray(width * height)
         org.junit.Assert.assertNull(ScreenRecognizer.analyze(pixels, width, height))
-        // Eight equally spaced, digit-sized strokes in a short HUD label.
+        // 用短 HUD 标签模拟八个等距且接近数字大小的笔画。
         for (i in 0..7) {
             for (y in 400..420) for (x in 100 + i * 15..105 + i * 15) {
                 if (x == 100 + i * 15 || y == 400 || y == 410) pixels[y * width + x] = 240f
@@ -186,7 +186,7 @@ class ScreenRecognizerTest {
         org.junit.Assert.assertNull(ScreenRecognizer.analyze(pixels, width, height))
     }
 
-    /** Optional private repro captures stay outside Git; CI uses the public fixtures. */
+    /** 私人复现截图不进入 Git；持续集成使用公开测试样本。 */
     @Test
     fun privateReproductionCaptures() {
         val path = System.getenv("LX_DIAGNOSTIC_FIXTURES")
@@ -210,11 +210,7 @@ class ScreenRecognizerTest {
         }
     }
 
-    /**
-     * Reads a `.gray` fixture: 8-byte little-endian width/height header, then one byte per pixel at
-     * 1024-wide downscale (pre-generated from the PNG samples, since unit tests have no android
-     * Bitmap/ImageIO available).
-     */
+    /** 读取 .gray 样本：前 8 字节为小端宽高，之后每像素一字节灰度，预先缩放至宽 1024；JVM 测试不依赖 Android Bitmap 或 ImageIO。 */
     private fun analyze(resource: String): ScreenRecognizer.Result {
         val bytes = javaClass.getResourceAsStream(resource)!!.readBytes()
         val header = ByteBuffer.wrap(bytes, 0, 8).order(ByteOrder.LITTLE_ENDIAN)
@@ -236,7 +232,7 @@ class ScreenRecognizerTest {
         val result = analyze(resource)
         val layout = result.layout
         assertEquals(8, layout.noteX.size)
-        // Note keys: strictly increasing, evenly spaced, inside the screen.
+        // 音符键必须在屏幕内，横坐标严格递增且等距。
         val spacings = layout.noteX.toList().zipWithNext { a, b -> b - a }
         val mean = spacings.average()
         spacings.forEach {

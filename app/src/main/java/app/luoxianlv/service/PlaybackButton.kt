@@ -3,7 +3,7 @@ package app.luoxianlv.service
 import android.view.MotionEvent
 import android.view.View
 
-/** Pause intent is latched at DOWN so cancelled note gestures cannot turn UP into play. */
+/** 在 DOWN 时锁定暂停意图，避免音符手势被取消后 UP 反而触发播放。 */
 internal fun bindPlaybackButton(
     view: View,
     isActive: () -> Boolean,
@@ -11,8 +11,7 @@ internal fun bindPlaybackButton(
     toggle: () -> Unit,
     canStart: () -> Boolean = { true },
 ) {
-    // A finger DOWN can cancel the injected note before UP arrives. Pause now,
-    // and consume this same click instead of toggling the newly paused state.
+    // 手指 DOWN 可能先取消注入手势；立即暂停并消费本次点击，避免再次切换为播放。
     var suppressClick = false
     view.setOnTouchListener { target, event ->
         when (event.actionMasked) {

@@ -110,10 +110,7 @@ class PlatformClient(private val context: Context) {
             .start()
     }
 
-    /**
-     * Fetch platform records and atomically merge newer versions into the local song library.
-     * Callers receive the result on the worker thread.
-     */
+    /** 拉取平台曲目并原子合并较新版本；结果回调在工作线程执行。 */
     fun fetchAndApplyLibrary(
         repository: SongRepository,
         deviceId: String,
@@ -134,7 +131,7 @@ class PlatformClient(private val context: Context) {
         }
     }
 
-    /** Read public scores from the local platform without requiring SSO. */
+    /** 读取公开曲目，无需单点登录。 */
     fun fetchPublicScores(
         query: String = "",
         accessToken: String? = null,
@@ -181,7 +178,7 @@ class PlatformClient(private val context: Context) {
         }
     }
 
-    /** Download the portable notation text for a public platform score. */
+    /** 下载公开曲目的通用简谱文本。 */
     fun downloadPublicScore(
         id: String,
         onResult: (Result<String>) -> Unit,

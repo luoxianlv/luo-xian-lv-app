@@ -10,7 +10,7 @@ import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 
-/** Private captures are supplied locally, never bundled in the APK or Git. */
+/** 私人截图只在本地提供，不打包进 APK，也不提交 Git。 */
 class ModeReplayTest {
     @Test
     fun verifiesFaultCaptureCoordinatesAndPitchState() {

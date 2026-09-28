@@ -230,7 +230,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun markAutoStartAsked() {
-        // Only records that the one-time guide was handled; never an authorization result.
+        // 只记录首次引导已处理，不代表用户已授予权限。
         appPrefs.edit().putBoolean("auto_start_asked", true).apply()
         showAutoStartPrompt = false
     }

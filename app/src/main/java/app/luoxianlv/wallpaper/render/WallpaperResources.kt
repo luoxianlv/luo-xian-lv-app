@@ -11,10 +11,7 @@ import java.io.File
 import java.io.FilterInputStream
 import java.io.InputStream
 
-/**
- * A read-only origin restricted to renderer assets and the selected project, including video
- * ranges.
- */
+/** 只读离线源，仅允许渲染资源、当前项目和视频分段请求。 */
 class WallpaperResources(private val context: Context, private val project: File?) {
     fun response(request: WebResourceRequest): WebResourceResponse {
         fun denied(code: Int = 404) =

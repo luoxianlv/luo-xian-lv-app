@@ -15,22 +15,17 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Locates the game's on-screen keyboard in a screenshot: the row of 8 note discs plus the 4
- * pitch-mode buttons (半音/升调/自然音/降调) above them, and reads which pitch state is currently active.
- * White glyphs propose a grid; circular borders refine its centers and scale. Sparse glyph
- * hypotheses need independent circle support in both rows before missing keys are inferred.
- *
- * The analysis core ([analyze]) is pure Kotlin on a grayscale buffer so JVM unit tests can feed
- * decoded images directly; [fromBitmap] is the thin Android adapter.
+ * 从截图定位八个音符键及半音、升调、自然音、降调四个按钮，并读取音区状态。白色字形提出网格，圆框修正中心和缩放；稀疏文字须同时得到两行圆框支持才补键。[analyze] 仅处理灰度数组，便于
+ * JVM 测试；[fromBitmap] 负责 Android 图像转换。
  */
 object ScreenRecognizer {
     data class Result(
         val layout: KeyLayout,
-        /** Active pitch mode read from the screen, null when ambiguous. */
+        /** 从画面读取当前音区；无法确定时为 null。 */
         val mode: PlayMode?,
-        /** 半音 toggle state read from the screen, null when ambiguous. */
+        /** 从截图读取半音状态；无法确定时为 null。 */
         val halfTone: Boolean?,
-        /** Number of coordinates supported directly by visible image glyphs. */
+        /** 有可见字形直接支持的坐标数量。 */
         val observedNotes: Int,
         val observedModes: Int,
         val noteBorders: Int,
@@ -39,7 +34,7 @@ object ScreenRecognizer {
 
     private const val TARGET_WIDTH = 1024
 
-    /** Mode buttons left-to-right: 半音, 升调, 自然音, 降调. */
+    /** 音区按钮从左至右依次为半音、升调、自然音、降调。 */
     private val MODE_ORDER =
         listOf(PlayMode.SEMITONE, PlayMode.RAISE, PlayMode.NATURAL, PlayMode.LOWER)
 
@@ -71,8 +66,7 @@ object ScreenRecognizer {
         height: Int,
     ): Result? {
         require(width > 0 && height > 0 && luma.size.toLong() == width.toLong() * height)
-        // Top-hat: pixels much brighter than their local surroundings. The key
-        // digits pass this even when the scene (sky) is brighter than they are.
+        // 顶帽阈值提取明显亮于邻域的像素，即使天空比数字更亮也能保留字形。
         val local = localMean(luma, width, height, 18)
         val borders by lazy { ButtonBorderDetector(luma, width, height) }
         val candidates = mutableListOf<List<Glyph>>()
@@ -94,9 +88,7 @@ object ScreenRecognizer {
                 return it
             }
         }
-        // Sparse text is allowed when the actual circles validate both rows.
-        // Keep several origins: with missing edge digits the first grid can be
-        // offset by whole keys. Border support resolves that ambiguity.
+        // 允许稀疏文字，但须由两行圆框验证；保留多个起点，用圆框支持消除边缘缺字导致的整键偏移。
         val sparse =
             candidates
                 .flatMap { findNoteRows(it, width, minObserved = 3) }
@@ -137,7 +129,7 @@ object ScreenRecognizer {
         var noteXs = notes.map { it.cx }.toFloatArray()
         val spacings = FloatArray(7) { noteXs[it + 1] - noteXs[it] }
         var spacing = spacings.average().toFloat()
-        // Sanity: the row must be level and evenly spaced.
+        // 校验音符行水平且等距。
         if (spacing <= 0f || spacings.any { abs(it - spacing) > 0.12f * spacing }) return null
         if (notes.any { abs(it.cy - noteY) > 0.45f * noteH }) return null
 
@@ -156,8 +148,7 @@ object ScreenRecognizer {
 
         val predictedY = noteY + MODE_Y_OFFSET * spacing
         val predictedX = FloatArray(4) { noteXs[0] + (MODE_SEMI_OFFSET + MODE_GAPS[it]) * spacing }
-        // Only search the mode row after the note row is known. Avoid flooding
-        // connected components across unrelated HUD text and scenery.
+        // 确定音符行后再搜索音区行，避免将无关 HUD 和场景大量纳入连通域。
         val loose = BooleanArray(luma.size)
         val modeTop = max(0, (predictedY - spacing).toInt())
         val modeBottom = min(height - 1, (predictedY + spacing).toInt())
@@ -168,7 +159,7 @@ object ScreenRecognizer {
             loose[i] = luma[i] - local[i] > 22f && luma[i] > 85f
         }
         val labels = modeLabels(glyphs(loose, width, height), noteY, noteH, predictedY, spacing)
-        // A horizontal match alone can pick scenery above/below the buttons.
+        // 仅横向匹配可能误选按钮上下的场景特征。
         val matched = predictedX.map { px ->
             labels
                 .filter {

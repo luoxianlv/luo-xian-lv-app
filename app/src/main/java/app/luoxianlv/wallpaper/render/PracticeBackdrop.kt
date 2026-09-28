@@ -4,15 +4,15 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.Animatable
-import android.util.Log
 import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.Toast
+import app.luoxianlv.debug.AppLog
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import kotlinx.coroutines.*
 
-/** Offline scene renderer; originals have no native bridge, app-file access or network access. */
+/** 离线场景渲染器；原始项目无法访问原生桥、应用文件或网络。 */
 @SuppressLint("SetJavaScriptEnabled")
 class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : FrameLayout(context) {
     var renderState = "default"
@@ -47,14 +47,15 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
         if (!deferRendering) startRendering()
     }
 
-    /** Heavy WebView/GPU startup is postponed until the opening animation has finished. */
+    /** 按需启动渲染；首页可提前调用，等待真实首帧后移交演练场。 */
     fun startRendering() {
         if (closed || web != null || renderState == "error") return
         if (project != null || WallpaperProjectStore.hasBundled(context)) {
             renderState = "loading"
+            AppLog.i("壁纸", "开始加载：${project?.absolutePath ?: "内置项目"}")
             val browser = WebView(context)
             web = browser
-            // Alpha zero can suspend WebView's compositor and prevent its first video frame.
+            // 透明度为零可能停止 WebView 合成，导致首帧视频无法就绪。
             browser.alpha = .01f
             browser.setBackgroundColor(Color.TRANSPARENT)
             browser.isFocusable = false
@@ -102,6 +103,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     override fun onReceivedTitle(view: WebView?, title: String?) {
                         if (title == "wallpaper:ready" && !closed && renderState == "loading") {
                             renderState = "ready"
+                            AppLog.i("壁纸", "首帧已就绪")
                             (posterView.drawable as? Animatable)?.stop()
                             posterView.setImageDrawable(null)
                             browser.alpha = 1f
@@ -112,7 +114,13 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     }
 
                     override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                        Log.d("PracticeWallpaper", message.message().take(1800))
+                        val text =
+                            "引擎诊断（${message.sourceId()}:${message.lineNumber()}）：${message.message()}"
+                        when (message.messageLevel()) {
+                            ConsoleMessage.MessageLevel.ERROR -> AppLog.e("壁纸", text)
+                            ConsoleMessage.MessageLevel.WARNING -> AppLog.w("壁纸", text)
+                            else -> AppLog.d("壁纸", text)
+                        }
                         return true
                     }
                 }
@@ -133,6 +141,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     private fun fail() {
         if (closed || renderState == "error") return
         renderState = "error"
+        AppLog.w("壁纸", "渲染失败，切换到预览背景")
         releaseWeb()
         previewScope.launch {
             val preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, project) }
@@ -158,7 +167,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     fun suspendRendering() {
         suspended = true
         web?.let { browser ->
-            // onPause alone does not stop JavaScript or the scene's video decoders.
+            // 仅调用 onPause 不会停止 JavaScript 和场景视频解码器。
             browser.evaluateJavascript(
                 "window.wallpaperSuspended=true;window.setWallpaperSuspended?.(true)"
             ) {
