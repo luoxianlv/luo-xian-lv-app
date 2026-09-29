@@ -1,6 +1,8 @@
 package app.luoxianlv.hot.contract;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.View;
 
@@ -11,6 +13,24 @@ public interface NativePage extends AutoCloseable {
   int RESUMED = 3;
 
   View create(Context context, Bundle state, Bundle hostState, Events events, Ready ready);
+
+  default void attachHost(HostActions host) {}
+
+  default void newIntent(Intent intent) {}
+
+  default boolean result(String key, int resultCode, Intent data) {
+    return false;
+  }
+
+  default boolean back() {
+    return false;
+  }
+
+  default void windowTouch() {}
+
+  default void hostWarning(String code, Throwable error) {}
+
+  default void configurationChanged(Configuration configuration) {}
 
   Bundle save();
 

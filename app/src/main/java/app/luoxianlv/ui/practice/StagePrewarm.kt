@@ -1,25 +1,27 @@
 package app.luoxianlv.ui.practice
 
 import android.content.Context
-import android.content.ContextWrapper
 import android.graphics.RectF
-import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import app.luoxianlv.business.ui.findActivity
 
 /** 导航宿主恢复后延迟预热；暂停时挂起，销毁时清理，不随 Tab 切换重建。 */
 @Composable
 fun StagePrewarmEffect() {
     val context = LocalContext.current
-    DisposableEffect(context) {
-        val activity = context.activity()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(context, lifecycleOwner) {
+        val activity = context.findActivity()
         val prepare = Runnable {
             if (
-                activity
-                    ?.lifecycle
-                    ?.currentState
-                    ?.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) == true
+                activity != null &&
+                    lifecycleOwner.lifecycle.currentState.isAtLeast(
+                        androidx.lifecycle.Lifecycle.State.RESUMED
+                    )
             ) {
                 app.luoxianlv.wallpaper.render.PreparedWallpaper.prepare(activity)
             }
@@ -39,10 +41,10 @@ fun StagePrewarmEffect() {
                     app.luoxianlv.wallpaper.render.PreparedWallpaper.clear()
                 }
             }
-        activity?.lifecycle?.addObserver(observer)
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             activity?.window?.decorView?.removeCallbacks(prepare)
-            activity?.lifecycle?.removeObserver(observer)
+            lifecycleOwner.lifecycle.removeObserver(observer)
             app.luoxianlv.wallpaper.render.PreparedWallpaper.clear()
         }
     }
@@ -51,18 +53,12 @@ fun StagePrewarmEffect() {
 /** 带开幕动画进入演练场，幕布从 [origin]（入口按钮的窗口坐标）展开；拿不到 Activity 时退化为直接跳转。 */
 fun openPracticeStage(
     context: Context,
+    lifecycleOwner: LifecycleOwner,
     origin: RectF,
     dark: Boolean,
     onPractice: (Boolean) -> Unit,
 ) {
-    val activity = context.activity()
+    val activity = context.findActivity()
     if (activity == null) onPractice(dark)
-    else StageEntry.open(activity, origin, dark) { onPractice(dark) }
+    else StageEntry.open(activity, lifecycleOwner, origin, dark) { onPractice(dark) }
 }
-
-private tailrec fun Context.activity(): ComponentActivity? =
-    when (this) {
-        is ComponentActivity -> this
-        is ContextWrapper -> baseContext.activity()
-        else -> null
-    }

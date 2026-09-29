@@ -3,7 +3,6 @@ package app.luoxianlv
 import android.app.Instrumentation
 import android.content.Intent
 import android.os.SystemClock
-import androidx.activity.compose.setContent
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.mutableStateOf
 import app.luoxianlv.ui.components.NoticeSnackbarHost
@@ -16,7 +15,7 @@ internal fun Instrumentation.checkSnackbarTiming(home: MainActivity) {
     val notice = mutableStateOf<String?>(null)
     val pageVisible = mutableStateOf(true)
     runOnMainSync {
-        home.setContent {
+        home.businessComposeView().setContent {
             LuoXianLvTheme(darkTheme = false) {
                 NoticeSnackbarHost(host)
                 if (pageVisible.value) SnackbarNotice(notice.value, host) { notice.value = null }

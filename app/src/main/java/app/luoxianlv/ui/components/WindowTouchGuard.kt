@@ -13,8 +13,4 @@ internal inline fun dispatchWindowTouch(dispatch: () -> Boolean): Boolean =
     }
 
 internal fun IllegalStateException.isStaleFreeformToggle(): Boolean =
-    message == "This activity is currently not freeform-enabled" &&
-        stackTrace.any {
-            it.className == "com.android.internal.widget.DecorCaptionView" &&
-                it.methodName == "toggleFreeformWindowingMode"
-        }
+    app.luoxianlv.hot.contract.HostActions.isStaleWindowOperation(this)

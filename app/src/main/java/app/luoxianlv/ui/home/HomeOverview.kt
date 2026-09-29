@@ -122,13 +122,16 @@ private fun HomeStagePill(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val dark = MaterialTheme.colorScheme.background.luminance() < .5f
     // 位置只在点击时使用；页面滑动更新窗口坐标时无需触发重组。
     val bounds = remember { RectF() }
     val requestWallpaper = app.luoxianlv.ui.wallpaper.rememberWallpaperRequest()
     Surface(
         onClick = {
-            requestWallpaper(false) { openPracticeStage(context, RectF(bounds), dark, onPractice) }
+            requestWallpaper(false) {
+                openPracticeStage(context, lifecycleOwner, RectF(bounds), dark, onPractice)
+            }
         },
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceVariant,

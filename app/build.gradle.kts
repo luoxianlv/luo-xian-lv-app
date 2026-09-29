@@ -113,6 +113,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation(project(":hot-core"))
     implementation(project(":business-ui"))
     implementation(libs.material)
 

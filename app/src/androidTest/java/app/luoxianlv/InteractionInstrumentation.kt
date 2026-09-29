@@ -126,7 +126,9 @@ class InteractionInstrumentation : Instrumentation() {
             click("发现")
             await("发现页未显示") { find("搜索谱子") != null }
             lateinit var vm: DiscoverViewModel
-            runOnMainSync { vm = ViewModelProvider(main)[DiscoverViewModel::class.java] }
+            runOnMainSync {
+                vm = ViewModelProvider(main.businessModels())[DiscoverViewModel::class.java]
+            }
             await("发现数据加载未结束") { !vm.state.value.loading && !vm.state.value.loadingMore }
             @Suppress("UNCHECKED_CAST")
             val state = field(vm, "_state") as MutableStateFlow<RemoteUiState>

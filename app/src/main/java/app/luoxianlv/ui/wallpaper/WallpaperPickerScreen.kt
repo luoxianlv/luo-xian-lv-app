@@ -1,7 +1,6 @@
 package app.luoxianlv.ui.wallpaper
 
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.luoxianlv.business.ui.rememberPageLauncher
 import app.luoxianlv.ui.components.ActionPill
 import app.luoxianlv.ui.components.ImportFilePicker
 import app.luoxianlv.ui.theme.GradientBackdrop
@@ -73,7 +73,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
             }
         }
     }
-    val zip = rememberLauncherForActivityResult(ImportFilePicker("选择壁纸 ZIP")) { import(it) }
+    val zip = rememberPageLauncher("wallpaper.import", ImportFilePicker("选择壁纸 ZIP")) { import(it) }
     Box(Modifier.fillMaxSize()) {
         GradientBackdrop()
         Column(
