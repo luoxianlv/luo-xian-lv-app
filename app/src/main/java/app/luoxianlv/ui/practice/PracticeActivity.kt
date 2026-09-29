@@ -110,7 +110,10 @@ class PracticeActivity : AppCompatActivity() {
                 var stable = 0
                 var attempts = 0
                 while (attempts < 80 && !isFinishing && !exiting) {
-                    if (!resumed) {
+                    // 系统全屏引导、权限面板等可以保留 RESUMED 却暂时抢走焦点；
+                    // 用户阅读系统提示的时间不计入横屏尺寸超时。
+                    if (!resumed || !hasWindowFocus()) {
+                        stable = 0
                         delay(50)
                         continue
                     }
@@ -133,6 +136,11 @@ class PracticeActivity : AppCompatActivity() {
                 }
                 if (isFinishing || exiting) return@launch
                 if (stable < 8) {
+                    AppLog.w(
+                        "演练场",
+                        "等待横屏超时：尺寸=$lastSize，稳定次数=$stable，焦点=${hasWindowFocus()}，" +
+                            "方向=${resources.configuration.orientation}，密度=${resources.displayMetrics.density}",
+                    )
                     Toast.makeText(this@PracticeActivity, "请使用横屏或放大窗口后进入演奏", Toast.LENGTH_LONG)
                         .show()
                     finish()
