@@ -65,12 +65,14 @@ public final class HotCoreInstrumentation extends Instrumentation {
             "候选故障恢复失败");
       }
       PageSwapChecks.run(this, root);
+      NativeTransferChecks.run(this, root);
       if (nativePage) NativePageChecks.run(this, root);
       deleteOwnTree(root);
       report.putString(
           "stream",
           "Android 热更核心检查通过：Go 验签、完整包、增量恢复、只读对象、旧快照保留、激活日志与故障隔离。"
               + " 同窗口替换、状态边界、代际租约及故障恢复检查通过。"
+              + " Android HTTP 续传与外部私有下载目录检查通过。"
               + (nativePage ? " 实际原生关于页加载和生命周期检查通过。" : "")
               + "\n");
       finish(-1, report);

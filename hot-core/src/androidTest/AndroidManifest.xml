@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:networkSecurityConfig="@xml/hot_test_network">
         <activity android:name="app.luoxianlv.hot.NativeHarnessActivity" android:exported="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>

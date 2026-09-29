@@ -9,7 +9,6 @@ import java.io.InputStream;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.Arrays;
@@ -98,12 +97,7 @@ public final class TrustStore {
         File temporary = File.createTempFile("trust-", ".part", file.getParentFile());
         try {
           ContentStore.writeSynced(temporary.toPath(), buffer.toByteArray());
-          Files.move(
-              temporary.toPath(),
-              file.toPath(),
-              StandardCopyOption.ATOMIC_MOVE,
-              StandardCopyOption.REPLACE_EXISTING);
-          ContentStore.syncDirectory(file.getParentFile());
+          ContentStore.replaceSynced(temporary, file);
         } finally {
           Files.deleteIfExists(temporary.toPath());
         }

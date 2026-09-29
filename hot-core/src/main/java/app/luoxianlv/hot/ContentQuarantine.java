@@ -8,7 +8,6 @@ import java.io.File;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.LinkedHashSet;
@@ -50,12 +49,7 @@ public final class ContentQuarantine {
       File temp = File.createTempFile("quarantine-", ".part", directory);
       try {
         ContentStore.writeSynced(temp.toPath(), buffer.toByteArray());
-        Files.move(
-            temp.toPath(),
-            file(hostContract).toPath(),
-            StandardCopyOption.ATOMIC_MOVE,
-            StandardCopyOption.REPLACE_EXISTING);
-        ContentStore.syncDirectory(directory);
+        ContentStore.replaceSynced(temp, file(hostContract));
       } finally {
         Files.deleteIfExists(temp.toPath());
       }

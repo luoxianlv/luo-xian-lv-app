@@ -34,7 +34,11 @@ adb shell am instrument -w app.luoxianlv.hot.test/app.luoxianlv.hot.HotCoreInstr
 
 测试 APK 使用独立包名 `app.luoxianlv.hot.test`，不修改用户主 APP 数据。公开向量来自 Go 仓库 `testdata/protocol-v1`，其中产物仅是非可执行测试字节，不是实际 DEX。
 
-常规设备检查还包含四种真实窗口事务：稳定切换并释放租约、创建失败、试运行失败、准备期间状态改变。窗口事务使用明确的测试页面；另一路 `native` 检查才加载实际 Compose 关于页，不混淆两者覆盖范围。JVM 核心当前 25 项测试通过。
+常规设备检查还包含四种真实窗口事务：稳定切换并释放租约、创建失败、试运行失败、准备期间状态改变。窗口事务使用明确的测试页面；另一路 `native` 检查才加载实际 Compose 关于页，不混淆两者覆盖范围。JVM 核心当前 36 项测试通过。
+
+下载基础已增加：`UpdateSchedule` 合并触发、播放优先和指数退避；`DownloadBudget` 按内容记录整组 20 MiB 计费预算，重试和重启不重置；`ObjectDownloader` 保留准确断点，检查范围与最终哈希；`HttpObjectSource` 使用有界 HTTPS 连接并拒绝跳转传播凭据。预算在读取前最多预留 1 MiB，中途失败不返还未用预留，宁可稍早等待非计费网络，也不反复重置额度。首次准入必须传入整组缺失大小。
+
+设备已验证真实 HTTP Range 和 `Android/data/<测试包>/files/hot/downloads` 暂存。仅独立测试 APK 允许回环 HTTP；明确测试地址直连以避开模拟器开发代理，生产下载继续使用系统网络设置。以上基础尚未接成自动发现→下载→许可→激活的完整客户端流程。
 
 可选 `-e native true` 使用 `.local/hot-core-test-assets/native/` 中本地构建且正式签名的两个实际业务包。检查真实关于页、第二版新增 View、共享运行时复用和生命周期转发；主 APP 只完成了关于页/主题源码提取，尚未切换成薄宿主。
 

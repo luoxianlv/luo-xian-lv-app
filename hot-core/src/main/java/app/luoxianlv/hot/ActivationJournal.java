@@ -8,7 +8,6 @@ import java.io.File;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.Collections;
@@ -317,12 +316,7 @@ public final class ActivationJournal {
       File temporary = File.createTempFile("activation-", ".part", file.getParentFile());
       try {
         ContentStore.writeSynced(temporary.toPath(), bytes);
-        Files.move(
-            temporary.toPath(),
-            file.toPath(),
-            StandardCopyOption.ATOMIC_MOVE,
-            StandardCopyOption.REPLACE_EXISTING);
-        ContentStore.syncDirectory(file.getParentFile());
+        ContentStore.replaceSynced(temporary, file);
         state = next;
       } finally {
         Files.deleteIfExists(temporary.toPath());

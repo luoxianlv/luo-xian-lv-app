@@ -185,6 +185,35 @@ public final class ContentStore {
     }
   }
 
+  /** 状态文件原子替换；Windows 偶发共享锁只短暂重试，绝不降级为先删后写。 */
+  static void replaceSynced(File temporary, File target) throws Exception {
+    StrictJson.require(
+        temporary
+            .getCanonicalFile()
+            .getParentFile()
+            .equals(target.getCanonicalFile().getParentFile()),
+        "原子状态替换必须位于同一目录");
+    for (int attempt = 0; ; attempt++) {
+      try {
+        Files.move(
+            temporary.toPath(),
+            target.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING);
+        break;
+      } catch (java.nio.file.AccessDeniedException error) {
+        if (!System.getProperty("os.name", "").startsWith("Windows") || attempt >= 3) throw error;
+        try {
+          Thread.sleep(20L * (attempt + 1));
+        } catch (InterruptedException interrupted) {
+          Thread.currentThread().interrupt();
+          throw interrupted;
+        }
+      }
+    }
+    syncDirectory(target.getParentFile());
+  }
+
   private File directory(String name) throws Exception {
     File directory = new File(root, name);
     StrictJson.require(
