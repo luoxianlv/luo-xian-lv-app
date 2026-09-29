@@ -21,7 +21,9 @@ public final class MusicAccessibilityService extends NativeAccessibilityService 
 
   @Override
   protected Context playbackContext() {
-    return source.prepared.context(this);
+    Context context = source.prepared.context(this);
+    source = null;
+    return context;
   }
 
   @Override

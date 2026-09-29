@@ -39,6 +39,14 @@ public abstract class NativeHostActivity extends Activity {
 
   protected abstract NativePage createPage() throws Exception;
 
+  protected PageTarget initialPageTarget() {
+    return null;
+  }
+
+  protected void pageSessionReady(PageSwapHost session) {}
+
+  protected void pageSessionClosed() {}
+
   protected Context initialPageContext() {
     return this;
   }
@@ -132,6 +140,9 @@ public abstract class NativeHostActivity extends Activity {
       page.newIntent(getIntent());
       if (currentLifecycle != NativePage.CREATED) page.lifecycle(currentLifecycle);
       if (currentLifecycle == NativePage.RESUMED) results.deliverAll(page);
+      PageTarget target = initialPageTarget();
+      if (target != null) pageHost().initialTarget(target);
+      pageSessionReady(pageHost());
     } catch (Throwable failure) {
       pageFailed(failure);
     } finally {
@@ -241,6 +252,7 @@ public abstract class NativeHostActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    pageSessionClosed();
     if (preparation != null) {
       try {
         preparation.close();
@@ -386,6 +398,7 @@ public abstract class NativeHostActivity extends Activity {
   }
 
   private void pageFailed(Throwable failure) {
+    pageSessionClosed();
     warning("page_initialization_failed", failure);
     if (page != null) {
       try {

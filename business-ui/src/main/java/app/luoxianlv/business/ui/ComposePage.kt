@@ -138,6 +138,8 @@ abstract class ComposePage :
                     }
                 }
             }
+            // 后台窗口也能预组合；帧时钟仍由本页面生命周期控制，不等待重新显示才创建内容。
+            root.createComposition()
         }
     }
 

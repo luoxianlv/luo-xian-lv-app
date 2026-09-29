@@ -20,6 +20,7 @@ import java.util.function.BooleanSupplier;
 /** 测试 APK 本身也不引入 Kotlin，避免掩盖宿主类加载边界。 */
 public final class NativeAppInstrumentation extends Instrumentation {
   private UiAutomation automation;
+  private boolean groupChecks;
 
   private void onMain(Runnable action) {
     var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -43,6 +44,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   @Override
   public void onCreate(Bundle arguments) {
     super.onCreate(arguments);
+    groupChecks = arguments != null && "true".equals(arguments.getString("group"));
     start();
   }
 
@@ -340,8 +342,13 @@ public final class NativeAppInstrumentation extends Instrumentation {
       click("展开播放器");
       await("动态 Material 面板没有显示", () -> find("选歌") != null);
       step("通过：无障碍服务与真实 Material 浮窗面板");
-      PlaybackHandoverChecks.run(this, main);
-      step("通过：两个业务加载器间的播放交接、过期快照拒绝、准备/激活故障与最新状态回退");
+      if (groupChecks) {
+        GroupHandoverChecks.run(this, main, this::click);
+        step("通过：真实页面与播放整组交接、部分提交故障、最新状态回退及后台窗口准备");
+      } else {
+        PlaybackHandoverChecks.run(this, main);
+        step("通过：两个业务加载器间的播放交接、过期快照拒绝、准备/激活故障与最新状态回退");
+      }
       onMain(
           () -> {
             Bundle value = new Bundle();
@@ -364,7 +371,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
                     "app.luoxianlv.ui.practice.PracticeKeyboard");
             require(
                 keyboard != null
-                    && keyboard.getClass().getClassLoader() == business
+                    && keyboard.getClass().getClassLoader()
+                        == Bootstrap.source().prepared.classLoader()
                     && keyboard.getAlpha() > .99f,
                 "口琴没有由业务包真实呈现");
             require(

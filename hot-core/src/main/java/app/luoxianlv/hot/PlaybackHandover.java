@@ -22,6 +22,7 @@ public final class PlaybackHandover {
   private final long revision;
   private final Listener listener;
   private boolean ready, committed, restoring, ended, reported;
+  private boolean rejectedContent;
   private Runnable timeout;
   private NativePage.Ready recovery;
 
@@ -247,6 +248,7 @@ public final class PlaybackHandover {
   private void reject(Throwable failure, boolean contentFailure) {
     if (!current() || reported || restoring) return;
     reported = true;
+    rejectedContent = contentFailure;
     clearTimeout();
     ready = false;
     if (committed) {
@@ -265,6 +267,10 @@ public final class PlaybackHandover {
 
   private boolean current() {
     return !ended && owner.connected && owner.handover == this;
+  }
+
+  boolean rejectedContent() {
+    return reported && rejectedContent;
   }
 
   private void clearTimeout() {

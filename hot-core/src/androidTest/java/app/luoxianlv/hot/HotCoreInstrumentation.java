@@ -13,12 +13,14 @@ import java.util.UUID;
 public final class HotCoreInstrumentation extends Instrumentation {
   private boolean nativePage;
   private String online;
+  private boolean recoveryOnly;
 
   @Override
   public void onCreate(Bundle arguments) {
     super.onCreate(arguments);
     nativePage = arguments != null && "true".equals(arguments.getString("native"));
     online = arguments == null ? null : arguments.getString("online");
+    recoveryOnly = arguments != null && "true".equals(arguments.getString("recoveryOnly"));
     start();
   }
 
@@ -26,6 +28,12 @@ public final class HotCoreInstrumentation extends Instrumentation {
   public void onStart() {
     Bundle report = new Bundle();
     try {
+      if (recoveryOnly) {
+        GroupRecoveryChecks.run(this);
+        report.putString("stream", "整组恢复收尾检查通过：关闭错误准确报告一次，保留最新状态并阻断后续交接。\n");
+        finish(-1, report);
+        return;
+      }
       RetainedPageChecks.run();
       runOnMainSync(HostResultsChecks::run);
       NativeHostChecks.run(this);
@@ -70,6 +78,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
             "候选故障恢复失败");
       }
       PageSwapChecks.run(this, root);
+      GroupRecoveryChecks.run(this);
       NativeTransferChecks.run(this, root);
       if (nativePage) NativePageChecks.run(this, root);
       if (online != null) NativeOnlineChecks.run(this, root, online);
@@ -78,6 +87,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
           "stream",
           "Android 热更核心检查通过：Go 验签、完整包、增量恢复、只读对象、旧快照保留、激活日志与故障隔离。"
               + " 十三种同窗口替换、输入隔离、状态边界、代际租约及异步故障恢复检查通过。"
+              + " 整组恢复后的关闭错误会阻断后续交接，不丢弃已恢复状态。"
               + " 同版本重建句柄的内容/类型隔离与关闭检查通过。"
               + " 系统选择/权限结果、延迟消费和重建检查通过。"
               + " 原生宿主生命周期、系统选择期间重建、内容身份隔离和创建/恢复/保存/关闭故障隔离通过。"

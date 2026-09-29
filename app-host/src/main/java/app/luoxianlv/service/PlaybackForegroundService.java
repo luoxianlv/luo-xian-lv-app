@@ -28,6 +28,11 @@ public final class PlaybackForegroundService extends Service {
   private ForegroundPolicy policy;
   private AutoCloseable preparation;
 
+  /** 来源由整组事务切换；常驻服务不能一直保留旧业务策略的加载器。 */
+  public static void businessChanged() {
+    if (instance != null) instance.policy = null;
+  }
+
   @Override
   public void onCreate() {
     super.onCreate();

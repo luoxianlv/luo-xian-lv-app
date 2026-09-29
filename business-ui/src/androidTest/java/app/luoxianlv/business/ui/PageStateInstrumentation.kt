@@ -4,6 +4,9 @@ import android.app.Instrumentation
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Parcelable
+import android.util.SparseArray
+import android.view.AbsSavedState
 import androidx.compose.runtime.*
 
 /** 在 Android 实际 Bundle/Compose 上验证类型、边界和状态重建，不依赖 JVM 空壳。 */
@@ -18,6 +21,7 @@ class PageStateInstrumentation : Instrumentation() {
         try {
             primitiveArrays()
             composeState()
+            viewState()
             rejects {
                 PageSavedState.encode(Bundle().apply { putString("large", "中".repeat(30001)) })
             }
@@ -33,7 +37,10 @@ class PageStateInstrumentation : Instrumentation() {
             rejects {
                 PageSavedState.decode("[1,[\"bundle\",[[\"a\",[\"int\",1]],[\"a\",[\"int\",2]]]]]")
             }
-            report.putString("stream", "页面状态通过：基础数组类型、空值与中文、Compose 状态策略、深度/数量/体积限制、非法对象与版本拒绝。\n")
+            report.putString(
+                "stream",
+                "页面状态通过：基础数组类型、空值与中文、Compose 与原生控件基础状态、深度/数量/体积限制、非法对象与版本拒绝。\n",
+            )
             finish(-1, report)
         } catch (error: Throwable) {
             report.putString("stream", "页面状态失败：${error.stackTraceToString()}")
@@ -95,6 +102,45 @@ class PageStateInstrumentation : Instrumentation() {
         check((restored[3] as MutableFloatState).floatValue == .5f)
         check((restored[4] as MutableDoubleState).doubleValue == .25)
         check((restored[5] as Map<*, *>)["items"] == listOf(1, 2, null))
+    }
+
+    private fun viewState() {
+        val views =
+            SparseArray<Parcelable?>().apply {
+                put(Int.MIN_VALUE, AbsSavedState.EMPTY_STATE)
+                put(7, Bundle().apply { putString("text", "原生预览") })
+                put(42, null)
+            }
+        val state =
+            Bundle().apply {
+                putSparseParcelableArray("direct", views)
+                putSerializable("compose", arrayListOf(linkedMapOf("view" to views)))
+            }
+        val restored = PageSavedState.decode(PageSavedState.encode(state))
+        val direct = restored.getSparseParcelableArray<Parcelable>("direct")!!
+        check(direct.size() == 3 && direct[Int.MIN_VALUE] === AbsSavedState.EMPTY_STATE)
+        check((direct[7] as Bundle).getString("text") == "原生预览" && direct[42] == null)
+        val nested =
+            ((restored.get("compose") as List<*>)[0] as Map<*, *>)["view"] as SparseArray<*>
+        check(nested[Int.MIN_VALUE] === AbsSavedState.EMPTY_STATE)
+        rejects {
+            PageSavedState.encode(
+                Bundle().apply {
+                    putSparseParcelableArray(
+                        "foreign",
+                        SparseArray<Parcelable>().apply { put(1, Intent()) },
+                    )
+                }
+            )
+        }
+        rejects {
+            PageSavedState.decode(
+                """[1,["bundle",[["a",["sparse",[[1,["null"]],[1,["null"]]]]]]]]"""
+            )
+        }
+        rejects {
+            PageSavedState.decode("""[1,["bundle",[["a",["sparse",[[2147483648,["null"]]]]]]]]""")
+        }
     }
 
     private fun rejects(block: () -> Unit) {

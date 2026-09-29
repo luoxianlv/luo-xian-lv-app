@@ -13,7 +13,7 @@ import java.util.concurrent.Executor;
 final class PageSession implements NativePage {
   private NativePage baseline;
   private final String identity;
-  private final Context initialContext;
+  private Context initialContext;
   private final Executor worker;
   private final PageSwapHost.Listener listener;
   private HostActions platform;
@@ -65,6 +65,7 @@ final class PageSession implements NativePage {
     baseline = null;
     pages.initialSession(
         initial, initialContext == null ? context : initialContext, state, identity, ready);
+    initialContext = null;
     return pages;
   }
 

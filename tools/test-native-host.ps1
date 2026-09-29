@@ -1,6 +1,7 @@
 param(
     [string]$Adb = "$env:LOCALAPPDATA/Android/Sdk/platform-tools/adb.exe",
-    [string]$Serial = 'emulator-5554'
+    [string]$Serial = 'emulator-5554',
+    [switch]$Group
 )
 
 # 使用纯 Java 测试 APK；不能安装旧 :app 的 Kotlin 测试包，以免污染宿主类加载器。
@@ -30,12 +31,13 @@ try {
     [System.IO.Directory]::CreateDirectory($reports) | Out-Null
     $report = Join-Path $reports ('native-host-' + [Guid]::NewGuid().ToString('N') + '.txt')
     $lines = [System.Collections.Generic.List[string]]::new()
-    & $Adb -s $Serial shell am instrument -w "$package.test/app.luoxianlv.host.NativeAppInstrumentation" |
+    $options = if ($Group) { @('-e', 'group', 'true') } else { @() }
+    & $Adb -s $Serial shell am instrument -w @options "$package.test/app.luoxianlv.host.NativeAppInstrumentation" |
         ForEach-Object { $lines.Add($_); $_ }
     $exitCode = $LASTEXITCODE
     $result = $lines -join "`n"
     [System.IO.File]::WriteAllText($report, $result, [System.Text.UTF8Encoding]::new($false))
-    if ($exitCode -ne 0 -or $result -notmatch '通过：宿主无 Kotlin/Compose/业务类' -or $result -match 'AssertionError|Process crashed|INSTRUMENTATION_FAILED') {
+    if ($exitCode -ne 0 -or $result -notmatch '通过：宿主无 Kotlin/Compose/业务类' -or ($Group -and $result -notmatch '通过：真实页面与播放整组交接') -or $result -match 'AssertionError|Process crashed|INSTRUMENTATION_FAILED') {
         throw "三层宿主回归失败，记录：$report"
     }
 } finally {

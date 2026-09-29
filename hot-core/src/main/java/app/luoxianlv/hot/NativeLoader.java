@@ -119,6 +119,26 @@ public final class NativeLoader {
       return loader;
     }
 
+    public PageTarget page(String route, BusinessFactory factory) {
+      StrictJson.require(route != null && route.matches("[a-z][a-z0-9._-]{0,95}"), "业务路由无效");
+      return new PageTarget() {
+        @Override
+        public String identity() {
+          return Prepared.this.identity() + "#" + route;
+        }
+
+        @Override
+        public Context context(Context owner) {
+          return Prepared.this.context(owner);
+        }
+
+        @Override
+        public NativePage create() {
+          return factory.page(route);
+        }
+      };
+    }
+
     public synchronized Context context(Context owner) {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "模块上下文必须在主线程创建");
       if (moduleApplication == null) {

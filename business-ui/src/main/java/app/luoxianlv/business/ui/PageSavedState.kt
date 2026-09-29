@@ -2,6 +2,9 @@ package app.luoxianlv.business.ui
 
 import android.net.Uri
 import android.os.Bundle
+import android.os.Parcelable
+import android.util.SparseArray
+import android.view.AbsSavedState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotMutableState
 import org.json.JSONArray
@@ -133,6 +136,25 @@ internal object PageSavedState {
                             }
                         },
                     )
+                is SparseArray<*> ->
+                    node(
+                        "sparse",
+                        JSONArray().apply {
+                            count(value.size())
+                            repeat(value.size()) { index ->
+                                put(
+                                    JSONArray()
+                                        .put(value.keyAt(index))
+                                        .put(encode(value.valueAt(index), depth + 1))
+                                )
+                            }
+                        },
+                    )
+                is AbsSavedState -> {
+                    // 原生预览控件通常只有空状态；有自定义 Parcelable 的控件仍须提供基础值 Saver。
+                    require(value === AbsSavedState.EMPTY_STATE) { "原生控件状态需要基础值 Saver" }
+                    node("view-empty")
+                }
                 is ByteArray -> collection("bytes", value.asIterable())
                 is ShortArray -> collection("shorts", value.asIterable())
                 is CharArray -> collection("chars", value.asIterable())
@@ -162,7 +184,8 @@ internal object PageSavedState {
             require(
                 node.length() ==
                     when (type) {
-                        "null" -> 1
+                        "null",
+                        "view-empty" -> 1
                         "state" -> 3
                         else -> 2
                     }
@@ -187,6 +210,7 @@ internal object PageSavedState {
             }
             return when (type) {
                 "null" -> null
+                "view-empty" -> AbsSavedState.EMPTY_STATE
                 "string" -> string()
                 "boolean" -> node.get(1).also { require(it is Boolean) }
                 "byte" -> integer(Byte.MIN_VALUE.toLong(), Byte.MAX_VALUE.toLong()).toByte()
@@ -248,6 +272,19 @@ internal object PageSavedState {
                             put(key, decode(pair.getJSONArray(1), depth + 1))
                         }
                     }
+                "sparse" ->
+                    SparseArray<Any?>().apply {
+                        val entries = node.getJSONArray(1)
+                        count(entries.length())
+                        repeat(entries.length()) {
+                            val pair = entries.getJSONArray(it)
+                            require(pair.length() == 2)
+                            val key = pair.get(0)
+                            require(key is Int) { "原生控件状态键无效" }
+                            require(indexOfKey(key) < 0) { "原生控件状态键重复" }
+                            put(key, decode(pair.getJSONArray(1), depth + 1))
+                        }
+                    }
                 else -> error("页面状态类型不支持")
             }
         }
@@ -267,6 +304,16 @@ internal object PageSavedState {
             is Double -> bundle.putDouble(key, value)
             is Bundle -> bundle.putBundle(key, value)
             is Uri -> bundle.putParcelable(key, value)
+            is AbsSavedState -> bundle.putParcelable(key, value)
+            is SparseArray<*> -> {
+                require(
+                    (0 until value.size()).all {
+                        value.valueAt(it) == null || value.valueAt(it) is Parcelable
+                    }
+                )
+                @Suppress("UNCHECKED_CAST")
+                bundle.putSparseParcelableArray(key, value as SparseArray<Parcelable?>)
+            }
             is ByteArray -> bundle.putByteArray(key, value)
             is ShortArray -> bundle.putShortArray(key, value)
             is CharArray -> bundle.putCharArray(key, value)
