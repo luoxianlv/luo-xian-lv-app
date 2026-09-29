@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "version": 1,
+  "applicationId": "app.luoxianlv.debug",
+  "environment": "test",
+  "notBefore": "2026-09-28T21:34:58Z",
+  "notAfter": "2026-09-29T22:34:58Z",
+  "keys": [
+    {
+      "key": {
+        "schema": 1,
+        "algorithm": "ecdsa-p256-sha256",
+        "keyId": "afa3e1e9ad8cfb511e8f4ac533f6e8190fbd021a5f67ee8ced819d559ee3c297",
+        "purpose": "content",
+        "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEoTe2so9eTQY7ly/ZsM+4dqll0/u/mLfzqHO+cdZ6xpyYrQgu2+p2c24x9FBsyHBRwnZ4YOmNnwyUkR02O7Po4g=="
+      },
+      "notBefore": "2026-09-28T21:34:58Z",
+      "notAfter": "2026-09-29T22:34:58Z"
+    },
+    {
+      "key": {
+        "schema": 1,
+        "algorithm": "ecdsa-p256-sha256",
+        "keyId": "c1638e20dbdcb1ce0de46cb6a44cfae9c99203f9ef32604c16072197ef179952",
+        "purpose": "activation",
+        "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEFcNrAgRgvjn7Q7bJFvQdhVDljF68tFzywk+L2sUrXqIqlxQ9fjUmm1dnav6Ywu7u5XdvNqdZytjKcrOoqrhRuA=="
+      },
+      "notBefore": "2026-09-28T21:34:58Z",
+      "notAfter": "2026-09-29T22:34:58Z"
+    }
+  ],
+  "revokedKeyIds": []
+}

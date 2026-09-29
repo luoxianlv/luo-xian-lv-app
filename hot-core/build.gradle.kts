@@ -8,10 +8,14 @@ android {
         testInstrumentationRunner = "app.luoxianlv.hot.HotCoreInstrumentation"
     }
     sourceSets.getByName("androidTest").assets.srcDir("src/test/resources")
+    sourceSets.getByName("androidTest").assets.srcDir(rootProject.file(".local/hot-core-test-assets"))
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
-dependencies { testImplementation(libs.junit) }
+dependencies {
+    api(project(":hot-contract"))
+    testImplementation(libs.junit)
+}

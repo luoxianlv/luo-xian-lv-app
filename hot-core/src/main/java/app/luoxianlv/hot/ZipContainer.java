@@ -140,7 +140,28 @@ final class ZipContainer implements Closeable {
   InputStream open(Entry entry) throws Exception {
     ZipEntry actual = zip.getEntry(entry.name);
     StrictJson.require(actual != null && actual.getSize() == entry.size, "ZIP 条目在读取前改变");
-    return zip.getInputStream(actual);
+    java.util.zip.CheckedInputStream checked =
+        new java.util.zip.CheckedInputStream(zip.getInputStream(actual), new java.util.zip.CRC32());
+    return new java.io.FilterInputStream(checked) {
+      private void verifyEnd(int result) throws java.io.IOException {
+        if (result == -1 && checked.getChecksum().getValue() != actual.getCrc())
+          throw new java.io.IOException("ZIP 条目 CRC 校验失败");
+      }
+
+      @Override
+      public int read() throws java.io.IOException {
+        int result = checked.read();
+        verifyEnd(result);
+        return result;
+      }
+
+      @Override
+      public int read(byte[] bytes, int offset, int length) throws java.io.IOException {
+        int result = checked.read(bytes, offset, length);
+        verifyEnd(result);
+        return result;
+      }
+    };
   }
 
   @Override

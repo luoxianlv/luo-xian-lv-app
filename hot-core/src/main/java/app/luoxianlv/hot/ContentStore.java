@@ -112,6 +112,15 @@ public final class ContentStore {
     return new File(objects, hash);
   }
 
+  File runtimeDirectory(String hash) throws Exception {
+    StrictJson.require(HotManifest.validHash(hash), "运行时身份无效");
+    File result = new File(directory("runtimes"), hash);
+    StrictJson.require(
+        !Files.isSymbolicLink(result.toPath()) && (result.isDirectory() || result.mkdirs()),
+        "无法创建运行时目录");
+    return result;
+  }
+
   private void commitObject(HotPackage source, String hash, File destination) throws Exception {
     File temporary = File.createTempFile("object-", ".part", staging);
     try {

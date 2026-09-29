@@ -26,6 +26,7 @@ public final class HotManifest {
   private static final Pattern UTC =
       Pattern.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-5][0-9](\\.[0-9]{1,9})?Z");
   public final String snapshotId;
+  public final String contentId;
   public final String applicationId;
   public final String environment;
   public final String label;
@@ -163,6 +164,17 @@ public final class HotManifest {
     validateGraph(byId);
     artifacts = Collections.unmodifiableList(result);
     objects = Collections.unmodifiableMap(sizes);
+    List<String> hashes = new ArrayList<>(sizes.keySet());
+    Collections.sort(hashes);
+    contentId =
+        HotSignatures.hash(
+            ("LXHOT-CONTENT-V1\n"
+                    + applicationId
+                    + "\n"
+                    + environment
+                    + "\n"
+                    + String.join("\n", hashes))
+                .getBytes(StandardCharsets.UTF_8));
   }
 
   private static void validateGraph(Map<String, Artifact> artifacts) {

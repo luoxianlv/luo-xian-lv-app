@@ -39,6 +39,7 @@ public final class ActivationJournal {
 
   public static final class State {
     public final String stable, active, candidate, attempt;
+    public final String previousStable;
     public final long revision, trustVersion, startedAt;
     public final int processId;
     public final Phase phase;
@@ -55,6 +56,32 @@ public final class ActivationJournal {
         int processId,
         Phase phase,
         Set<String> quarantine) {
+      this(
+          stable,
+          active,
+          candidate,
+          attempt,
+          revision,
+          trustVersion,
+          startedAt,
+          processId,
+          phase,
+          quarantine,
+          "");
+    }
+
+    State(
+        String stable,
+        String active,
+        String candidate,
+        String attempt,
+        long revision,
+        long trustVersion,
+        long startedAt,
+        int processId,
+        Phase phase,
+        Set<String> quarantine,
+        String previousStable) {
       this.stable = stable;
       this.active = active;
       this.candidate = candidate;
@@ -65,6 +92,22 @@ public final class ActivationJournal {
       this.processId = processId;
       this.phase = phase;
       this.quarantine = Collections.unmodifiableSet(new LinkedHashSet<>(quarantine));
+      this.previousStable = previousStable;
+    }
+
+    State withPrevious(String previous) {
+      return new State(
+          stable,
+          active,
+          candidate,
+          attempt,
+          revision,
+          trustVersion,
+          startedAt,
+          processId,
+          phase,
+          quarantine,
+          previous);
     }
   }
 
@@ -86,6 +129,14 @@ public final class ActivationJournal {
   public synchronized String begin(
       String candidate, long revision, long trustVersion, int processId, long now)
       throws Exception {
+    return begin(candidate, UUID.randomUUID().toString(), revision, trustVersion, processId, now);
+  }
+
+  /** 在线激活沿用服务端签名许可的尝试编号，保证故障与健康回报对应同一次尝试。 */
+  public synchronized String begin(
+      String candidate, String attempt, long revision, long trustVersion, int processId, long now)
+      throws Exception {
+    StrictJson.require(UUID.fromString(attempt).toString().equals(attempt), "激活尝试编号无效");
     StrictJson.require(
         HotManifest.validHash(candidate) && !state.quarantine.contains(candidate), "候选无效或已隔离");
     StrictJson.require(
@@ -99,8 +150,7 @@ public final class ActivationJournal {
             && now > 0,
         "激活许可版本或进程身份无效");
     StrictJson.require(!candidate.equals(state.active), "候选已经在使用");
-    String attempt = UUID.randomUUID().toString();
-    save(
+    saveKeepingPrevious(
         new State(
             state.stable,
             state.active,
@@ -117,7 +167,7 @@ public final class ActivationJournal {
 
   public synchronized void firstFrame(String attempt) throws Exception {
     requireAttempt(attempt, Phase.PREPARING);
-    save(
+    saveKeepingPrevious(
         new State(
             state.stable,
             state.candidate,
@@ -136,16 +186,17 @@ public final class ActivationJournal {
     StrictJson.require(observedActiveMillis >= 60000, "需要至少 60 秒有效前台或演奏观察");
     save(
         new State(
-            state.active,
-            state.active,
-            "",
-            "",
-            state.revision,
-            state.trustVersion,
-            0,
-            0,
-            Phase.STABLE,
-            state.quarantine));
+                state.active,
+                state.active,
+                "",
+                "",
+                state.revision,
+                state.trustVersion,
+                0,
+                0,
+                Phase.STABLE,
+                state.quarantine)
+            .withPrevious(state.stable));
   }
 
   public synchronized void fail(String attempt, boolean confirmedContentFailure) throws Exception {
@@ -168,10 +219,11 @@ public final class ActivationJournal {
   public synchronized void observeVersions(long revision, long trustVersion) throws Exception {
     StrictJson.require(
         revision >= state.revision && trustVersion >= state.trustVersion, "拒绝过时的发布决定或信任列表");
+    if (revision == state.revision && trustVersion == state.trustVersion) return;
     if (state.phase == Phase.PREPARING
         && (revision > state.revision || trustVersion > state.trustVersion)) {
       // 尚未展示的新代码不能拿已失效许可继续进入首帧；需要按新决定重新准备。
-      save(
+      saveKeepingPrevious(
           new State(
               state.stable,
               state.stable,
@@ -185,7 +237,7 @@ public final class ActivationJournal {
               state.quarantine));
       return;
     }
-    save(
+    saveKeepingPrevious(
         new State(
             state.stable,
             state.active,
@@ -202,7 +254,7 @@ public final class ActivationJournal {
   private void recoverCandidate(boolean confirmed) throws Exception {
     Set<String> quarantine = new LinkedHashSet<>(state.quarantine);
     if (confirmed) quarantine.add(state.candidate);
-    save(
+    saveKeepingPrevious(
         new State(
             state.stable,
             state.stable,
@@ -218,6 +270,36 @@ public final class ActivationJournal {
 
   private void requireAttempt(String attempt, Phase phase) {
     StrictJson.require(state.phase == phase && state.attempt.equals(attempt), "激活回调已经过期");
+  }
+
+  /** 启动观察通过后仍可回退；调用方必须已有明确属于当前模块的故障证据。 */
+  public synchronized void stableContentFailed(
+      HotManifest manifest, ContentQuarantine contentQuarantine, long hostContract)
+      throws Exception {
+    StrictJson.require(
+        state.phase == Phase.STABLE && state.stable.equals(manifest.snapshotId), "故障报告不属于当前稳定内容");
+    contentQuarantine.isolate(manifest, hostContract);
+    Set<String> quarantined = new LinkedHashSet<>(state.quarantine);
+    quarantined.add(state.stable);
+    String fallback = state.previousStable;
+    save(
+        new State(
+            fallback,
+            fallback,
+            "",
+            "",
+            state.revision,
+            state.trustVersion,
+            0,
+            0,
+            Phase.STABLE,
+            quarantined));
+  }
+
+  private void saveKeepingPrevious(State next) throws Exception {
+    save(
+        next.withPrevious(
+            next.quarantine.contains(state.previousStable) ? "" : state.previousStable));
   }
 
   private void save(State next) throws Exception {
@@ -261,7 +343,7 @@ public final class ActivationJournal {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(buffer)) {
       out.writeInt(MAGIC);
-      out.writeInt(1);
+      out.writeInt(2);
       out.writeUTF(state.stable);
       out.writeUTF(state.active);
       out.writeUTF(state.candidate);
@@ -273,6 +355,7 @@ public final class ActivationJournal {
       out.writeUTF(state.phase.name());
       out.writeInt(state.quarantine.size());
       for (String id : state.quarantine) out.writeUTF(id);
+      out.writeUTF(state.previousStable);
     }
     byte[] body = buffer.toByteArray();
     buffer.write(MessageDigest.getInstance("SHA-256").digest(body));
@@ -288,7 +371,7 @@ public final class ActivationJournal {
         MessageDigest.isEqual(MessageDigest.getInstance("SHA-256").digest(body), digest),
         "激活日志损坏，不能重置防回退版本");
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
-      StrictJson.require(input.readInt() == MAGIC && input.readInt() == 1, "激活日志格式不支持");
+      StrictJson.require(input.readInt() == MAGIC && input.readInt() == 2, "激活日志格式不支持");
       String stable = input.readUTF(),
           active = input.readUTF(),
           candidate = input.readUTF(),
@@ -304,6 +387,11 @@ public final class ActivationJournal {
         String id = input.readUTF();
         StrictJson.require(HotManifest.validHash(id) && quarantine.add(id), "隔离内容身份无效");
       }
+      String previousStable = input.readUTF();
+      StrictJson.require(
+          (previousStable.isEmpty() || HotManifest.validHash(previousStable))
+              && !quarantine.contains(previousStable),
+          "恢复副本身份无效");
       StrictJson.require(input.available() == 0, "激活日志含尾随内容");
       StrictJson.require(
           (stable.isEmpty() || HotManifest.validHash(stable))
@@ -330,7 +418,17 @@ public final class ActivationJournal {
             "候选指针状态不一致");
       }
       return new State(
-          stable, active, candidate, attempt, revision, trust, started, pid, phase, quarantine);
+          stable,
+          active,
+          candidate,
+          attempt,
+          revision,
+          trust,
+          started,
+          pid,
+          phase,
+          quarantine,
+          previousStable);
     }
   }
 }

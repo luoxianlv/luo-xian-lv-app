@@ -113,6 +113,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation(project(":business-ui"))
     implementation(libs.material)
 
     // Compose (M1)：主界面迁移用；material 暂保留给悬浮窗 View

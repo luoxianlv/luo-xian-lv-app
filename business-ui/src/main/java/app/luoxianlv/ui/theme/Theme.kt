@@ -1,6 +1,7 @@
 package app.luoxianlv.ui.theme
 
 import android.app.Activity
+import android.content.ContextWrapper
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -72,6 +73,7 @@ private val DarkColors =
 @Composable
 fun LuoXianLvTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    applySystemBars: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -114,7 +116,7 @@ fun LuoXianLvTheme(
         )
     CompositionLocalProvider(LocalBackdropPalette provides backdropPalette(darkTheme)) {
         MaterialTheme(colorScheme = colors, typography = PlayerTypography) {
-            SystemBarsAppearance(darkTheme)
+            if (applySystemBars) SystemBarsAppearance(darkTheme)
             content()
         }
     }
@@ -130,7 +132,14 @@ fun LuoXianLvTheme(
 private fun SystemBarsAppearance(darkTheme: Boolean) {
     val view = LocalView.current
     if (view.isInEditMode) return
-    val window = (view.context as? Activity)?.window ?: return
+    var owner = view.context
+    repeat(16) {
+        if (owner !is Activity) {
+            val next = (owner as? ContextWrapper)?.baseContext
+            if (next != null && next !== owner) owner = next
+        }
+    }
+    val window = (owner as? Activity)?.window ?: return
     SideEffect {
         WindowCompat.getInsetsController(window, view).apply {
             // 「浅色图标」= 深色主题
