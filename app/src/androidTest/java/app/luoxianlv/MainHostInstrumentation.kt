@@ -96,6 +96,8 @@ class MainHostInstrumentation : Instrumentation() {
             removeMonitor(monitor)
             val restored = checkNotNull(activity) { "主 Activity 未完成重建" }
             await("重建后丢失关于页") { find("检查新版本") != null && restored.hasWindowFocus() }
+            checkMainPageSwap(restored)
+            await("原位替换主业务页后丢失关于页") { find("检查新版本") != null }
             runOnMainSync { restored.onBackPressed() }
             await("返回未恢复设置页") { find("关于落弦律") != null }
             click("曲库")
@@ -126,7 +128,10 @@ class MainHostInstrumentation : Instrumentation() {
             finish(
                 -1,
                 Bundle().apply {
-                    putString("stream", "主宿主验证通过：主页/设置/曲库、关于页重建与滚动位置、系统返回、MIDI 选择取消回调和提示计时。\n")
+                    putString(
+                        "stream",
+                        "主宿主验证通过：主页/设置/曲库、关于页重建及原位替换、滚动位置、系统返回、替换后的 MIDI 选择取消回调和提示计时。\n",
+                    )
                 },
             )
         } catch (error: Throwable) {

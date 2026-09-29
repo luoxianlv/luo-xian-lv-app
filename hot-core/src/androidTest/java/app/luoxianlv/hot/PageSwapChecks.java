@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
 import android.widget.TextView;
+import app.luoxianlv.hot.contract.HostActions;
 import app.luoxianlv.hot.contract.NativePage;
 import java.io.File;
 import java.io.InputStream;
@@ -25,7 +26,20 @@ final class PageSwapChecks {
   static void run(HotCoreInstrumentation runner, File root) throws Exception {
     stateBoundaries();
     for (String mode :
-        new String[] {"healthy", "create_failure", "trial_failure", "input_changed"}) {
+        new String[] {
+          "healthy",
+          "create_failure",
+          "trial_failure",
+          "input_changed",
+          "system_scope",
+          "system_busy",
+          "system_rollback",
+          "system_callback_failure",
+          "system_resume_failure",
+          "editor_busy",
+          "input_isolation",
+          "rollback_restore_failure"
+        }) {
       new Case(runner, root, mode).run();
     }
   }
@@ -65,6 +79,9 @@ final class PageSwapChecks {
     PageSwapHost host;
     TrackingPage old;
     AutoCloseable lease;
+    final Platform platform = new Platform();
+    String candidateKey;
+    boolean baselineFailure;
 
     Case(HotCoreInstrumentation runner, File root, String mode) {
       this.runner = runner;
@@ -131,6 +148,7 @@ final class PageSwapChecks {
                       (event, payload) -> events.incrementAndGet(),
                       (code, error) -> {
                         if (code.equals("candidate_exposed")) exposed.countDown();
+                        else if (code.equals("baseline_recovery_failed")) baselineFailure = true;
                         else if (!code.equals("generation_close_failed")) {
                           result.set(code);
                           failure.set(error);
@@ -138,35 +156,86 @@ final class PageSwapChecks {
                         }
                       });
               activity.swap = host;
+              host.attachHost(platform);
               activity.container.addView(host, new android.widget.FrameLayout.LayoutParams(-1, -1));
               host.lifecycle(NativePage.RESUMED);
-              old = new TrackingPage();
+              old = mode.equals("editor_busy") ? new EditorPage() : new TrackingPage();
               Bundle saved = new Bundle();
               saved.putInt("position", 37);
               host.initial(old, activity, saved);
+              if (mode.equals("editor_busy")) check(old.view.requestFocus(), "输入框无法获得焦点");
               events.set(0);
               if (mode.equals("healthy")) lease = host.pinActive();
+              ActionPage.latest = null;
+              if (mode.equals("system_busy")) platform.busy = true;
               Class<? extends NativePage> entry =
                   mode.equals("create_failure")
                       ? BrokenPage.class
-                      : mode.equals("input_changed") ? DelayedPage.class : TrackingPage.class;
+                      : mode.equals("input_changed") || mode.equals("input_isolation")
+                          ? DelayedPage.class
+                          : mode.equals("system_resume_failure")
+                              ? ResumeFailurePage.class
+                              : mode.startsWith("system_") || mode.equals("editor_busy")
+                                  ? ActionPage.class
+                                  : TrackingPage.class;
               NativeLoader.Prepared prepared =
                   new NativeLoader.Prepared(
                       manifest, entry, getClass().getClassLoader(), activity.getResources(), null);
               check(host.offer(prepared, ticket), "候选没有被接收");
             });
-        if (mode.equals("input_changed")) {
+        if (mode.equals("system_busy") || mode.equals("editor_busy")) {
+          SystemClock.sleep(250);
+          main(
+              () -> {
+                check(ActionPage.latest == null, "系统选择或输入未结束却已实例化候选");
+                platform.busy = false;
+                if (mode.equals("editor_busy")) {
+                  check(host.findFocus().onCheckIsTextEditor(), "未覆盖原生编辑焦点");
+                  old.view.setFocusable(false);
+                  old.view.clearFocus();
+                }
+              });
+        }
+        if (mode.equals("input_changed") || mode.equals("input_isolation")) {
           long until = SystemClock.elapsedRealtime() + 10000;
           while (DelayedPage.pending == null && SystemClock.elapsedRealtime() < until)
             SystemClock.sleep(20);
           check(DelayedPage.pending != null, "等待状态变化的候选没有创建");
           main(
               () -> {
-                host.updateHostState(new Bundle());
+                if (mode.equals("input_isolation")) {
+                  TrackingPage page = DelayedPage.page;
+                  page.view.setFocusableInTouchMode(true);
+                  check(!page.view.requestFocus(), "预绘制页抢走了输入焦点");
+                  page.view.setElevation(1000);
+                  old.view.setOnClickListener(null);
+                  old.view.setClickable(false);
+                  long gestureTime = SystemClock.uptimeMillis();
+                  for (int action :
+                      new int[] {
+                        android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP
+                      }) {
+                    android.view.MotionEvent event =
+                        android.view.MotionEvent.obtain(
+                            gestureTime,
+                            gestureTime,
+                            action,
+                            host.getWidth() / 2f,
+                            host.getHeight() / 2f,
+                            0);
+                    try {
+                      host.dispatchTouchEvent(event);
+                    } finally {
+                      event.recycle();
+                    }
+                  }
+                  check(page.position == 37, "触摸穿透到了隐藏候选页");
+                } else host.updateHostState(new Bundle());
                 DelayedPage.pending.ready();
                 DelayedPage.pending = null;
+                DelayedPage.page = null;
               });
-        } else if (!mode.equals("create_failure")) {
+        } else if (!mode.equals("create_failure") && !mode.equals("system_resume_failure")) {
           check(
               exposed.await(15, TimeUnit.SECONDS), "新页面未曝光：" + result.get() + " " + failure.get());
           main(
@@ -174,23 +243,79 @@ final class PageSwapChecks {
                 check(host.save().getInt("position") == 37, "切换丢失原页面状态");
                 check(events.get() == 0, "后台准备的候选触发了实际宿主行为");
                 check(!old.closed, "旧页面在试运行结束前被关闭");
-                if (mode.equals("trial_failure"))
+                if (mode.startsWith("system_") || mode.equals("editor_busy")) {
+                  check(
+                      platform.launches == 1 && platform.permissions == 0 && platform.finishes == 0,
+                      "候选创建期间调用了系统入口，或正式展示后的请求丢失");
+                  candidateKey = platform.key;
+                  old.actions.launch("selection", new Intent(), null);
+                  old.actions.permissions(
+                      "permissions", new String[] {"android.permission.CAMERA"});
+                  old.actions.finish();
+                  check(
+                      platform.launches == 1 && platform.permissions == 0 && platform.finishes == 0,
+                      "旧代际仍能操作系统入口");
+                  platform.busy = false;
+                  if (mode.equals("system_callback_failure")) ActionPage.latest.failResult = true;
+                  check(
+                      host.result(candidateKey, android.app.Activity.RESULT_CANCELED, null),
+                      "当前代际回调未消费");
+                  if (!mode.equals("system_callback_failure"))
+                    check(
+                        ActionPage.latest.results == 1
+                            && "selection".equals(ActionPage.latest.resultKey),
+                        "系统键未还原给正确业务页");
+                }
+                if (mode.equals("rollback_restore_failure")) old.failResume = true;
+                if (mode.equals("trial_failure")
+                    || mode.equals("system_rollback")
+                    || mode.equals("rollback_restore_failure"))
                   host.failActive(new IllegalStateException("测试注入的业务故障"));
-                else clock.addAndGet(60000);
+                else if (!mode.equals("system_callback_failure")) clock.addAndGet(60000);
               });
         }
         check(done.await(15, TimeUnit.SECONDS), "切换事务没有结束：" + mode);
         String expected =
-            mode.equals("healthy")
+            success()
                 ? "candidate_stable"
                 : mode.equals("create_failure")
                     ? "candidate_create_failed"
-                    : mode.equals("trial_failure") ? "candidate_failed" : "candidate_input_changed";
+                    : mode.equals("trial_failure")
+                            || mode.equals("system_rollback")
+                            || mode.equals("rollback_restore_failure")
+                        ? "candidate_failed"
+                        : mode.equals("system_callback_failure")
+                            ? "candidate_callback_failed"
+                            : mode.equals("system_resume_failure")
+                                ? "candidate_swap_failed"
+                                : "candidate_input_changed";
         check(expected.equals(result.get()), "切换结果错误：" + result.get() + " " + failure.get());
-        if (mode.equals("healthy")) {
-          main(() -> check(!old.closed, "演奏租约未释放却关闭旧代际"));
-          lease.close();
-          lease = null;
+        if (success()) {
+          if (lease != null) {
+            main(() -> check(!old.closed, "演奏租约未释放却关闭旧代际"));
+            // 模拟工作线程已投递释放，但主线程先关闭页面；关闭不能清掉这次归还。
+            main(
+                () -> {
+                  Thread releaser =
+                      new Thread(
+                          () -> {
+                            try {
+                              lease.close();
+                            } catch (Exception error) {
+                              throw new AssertionError(error);
+                            }
+                          });
+                  releaser.start();
+                  try {
+                    releaser.join(1000);
+                  } catch (InterruptedException error) {
+                    throw new AssertionError(error);
+                  }
+                  check(!releaser.isAlive(), "租约线程未完成投递");
+                  host.close();
+                });
+            lease = null;
+          }
           long until = SystemClock.elapsedRealtime() + 3000;
           while (!old.closed && SystemClock.elapsedRealtime() < until) SystemClock.sleep(20);
           check(old.closed, "旧代际租约释放后未关闭");
@@ -199,12 +324,30 @@ final class PageSwapChecks {
           main(
               () -> {
                 check(!old.closed, "恢复时丢失旧页面");
+                check(
+                    baselineFailure == mode.equals("rollback_restore_failure"), "旧页恢复故障未交给稳定宿主处理");
                 check(host.save().getInt("position") == 37, "恢复后的状态改变");
+                if (mode.startsWith("system_")) {
+                  String stale = candidateKey == null ? platform.key : candidateKey;
+                  int count = old.results;
+                  check(
+                      host.result(stale, android.app.Activity.RESULT_OK, new Intent()), "失效结果未消费");
+                  check(old.results == count, "失败代际的结果交给了旧页同名回调");
+                  ActionPage.latest.actions.launch("selection", new Intent(), null);
+                  check(platform.launches == 1, "已回退的候选仍能发起系统操作");
+                  platform.busy = false;
+                  old.actions.launch("selection", new Intent(), null);
+                  check(!stale.equals(platform.key), "回退页继承了故障代际的请求身份");
+                  check(
+                      host.result(platform.key, android.app.Activity.RESULT_OK, null)
+                          && old.results == count + 1,
+                      "旧页恢复后的新请求未投递");
+                }
               });
           check(journal.state().active.isEmpty(), "错误候选仍是活动版本");
           boolean isolated = journal.state().quarantine.contains(manifest.snapshotId);
           check(
-              isolated == (mode.equals("create_failure") || mode.equals("trial_failure")),
+              isolated == !(mode.equals("input_changed") || mode.equals("input_isolation")),
               "错误归因或内容隔离不正确");
         }
       } finally {
@@ -214,6 +357,13 @@ final class PageSwapChecks {
         worker.shutdown();
         worker.awaitTermination(5, TimeUnit.SECONDS);
       }
+    }
+
+    boolean success() {
+      return mode.equals("healthy")
+          || mode.equals("system_scope")
+          || mode.equals("system_busy")
+          || mode.equals("editor_busy");
     }
 
     void main(Runnable action) throws Exception {
@@ -233,11 +383,34 @@ final class PageSwapChecks {
   public static class TrackingPage implements NativePage {
     volatile boolean closed;
     int position;
+    HostActions actions;
+    int results;
+    String resultKey;
+    boolean failResult;
+    boolean failResume;
+    TextView view;
+
+    protected TextView view(Context context) {
+      return new TextView(context);
+    }
+
+    @Override
+    public void attachHost(HostActions actions) {
+      this.actions = actions;
+    }
+
+    @Override
+    public boolean result(String key, int code, Intent data) {
+      if (failResult) throw new IllegalStateException("测试注入的回调故障");
+      results++;
+      resultKey = key;
+      return true;
+    }
 
     @Override
     public View create(Context context, Bundle state, Bundle host, Events events, Ready ready) {
       position = state.getInt("position");
-      TextView view = new TextView(context);
+      view = view(context);
       view.setText("原生页面 " + position);
       view.setOnClickListener(
           v -> {
@@ -260,7 +433,9 @@ final class PageSwapChecks {
     public void updateHostState(Bundle state) {}
 
     @Override
-    public void lifecycle(int state) {}
+    public void lifecycle(int state) {
+      if (failResume && state == RESUMED) throw new IllegalStateException("测试注入的旧页恢复故障");
+    }
 
     @Override
     public void close() {
@@ -275,12 +450,85 @@ final class PageSwapChecks {
     }
   }
 
+  public static final class EditorPage extends TrackingPage {
+    @Override
+    protected TextView view(Context context) {
+      return new android.widget.EditText(context);
+    }
+  }
+
+  public static class ActionPage extends TrackingPage {
+    static volatile ActionPage latest;
+    private boolean launched;
+
+    @Override
+    public View create(Context context, Bundle state, Bundle host, Events events, Ready ready) {
+      latest = this;
+      actions.launch("preparing", new Intent(), null);
+      actions.permissions("preparing_permission", new String[] {"android.permission.CAMERA"});
+      actions.finish();
+      actions.resultReady("selection");
+      return super.create(context, state, host, events, ready);
+    }
+
+    @Override
+    public void lifecycle(int state) {
+      if (state == RESUMED && !launched) {
+        launched = true;
+        actions.launch("selection", new Intent(), null);
+      }
+    }
+  }
+
+  public static final class ResumeFailurePage extends ActionPage {
+    @Override
+    public void lifecycle(int state) {
+      super.lifecycle(state);
+      if (state == RESUMED) throw new IllegalStateException("测试注入的恢复故障");
+    }
+  }
+
+  private static final class Platform implements HostActions {
+    boolean busy;
+    int launches, permissions, finishes;
+    String key;
+
+    @Override
+    public void launch(String key, Intent intent, Bundle options) {
+      this.key = key;
+      launches++;
+      busy = true;
+    }
+
+    @Override
+    public void permissions(String key, String[] names) {
+      this.key = key;
+      permissions++;
+      busy = true;
+    }
+
+    @Override
+    public void resultReady(String key) {}
+
+    @Override
+    public boolean hasPendingResults() {
+      return busy;
+    }
+
+    @Override
+    public void finish() {
+      finishes++;
+    }
+  }
+
   public static final class DelayedPage extends TrackingPage {
     static volatile Ready pending;
+    static volatile DelayedPage page;
 
     @Override
     public View create(Context context, Bundle state, Bundle host, Events events, Ready ready) {
       pending = ready;
+      page = this;
       return super.create(context, state, host, events, () -> {});
     }
   }

@@ -13,15 +13,30 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import app.luoxianlv.hot.contract.HostActions;
 import app.luoxianlv.hot.contract.NativePage;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /** 仅依赖 Android/Java 的窗口宿主；页面、Compose 和业务生命周期由可替换入口拥有。 */
 public abstract class NativeHostActivity extends Activity {
+  // 多个窗口共用串行提交线程；首次有更新事务才创建线程，不阻塞首屏。
+  private static final Executor COMMITS =
+      Executors.newSingleThreadExecutor(
+          task -> {
+            Thread thread = new Thread(task, "lxhot-commit");
+            thread.setDaemon(true);
+            return thread;
+          });
   private NativePage page;
   private HostResults results;
   private boolean visible;
   private Object backCallback;
 
   protected abstract NativePage createPage() throws Exception;
+
+  protected final PageSwapHost pageHost() {
+    StrictJson.require(page instanceof PageSession, "原生页面会话尚未就绪");
+    return ((PageSession) page).pages();
+  }
 
   @Override
   protected void onCreate(Bundle state) {
@@ -40,7 +55,22 @@ public abstract class NativeHostActivity extends Activity {
     results = new HostResults(this, null);
     try {
       results = new HostResults(this, state == null ? null : state.getBundle("native.results"));
-      page = createPage();
+      NativePage baseline = createPage();
+      page =
+          new PageSession(
+              baseline,
+              getApplicationInfo().sourceDir + "#" + baseline.getClass().getName(),
+              COMMITS,
+              (code, failure) -> {
+                if (code.equals("baseline_recovery_failed"))
+                  getWindow()
+                      .getDecorView()
+                      .post(
+                          () -> {
+                            if (page != null && !isDestroyed()) pageFailed(failure);
+                          });
+                else if (failure != null) warning(code, failure);
+              });
       page.attachHost(actions(page));
       Bundle restored = state == null ? null : state.getBundle("native.page");
       setContentView(
@@ -110,6 +140,7 @@ public abstract class NativeHostActivity extends Activity {
   protected void onResume() {
     super.onResume();
     forward(() -> page.lifecycle(NativePage.RESUMED));
+    forward(() -> results.deliverAll(page));
   }
 
   @Override

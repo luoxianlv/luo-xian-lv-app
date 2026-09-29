@@ -1,6 +1,8 @@
 package app.luoxianlv.hot;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -10,7 +12,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
+import app.luoxianlv.hot.contract.HostActions;
 import app.luoxianlv.hot.contract.NativePage;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -20,20 +24,25 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     void event(String code, Throwable error);
   }
 
-  private final ActivationController controller;
+  private ActivationController controller;
   private final Executor worker;
   private final NativePage.Events events;
   private final Listener listener;
   private final Handler main = new Handler(Looper.getMainLooper());
+  private final Handler releases = new Handler(Looper.getMainLooper());
   private Bundle hostState = new Bundle();
   private Slot active, candidate, previous;
   private int lifecycle = NativePage.CREATED, pointers;
   private long inputEpoch;
-  private boolean closed, blocked, settling, externallyBusy;
+  private boolean closed, blocked, settling, externallyBusy, transitioning;
+  private HostActions platform;
 
   private static final class Slot {
+    String generation = UUID.randomUUID().toString().replace("-", "");
+    String identity;
     NativePage page;
     View view;
+    PageContainer container;
     Context context;
     NativeLoader.Prepared prepared;
     ActivationController.Ticket ticket;
@@ -59,6 +68,42 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     setSaveFromParentEnabled(false);
   }
 
+  /** 磁盘验证和更新协调器可晚于首屏准备；绑定本身不执行任何候选代码。 */
+  public void bindController(ActivationController controller) {
+    requireMain();
+    StrictJson.require(
+        !closed && controller != null && (this.controller == null || this.controller == controller),
+        "页面更新控制器不能中途更换");
+    this.controller = controller;
+  }
+
+  public void attachHost(HostActions platform) {
+    requireMain();
+    StrictJson.require(
+        !closed && active == null && this.platform == null && platform != null, "系统入口只能在创建页面前绑定一次");
+    this.platform = platform;
+  }
+
+  /** 系统结果身份随同一内容的 Activity 重建恢复，不能跨 APK/快照回退继承。 */
+  public void initialSession(
+      NativePage page, Context context, Bundle saved, String identity, NativePage.Ready ready) {
+    requireMain();
+    StrictJson.require(
+        identity != null && !identity.isEmpty() && identity.length() <= 1024, "页面内容身份无效");
+    Bundle state = saved;
+    String generation = null;
+    if (saved.containsKey("session.version")) {
+      StrictJson.require(saved.getInt("session.version") == 1, "页面会话版本不支持");
+      if (identity.equals(saved.getString("session.identity"))) {
+        generation = saved.getString("session.generation");
+        StrictJson.require(generation != null && generation.matches("[0-9a-f]{32}"), "页面会话身份无效");
+        state = saved.getBundle("session.page");
+        StrictJson.require(state != null, "页面会话状态缺失");
+      } else state = new Bundle();
+    }
+    initial(page, context, state, ready, identity, generation);
+  }
+
   /** 首次页面必须来自已验证稳定组合或 APK 恢复入口。 */
   public void initial(NativePage page, Context pageContext, Bundle state) {
     initial(page, pageContext, state, () -> {});
@@ -66,13 +111,26 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
 
   public void initial(
       NativePage page, Context pageContext, Bundle state, NativePage.Ready initialReady) {
+    initial(page, pageContext, state, initialReady, "baseline", null);
+  }
+
+  private void initial(
+      NativePage page,
+      Context pageContext,
+      Bundle state,
+      NativePage.Ready initialReady,
+      String identity,
+      String generation) {
     requireMain();
     StrictJson.require(active == null && !closed, "初始页面已安装或宿主已关闭");
     Slot slot = new Slot();
     slot.page = page;
     slot.context = pageContext;
+    slot.identity = identity;
+    if (generation != null) slot.generation = generation;
     active = slot;
     try {
+      page.attachHost(actions(slot));
       slot.view =
           page.create(
               pageContext,
@@ -84,7 +142,9 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
                       () -> {
                         if (!closed && active == slot) initialReady.ready();
                       }));
-      addView(slot.view, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+      slot.container = new PageContainer(getContext(), slot.view, true);
+      addView(
+          slot.container, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
       page.lifecycle(lifecycle);
     } catch (RuntimeException | Error failure) {
       dispose(slot);
@@ -96,6 +156,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   /** 返回 false 时保留磁盘候选；不会为了新版丢弃仍被演奏任务租用的旧代际。 */
   public boolean offer(NativeLoader.Prepared prepared, ActivationController.Ticket ticket) {
     requireMain();
+    StrictJson.require(controller != null, "页面更新控制器尚未准备好");
     // 显式声明下次启动的模块不能被上层误送进即时页面替换通道。
     if (!prepared.manifest.activation.equals("live")) return false;
     if (closed || blocked || settling || active == null || candidate != null || previous != null)
@@ -107,6 +168,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     candidate = new Slot();
     candidate.prepared = prepared;
     candidate.ticket = ticket;
+    candidate.identity = prepared.manifest.snapshotId;
     Slot slot = candidate;
     main.post(() -> prepare(slot));
     return true;
@@ -116,9 +178,14 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     requireMain();
     StrictJson.require(state >= NativePage.CREATED && state <= NativePage.RESUMED, "页面生命周期无效");
     lifecycle = state;
-    if (active != null) active.page.lifecycle(state);
-    if (candidate != null && candidate.page != null)
-      candidate.page.lifecycle(Math.min(NativePage.STARTED, state));
+    withActive(() -> active.page.lifecycle(state));
+    if (candidate != null && candidate.page != null) {
+      try {
+        candidate.page.lifecycle(Math.min(NativePage.STARTED, state));
+      } catch (Throwable failure) {
+        abort(candidate, "candidate_lifecycle_failed", failure, true);
+      }
+    }
     if (active != null && active.ticket != null)
       controller.setActive(active.ticket, state == NativePage.RESUMED);
     // 离开前台不留一个拿着短期许可的半成品，回来按新决定重试。
@@ -130,7 +197,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     requireMain();
     hostState = PageState.copy(state);
     inputEpoch++;
-    if (active != null) active.page.updateHostState(PageState.copy(hostState));
+    withActive(() -> active.page.updateHostState(PageState.copy(hostState)));
   }
 
   /** 转屏、路由事务、手势执行等安全点由宿主统一报告；结束后待更新会自动再试。 */
@@ -145,6 +212,138 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     return active == null ? new Bundle() : PageState.copy(active.page.save());
   }
 
+  public Bundle saveSession() {
+    requireMain();
+    StrictJson.require(active != null && !closed, "页面会话已关闭");
+    Bundle state = new Bundle();
+    state.putInt("session.version", 1);
+    state.putString("session.identity", active.identity);
+    state.putString("session.generation", active.generation);
+    state.putBundle("session.page", save());
+    return PageState.copy(state);
+  }
+
+  public void newIntent(Intent intent) {
+    requireMain();
+    inputEpoch++;
+    withActive(() -> active.page.newIntent(intent));
+  }
+
+  public boolean back() {
+    requireMain();
+    inputEpoch++;
+    boolean[] handled = {false};
+    boolean survived = withActive(() -> handled[0] = active.page.back());
+    return !survived || handled[0];
+  }
+
+  public void configurationChanged(Configuration configuration) {
+    requireMain();
+    inputEpoch++;
+    withActive(() -> active.page.configurationChanged(configuration));
+  }
+
+  public void windowTouch() {
+    requireMain();
+    withActive(() -> active.page.windowTouch());
+  }
+
+  public void hostWarning(String code, Throwable error) {
+    requireMain();
+    if (active != null && !closed) active.page.hostWarning(code, error);
+  }
+
+  /** 失效代际的迟到结果只消费，不交给同名但不同内容的旧版/新版回调。 */
+  public boolean result(String key, int resultCode, Intent data) {
+    requireMain();
+    if (active == null || closed || !key.startsWith(prefix(active))) return true;
+    inputEpoch++;
+    String businessKey = key.substring(prefix(active).length());
+    checkBusinessKey(businessKey);
+    boolean[] consumed = {false};
+    boolean survived =
+        withActive(() -> consumed[0] = active.page.result(businessKey, resultCode, data));
+    return !survived || consumed[0];
+  }
+
+  private boolean withActive(Runnable action) {
+    if (active == null || closed) return true;
+    try {
+      action.run();
+      return true;
+    } catch (RuntimeException | Error failure) {
+      if (active.ticket == null || previous == null || settling) throw failure;
+      recover("candidate_callback_failed", failure, true);
+      return false;
+    }
+  }
+
+  private static String prefix(Slot slot) {
+    return "g." + slot.generation + ".";
+  }
+
+  private static void checkBusinessKey(String key) {
+    StrictJson.require(key != null && key.matches("[a-z][a-z0-9._-]{0,95}"), "系统结果业务键无效");
+  }
+
+  private HostActions actions(Slot slot) {
+    return new HostActions() {
+      private boolean allowed() {
+        requireMain();
+        return !closed
+            && !slot.disposed
+            && slot == active
+            && !settling
+            && !transitioning
+            && lifecycle == NativePage.RESUMED;
+      }
+
+      private HostActions platform() {
+        StrictJson.require(platform != null, "页面没有系统操作入口");
+        return platform;
+      }
+
+      @Override
+      public void launch(String key, Intent intent, Bundle options) {
+        checkBusinessKey(key);
+        if (allowed()) {
+          inputEpoch++;
+          platform().launch(prefix(slot) + key, intent, options);
+        }
+      }
+
+      @Override
+      public void permissions(String key, String[] permissions) {
+        checkBusinessKey(key);
+        if (allowed()) {
+          inputEpoch++;
+          platform().permissions(prefix(slot) + key, permissions);
+        }
+      }
+
+      @Override
+      public void resultReady(String key) {
+        requireMain();
+        checkBusinessKey(key);
+        if (!closed && slot == active && platform != null) platform.resultReady(prefix(slot) + key);
+      }
+
+      @Override
+      public boolean hasPendingResults() {
+        requireMain();
+        return platform != null && platform.hasPendingResults();
+      }
+
+      @Override
+      public void finish() {
+        if (allowed()) {
+          inputEpoch++;
+          platform().finish();
+        }
+      }
+    };
+  }
+
   /** 正在演奏的任务固定租用创建时的代际，租约可在任意线程结束。 */
   public AutoCloseable pinActive() {
     requireMain();
@@ -154,7 +353,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     AtomicBoolean released = new AtomicBoolean();
     return () -> {
       if (released.compareAndSet(false, true))
-        main.post(
+        releases.post(
             () -> {
               slot.pins--;
               if (closed && slot.pins == 0) dispose(slot);
@@ -192,6 +391,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
                 try {
                   slot.context = slot.prepared.context(getContext());
                   slot.page = slot.prepared.instantiate();
+                  slot.page.attachHost(actions(slot));
                   slot.view =
                       slot.page.create(
                           slot.context,
@@ -199,12 +399,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
                           PageState.copy(hostState),
                           (event, payload) -> dispatch(slot, event, payload),
                           () -> main.post(() -> ready(slot)));
+                  slot.container = new PageContainer(getContext(), slot.view, false);
                   addView(
-                      slot.view,
+                      slot.container,
                       0,
                       new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-                  slot.view.setImportantForAccessibility(
-                      View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
                   slot.page.lifecycle(NativePage.STARTED);
                 } catch (Exception error) {
                   throw new CandidateFailure(error);
@@ -293,18 +492,25 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
           controller.expose(
               slot.ticket,
               () -> {
-                slot.page.lifecycle(lifecycle);
-                old.page.lifecycle(NativePage.CREATED);
-                removeView(old.view);
-                slot.view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO);
-                active = slot;
-                previous = old;
-                candidate = null;
+                transitioning = true;
+                try {
+                  old.container.input(false);
+                  old.page.lifecycle(NativePage.CREATED);
+                  removeView(old.container);
+                  slot.container.input(true);
+                  active = slot;
+                  previous = old;
+                  candidate = null;
+                } finally {
+                  transitioning = false;
+                }
               });
       if (!swapped) {
         postOnAnimation(() -> commit(slot));
         return;
       }
+      // 只有事务确认新页成为活动页后才发 RESUMED，避免候选初始化提前启动系统操作。
+      slot.page.lifecycle(lifecycle);
       controller.setActive(slot.ticket, lifecycle == NativePage.RESUMED);
       listener.event("candidate_exposed", null);
       main.postDelayed(() -> observe(slot), 1000);
@@ -314,11 +520,15 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
         previous = null;
         candidate = slot;
       }
-      if (old.view.getParent() == null) addView(old.view);
+      old.container.input(true);
+      if (old.container.getParent() == null) addView(old.container);
       try {
         old.page.lifecycle(lifecycle);
       } catch (Throwable restoreFailure) {
         blocked = true;
+        abort(slot, "candidate_swap_failed", failure, true);
+        listener.event("baseline_recovery_failed", restoreFailure);
+        return;
       }
       abort(slot, "candidate_swap_failed", failure, true);
     }
@@ -356,9 +566,18 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     Slot broken = active;
     active = previous;
     previous = null;
-    if (active.view.getParent() == null) addView(active.view);
-    active.page.lifecycle(lifecycle);
     candidate = broken;
+    broken.container.input(false);
+    active.container.input(true);
+    if (active.container.getParent() == null) addView(active.container);
+    try {
+      active.page.lifecycle(lifecycle);
+    } catch (Throwable restoreFailure) {
+      blocked = true;
+      abort(broken, code, failure, confirmed);
+      listener.event("baseline_recovery_failed", restoreFailure);
+      return;
+    }
     abort(broken, code, failure, confirmed);
   }
 
@@ -406,14 +625,21 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     if (slot.view != null && slot.draw != null && slot.view.getViewTreeObserver().isAlive())
       slot.view.getViewTreeObserver().removeOnDrawListener(slot.draw);
     if (slot.pins > 0) {
-      if (slot.view != null) removeView(slot.view);
+      if (slot.container != null) {
+        slot.container.input(false);
+        removeView(slot.container);
+      }
       slot.disposing = true;
       // 故障代际若仍被任务租用，也计入两个代际上限，等待调用方结束任务。
       if (slot != active && previous == null && !closed) previous = slot;
       return;
     }
     slot.disposed = true;
-    if (slot.view != null) removeView(slot.view);
+    if (slot.container != null) {
+      slot.container.input(false);
+      removeView(slot.container);
+      slot.container.removeAllViews();
+    }
     try {
       if (slot.page != null) slot.page.close();
     } catch (Throwable failure) {
@@ -422,6 +648,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     }
     slot.page = null;
     slot.view = null;
+    slot.container = null;
     slot.prepared = null;
     slot.context = null;
     slot.draw = null;
@@ -471,7 +698,9 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
         && isLaidOut()
         && !isLayoutRequested()
         && pointers == 0
+        && (findFocus() == null || !findFocus().onCheckIsTextEditor())
         && !externallyBusy
+        && (platform == null || !platform.hasPendingResults())
         && active.page.canReplace();
   }
 
@@ -484,9 +713,58 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
 
   private void dispatch(Slot slot, String event, Bundle payload) {
     requireMain();
-    if (slot != active || closed || lifecycle != NativePage.RESUMED) return;
+    if (slot != active || closed || transitioning || lifecycle != NativePage.RESUMED) return;
     inputEpoch++;
     events.emit(event, PageState.copy(payload));
+  }
+
+  @Override
+  public void requestChildFocus(View child, View focused) {
+    inputEpoch++;
+    super.requestChildFocus(child, focused);
+  }
+
+  @Override
+  public void clearChildFocus(View child) {
+    inputEpoch++;
+    super.clearChildFocus(child);
+  }
+
+  /** 隐藏预绘制页有独立挂载层：禁止抢焦点、触摸穿透或靠根 View 的 Z 值盖住旧页。 */
+  private static final class PageContainer extends FrameLayout {
+    private boolean input;
+
+    PageContainer(Context context, View content, boolean input) {
+      super(context);
+      setSaveFromParentEnabled(false);
+      input(input);
+      if (!input) content.clearFocus();
+      addView(content, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+    }
+
+    void input(boolean enabled) {
+      input = enabled;
+      setDescendantFocusability(enabled ? FOCUS_AFTER_DESCENDANTS : FOCUS_BLOCK_DESCENDANTS);
+      setImportantForAccessibility(
+          enabled
+              ? IMPORTANT_FOR_ACCESSIBILITY_AUTO
+              : IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+      return input && super.dispatchTouchEvent(event);
+    }
+
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent event) {
+      return input && super.dispatchGenericMotionEvent(event);
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+      return input && super.dispatchKeyEvent(event);
+    }
   }
 
   @Override

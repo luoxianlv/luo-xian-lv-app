@@ -219,6 +219,11 @@ final class HostResults {
     return !requests.isEmpty() || !pending.isEmpty();
   }
 
+  /** 新内容恢复时清除失效代际的缓冲；当前代际尚未注册的结果仍保留。 */
+  void deliverAll(NativePage page) {
+    for (String key : new ArrayList<>(pending.keySet())) deliver(key, page);
+  }
+
   Bundle save() {
     Bundle state = new Bundle();
     int[] codes = new int[requests.size()];
@@ -278,6 +283,7 @@ final class HostResults {
   }
 
   private static void checkKey(String key) {
-    StrictJson.require(key != null && key.matches("[a-z][a-z0-9._-]{0,95}"), "系统结果业务键无效");
+    // 外层包含 32 位会话标识；业务自身的 96 字符限制由页面入口校验。
+    StrictJson.require(key != null && key.matches("[a-z][a-z0-9._-]{0,159}"), "系统结果业务键无效");
   }
 }
