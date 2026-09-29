@@ -48,11 +48,7 @@ public final class HttpObjectSource implements ObjectDownloader.Source {
   public ObjectDownloader.Response open(long offset) throws Exception {
     StrictJson.require(offset >= 0 && offset < size, "下载偏移量无效");
     // 模拟器可能设置了开发代理；本机测试服务器不能被代理到宿主机的另一个回环端口。
-    HttpURLConnection connection =
-        (HttpURLConnection)
-            (localConnection
-                ? url.toURL().openConnection(java.net.Proxy.NO_PROXY)
-                : url.toURL().openConnection());
+    HttpURLConnection connection = connect(url, localConnection);
     try {
       connection.setInstanceFollowRedirects(false);
       connection.setConnectTimeout(10000);
@@ -128,6 +124,14 @@ public final class HttpObjectSource implements ObjectDownloader.Source {
         "下载必须使用 HTTPS，本机联调地址需显式启用测试模式");
   }
 
+  static HttpURLConnection connect(URI url, boolean localTest) throws IOException {
+    validateUrl(url, localTest);
+    return (HttpURLConnection)
+        (localTest && isLocal(url.getHost())
+            ? url.toURL().openConnection(java.net.Proxy.NO_PROXY)
+            : url.toURL().openConnection());
+  }
+
   private static boolean isLocal(String host) {
     return host.equals("127.0.0.1")
         || host.equals("localhost")
@@ -145,7 +149,7 @@ public final class HttpObjectSource implements ObjectDownloader.Source {
     return url.getPort() != -1 ? url.getPort() : "https".equals(url.getScheme()) ? 443 : 80;
   }
 
-  private static long retryAfter(String value) {
+  static long retryAfter(String value) {
     if (value == null || !value.matches("[0-9]{1,9}")) return 60000;
     return Math.min(1800000, Long.parseLong(value) * 1000);
   }

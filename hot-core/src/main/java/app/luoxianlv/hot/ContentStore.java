@@ -38,6 +38,15 @@ public final class ContentStore {
   }
 
   public synchronized Snapshot prepare(HotPackage candidate) throws Exception {
+    return prepareSource(candidate);
+  }
+
+  public synchronized Snapshot prepare(DownloadedSnapshot candidate) throws Exception {
+    return prepareSource(candidate);
+  }
+
+  private Snapshot prepareSource(SnapshotSource source) throws Exception {
+    SignedSnapshot candidate = source.metadata();
     try (FileChannel channel =
             FileChannel.open(
                 new File(root, "prepare.lock").toPath(),
@@ -46,8 +55,8 @@ public final class ContentStore {
         FileLock lock = channel.tryLock()) {
       StrictJson.require(lock != null, "另一个更新任务正在准备，请稍后重试");
       Snapshot baseline = null;
-      if (candidate.mode.equals("delta")) {
-        baseline = snapshot(candidate.baseSnapshotId);
+      if (!source.baseline().isEmpty()) {
+        baseline = snapshot(source.baseline());
         StrictJson.require(
             baseline.manifest.applicationId.equals(candidate.manifest.applicationId)
                 && baseline.manifest.environment.equals(candidate.manifest.environment),
@@ -56,7 +65,7 @@ public final class ContentStore {
       long missing = 0;
       for (Map.Entry<String, Long> object : candidate.manifest.objects.entrySet()) {
         if (!objectFile(object.getKey()).isFile()) missing += object.getValue();
-        if (!candidate.included.contains(object.getKey())) {
+        if (!source.included().contains(object.getKey()) && !source.baseline().isEmpty()) {
           StrictJson.require(
               baseline != null
                   && object.getValue().equals(baseline.manifest.objects.get(object.getKey())),
@@ -69,8 +78,8 @@ public final class ContentStore {
         File destination = objectFile(object.getKey());
         if (destination.exists()) verifyFile(destination, object.getKey(), object.getValue());
         else {
-          StrictJson.require(candidate.included.contains(object.getKey()), "基线对象已丢失，需重新取得完整包");
-          commitObject(candidate, object.getKey(), destination);
+          StrictJson.require(source.included().contains(object.getKey()), "缓存对象已丢失，需重新下载缺失对象");
+          commitObject(source, object.getKey(), destination);
         }
       }
       File target = new File(snapshots, candidate.manifest.snapshotId);
@@ -85,7 +94,8 @@ public final class ContentStore {
         writeSynced(temporary.resolve("manifest.sig.json"), candidate.manifestSignature());
         writeSynced(temporary.resolve("trust.json"), candidate.trustBytes());
         writeSynced(temporary.resolve("trust.sig.json"), candidate.trustSignature());
-        Files.move(temporary, target.toPath(), StandardCopyOption.ATOMIC_MOVE);
+        syncDirectory(temporary.toFile());
+        moveAtomic(temporary, target.toPath(), StandardCopyOption.ATOMIC_MOVE);
         syncDirectory(snapshots);
       } finally {
         removeTemporary(temporary);
@@ -121,7 +131,7 @@ public final class ContentStore {
     return result;
   }
 
-  private void commitObject(HotPackage source, String hash, File destination) throws Exception {
+  private void commitObject(SnapshotSource source, String hash, File destination) throws Exception {
     File temporary = File.createTempFile("object-", ".part", staging);
     try {
       // Android 新版本要求可执行文件在写入期间即只读；已打开的描述符继续完成写入。
@@ -130,7 +140,7 @@ public final class ContentStore {
         source.copyObject(hash, output);
         output.getFD().sync();
       }
-      Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
+      moveAtomic(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
       syncDirectory(objects);
     } finally {
       if (temporary.exists()) {
@@ -150,6 +160,8 @@ public final class ContentStore {
     try (InputStream input = new FileInputStream(file)) {
       int n;
       while ((n = input.read(buffer)) != -1) {
+        if (Thread.currentThread().isInterrupted())
+          throw new java.io.InterruptedIOException("对象校验已取消");
         count += n;
         StrictJson.require(count <= size, "内部对象大小超限");
         digest.update(buffer, 0, n);
@@ -157,6 +169,25 @@ public final class ContentStore {
     }
     StrictJson.require(
         count == size && HotSignatures.hex(digest.digest()).equals(expected), "内部对象内容损坏");
+  }
+
+  static void copyVerified(
+      InputStream input, java.io.OutputStream destination, String hash, long size)
+      throws Exception {
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    long count = 0;
+    byte[] buffer = new byte[32768];
+    int n;
+    while ((n = input.read(buffer)) != -1) {
+      if (Thread.currentThread().isInterrupted())
+        throw new java.io.InterruptedIOException("对象复制已取消");
+      count += n;
+      StrictJson.require(n > 0 && count <= size, "实际对象读取异常或大小超限");
+      digest.update(buffer, 0, n);
+      destination.write(buffer, 0, n);
+    }
+    StrictJson.require(
+        count == size && HotSignatures.hex(digest.digest()).equals(hash), "对象实际内容校验失败");
   }
 
   static byte[] readBounded(File file) throws Exception {
@@ -193,13 +224,19 @@ public final class ContentStore {
             .getParentFile()
             .equals(target.getCanonicalFile().getParentFile()),
         "原子状态替换必须位于同一目录");
+    moveAtomic(
+        temporary.toPath(),
+        target.toPath(),
+        StandardCopyOption.ATOMIC_MOVE,
+        StandardCopyOption.REPLACE_EXISTING);
+    syncDirectory(target.getParentFile());
+  }
+
+  static void moveAtomic(Path source, Path target, java.nio.file.CopyOption... options)
+      throws Exception {
     for (int attempt = 0; ; attempt++) {
       try {
-        Files.move(
-            temporary.toPath(),
-            target.toPath(),
-            StandardCopyOption.ATOMIC_MOVE,
-            StandardCopyOption.REPLACE_EXISTING);
+        Files.move(source, target, options);
         break;
       } catch (java.nio.file.AccessDeniedException error) {
         if (!System.getProperty("os.name", "").startsWith("Windows") || attempt >= 3) throw error;
@@ -211,7 +248,6 @@ public final class ContentStore {
         }
       }
     }
-    syncDirectory(target.getParentFile());
   }
 
   private File directory(String name) throws Exception {

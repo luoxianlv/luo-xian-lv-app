@@ -41,6 +41,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     int width, height, pins;
     boolean frameObserved, ready, disposed, disposing;
     Runnable timeout;
+    Runnable committed;
     ViewTreeObserver.OnDrawListener draw;
   }
 
@@ -60,6 +61,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
 
   /** 首次页面必须来自已验证稳定组合或 APK 恢复入口。 */
   public void initial(NativePage page, Context pageContext, Bundle state) {
+    initial(page, pageContext, state, () -> {});
+  }
+
+  public void initial(
+      NativePage page, Context pageContext, Bundle state, NativePage.Ready initialReady) {
     requireMain();
     StrictJson.require(active == null && !closed, "初始页面已安装或宿主已关闭");
     Slot slot = new Slot();
@@ -73,7 +79,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
               PageState.copy(state),
               PageState.copy(hostState),
               (event, payload) -> dispatch(slot, event, payload),
-              () -> {});
+              () ->
+                  main.post(
+                      () -> {
+                        if (!closed && active == slot) initialReady.ready();
+                      }));
       addView(slot.view, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
       page.lifecycle(lifecycle);
     } catch (RuntimeException | Error failure) {
@@ -86,6 +96,8 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   /** 返回 false 时保留磁盘候选；不会为了新版丢弃仍被演奏任务租用的旧代际。 */
   public boolean offer(NativeLoader.Prepared prepared, ActivationController.Ticket ticket) {
     requireMain();
+    // 显式声明下次启动的模块不能被上层误送进即时页面替换通道。
+    if (!prepared.manifest.activation.equals("live")) return false;
     if (closed || blocked || settling || active == null || candidate != null || previous != null)
       return false;
     StrictJson.require(
@@ -220,6 +232,14 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   private void ready(Slot slot) {
     if (!pending(slot) || slot.ready) return;
     slot.ready = true;
+    if (Build.VERSION.SDK_INT >= 29 && isHardwareAccelerated()) {
+      // ViewRoot 在 onDraw 前截取提交回调；在 onDraw 内注册会错过静态页面唯一一次绘制。
+      slot.committed = () -> main.post(() -> frame(slot));
+      slot.view.getViewTreeObserver().registerFrameCommitCallback(slot.committed);
+      slot.view.invalidate();
+      invalidate();
+      return;
+    }
     ViewTreeObserver.OnDrawListener draw =
         new ViewTreeObserver.OnDrawListener() {
           boolean sent;
@@ -228,10 +248,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
           public void onDraw() {
             if (sent) return;
             sent = true;
-            Runnable submitted = () -> main.post(() -> frame(slot));
-            if (Build.VERSION.SDK_INT >= 29 && isHardwareAccelerated())
-              slot.view.getViewTreeObserver().registerFrameCommitCallback(submitted);
-            else main.post(submitted);
+            main.post(() -> frame(slot));
             main.post(
                 () -> {
                   if (slot.view != null && slot.view.getViewTreeObserver().isAlive())
@@ -242,6 +259,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     slot.draw = draw;
     slot.view.getViewTreeObserver().addOnDrawListener(draw);
     slot.view.invalidate();
+    invalidate();
   }
 
   private void frame(Slot slot) {
@@ -380,6 +398,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   private void dispose(Slot slot) {
     if (slot == null || slot.disposed) return;
     if (slot.timeout != null) main.removeCallbacks(slot.timeout);
+    if (Build.VERSION.SDK_INT >= 29
+        && slot.view != null
+        && slot.committed != null
+        && slot.view.getViewTreeObserver().isAlive())
+      slot.view.getViewTreeObserver().unregisterFrameCommitCallback(slot.committed);
     if (slot.view != null && slot.draw != null && slot.view.getViewTreeObserver().isAlive())
       slot.view.getViewTreeObserver().removeOnDrawListener(slot.draw);
     if (slot.pins > 0) {
@@ -403,10 +426,42 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     slot.context = null;
     slot.draw = null;
     slot.timeout = null;
+    slot.committed = null;
   }
 
   private boolean pending(Slot slot) {
     return !closed && candidate == slot && !settling;
+  }
+
+  /** 仅含宿主阶段与门限，不包含用户状态或网络地址，供本地超时诊断。 */
+  String diagnosticState() {
+    requireMain();
+    return "生命周期="
+        + lifecycle
+        + " 焦点="
+        + hasWindowFocus()
+        + " 待布局="
+        + isLayoutRequested()
+        + " 手指="
+        + pointers
+        + " 忙碌="
+        + externallyBusy
+        + " 收尾="
+        + settling
+        + " 阻断="
+        + blocked
+        + " 可替换="
+        + (active != null && active.page.canReplace())
+        + " 候选="
+        + (candidate != null)
+        + " 已创建="
+        + (candidate != null && candidate.page != null)
+        + " 已就绪="
+        + (candidate != null && candidate.ready)
+        + " 已绘制="
+        + (candidate != null && candidate.frameObserved)
+        + " 已关闭="
+        + closed;
   }
 
   private boolean safe() {

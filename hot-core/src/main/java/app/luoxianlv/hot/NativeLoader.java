@@ -198,7 +198,8 @@ public final class NativeLoader {
         output.getFD().sync();
       }
       ContentStore.verifyFile(temporary, artifact.sha256, artifact.size);
-      Files.move(temporary.toPath(), alias.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+      ContentStore.moveAtomic(
+          temporary.toPath(), alias.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE);
     } finally {
       if (temporary.exists()) {
         temporary.setWritable(true, true);

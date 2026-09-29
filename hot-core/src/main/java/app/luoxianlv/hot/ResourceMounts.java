@@ -76,7 +76,8 @@ public final class ResourceMounts {
             copyReadonly(input, mount.resolve("value").toFile(), artifact.size);
           }
       }
-      Files.move(staging, destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
+      ContentStore.syncDirectory(staging.toFile());
+      ContentStore.moveAtomic(staging, destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
       ContentStore.syncDirectory(snapshot.directory);
       return destination;
     } finally {

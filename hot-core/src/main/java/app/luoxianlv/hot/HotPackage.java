@@ -5,7 +5,6 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Collections;
@@ -16,13 +15,13 @@ import java.util.Map;
 import java.util.Set;
 
 /** 签名包验证与有界对象复制；只产生候选内容，不触发类加载或版本激活。 */
-public final class HotPackage implements Closeable {
+public final class HotPackage implements Closeable, SnapshotSource {
   public final HotManifest manifest;
   public final HotTrust trust;
   public final String mode, baseSnapshotId;
   public final Set<String> included;
   private final ZipContainer zip;
-  private final byte[] manifestRaw, manifestSignature, trustRaw, trustSignature;
+  private final SignedSnapshot signed;
   private final Map<String, ZipContainer.Entry> objects;
 
   public static final class Policy {
@@ -96,37 +95,19 @@ public final class HotPackage implements Closeable {
       StrictJson.require(
           metadata.containsKey("trust.json") == metadata.containsKey("trust.sig.json"),
           "授权列表和签名必须成对提供");
-      byte[] selected = metadata.get("trust.json"),
-          selectedSignature = metadata.get("trust.sig.json");
-      HotTrust authority =
-          selected == null ? null : new HotTrust(policy.root, selected, selectedSignature);
-      if (policy.trust != null) {
-        HotTrust external = new HotTrust(policy.root, policy.trust, policy.signature);
-        if (authority != null && external.version == authority.version)
-          StrictJson.require(Arrays.equals(selected, policy.trust), "同版本授权内容冲突");
-        if (authority == null || external.version >= authority.version) {
-          authority = external;
-          selected = policy.trust;
-          selectedSignature = policy.signature;
-        }
-      }
-      StrictJson.require(authority != null, "缺少根授权");
-      authority.current(policy.minimumTrustVersion, policy.now);
-      manifestRaw = metadata.get("manifest.json");
-      manifestSignature = metadata.get("manifest.sig.json");
-      authority.verify(HotSignatures.MANIFEST, manifestRaw, manifestSignature, policy.now);
-      authority.verify(
+      signed =
+          new SignedSnapshot(
+              metadata.get("manifest.json"),
+              metadata.get("manifest.sig.json"),
+              metadata.get("trust.json"),
+              metadata.get("trust.sig.json"),
+              policy);
+      signed.trust.verify(
           HotSignatures.TRANSPORT,
           metadata.get("transport.json"),
           metadata.get("transport.sig.json"),
           policy.now);
-      manifest = new HotManifest(manifestRaw);
-      StrictJson.require(
-          manifest.applicationId.equals(authority.applicationId)
-              && manifest.environment.equals(authority.environment),
-          "包范围超出签名授权");
-      manifest.compatible(
-          policy.applicationId, policy.environment, policy.hostContract, policy.mounts);
+      manifest = signed.manifest;
       StrictJson.Obj transport =
           StrictJson.object(metadata.get("transport.json"))
               .only("schema", "snapshotId", "mode", "baseSnapshotId", "included");
@@ -154,9 +135,7 @@ public final class HotPackage implements Closeable {
           !mode.equals("full") || unique.equals(manifest.objects.keySet()), "完整包缺少对象");
       included = Collections.unmodifiableSet(unique);
       objects = Collections.unmodifiableMap(objectEntries);
-      trust = authority;
-      trustRaw = selected.clone();
-      trustSignature = selectedSignature.clone();
+      trust = signed.trust;
       zip = container;
       for (String hash : included) copyObject(hash, DISCARD);
     } catch (Exception | Error error) {
@@ -166,39 +145,43 @@ public final class HotPackage implements Closeable {
   }
 
   public byte[] manifestBytes() {
-    return manifestRaw.clone();
+    return signed.manifestBytes();
   }
 
   public byte[] manifestSignature() {
-    return manifestSignature.clone();
+    return signed.manifestSignature();
   }
 
   public byte[] trustBytes() {
-    return trustRaw.clone();
+    return signed.trustBytes();
   }
 
   public byte[] trustSignature() {
-    return trustSignature.clone();
+    return signed.trustSignature();
+  }
+
+  @Override
+  public SignedSnapshot metadata() {
+    return signed;
+  }
+
+  @Override
+  public Set<String> included() {
+    return included;
+  }
+
+  @Override
+  public String baseline() {
+    return baseSnapshotId;
   }
 
   public void copyObject(String hash, OutputStream destination) throws Exception {
     ZipContainer.Entry entry = objects.get(hash);
     Long size = manifest.objects.get(hash);
     StrictJson.require(entry != null && size != null && entry.size == size, "对象缺失或大小不符");
-    MessageDigest digest = MessageDigest.getInstance("SHA-256");
-    long count = 0;
-    byte[] buffer = new byte[32768];
     try (InputStream input = zip.open(entry)) {
-      int n;
-      while ((n = input.read(buffer)) != -1) {
-        count += n;
-        StrictJson.require(count <= size, "实际对象大小超限");
-        digest.update(buffer, 0, n);
-        destination.write(buffer, 0, n);
-      }
+      ContentStore.copyVerified(input, destination, hash, size);
     }
-    StrictJson.require(
-        count == size && HotSignatures.hex(digest.digest()).equals(hash), "对象实际内容校验失败");
   }
 
   static byte[] read(InputStream input, int max) throws Exception {

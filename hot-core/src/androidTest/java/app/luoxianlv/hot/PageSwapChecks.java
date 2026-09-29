@@ -5,7 +5,7 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
-import android.widget.Button;
+import android.widget.TextView;
 import app.luoxianlv.hot.contract.NativePage;
 import java.io.File;
 import java.io.InputStream;
@@ -237,7 +237,7 @@ final class PageSwapChecks {
     @Override
     public View create(Context context, Bundle state, Bundle host, Events events, Ready ready) {
       position = state.getInt("position");
-      Button view = new Button(context);
+      TextView view = new TextView(context);
       view.setText("原生页面 " + position);
       view.setOnClickListener(
           v -> {

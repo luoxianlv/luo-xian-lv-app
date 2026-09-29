@@ -12,11 +12,13 @@ import java.util.UUID;
 /** 独立测试 APK 验证 Android 密码提供器与只读对象；不会修改用户 APP 数据。 */
 public final class HotCoreInstrumentation extends Instrumentation {
   private boolean nativePage;
+  private String online;
 
   @Override
   public void onCreate(Bundle arguments) {
     super.onCreate(arguments);
     nativePage = arguments != null && "true".equals(arguments.getString("native"));
+    online = arguments == null ? null : arguments.getString("online");
     start();
   }
 
@@ -67,6 +69,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
       PageSwapChecks.run(this, root);
       NativeTransferChecks.run(this, root);
       if (nativePage) NativePageChecks.run(this, root);
+      if (online != null) NativeOnlineChecks.run(this, root, online);
       deleteOwnTree(root);
       report.putString(
           "stream",
@@ -74,6 +77,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
               + " 同窗口替换、状态边界、代际租约及故障恢复检查通过。"
               + " Android HTTP 续传与外部私有下载目录检查通过。"
               + (nativePage ? " 实际原生关于页加载和生命周期检查通过。" : "")
+              + (online != null ? " Rust API 下载、签名许可、Compose 原位热替换和真实 60 秒观察通过。" : "")
               + "\n");
       finish(-1, report);
     } catch (Throwable failure) {

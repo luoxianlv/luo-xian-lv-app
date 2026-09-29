@@ -12,17 +12,19 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** JVM/设备测试共用的回环 GET 响应器，不依赖 Android 之外的 JDK HTTP 模块。 */
+/** JVM/设备测试共用的回环响应器，不依赖 Android 之外的 JDK HTTP 模块。 */
 final class LoopbackHttp implements AutoCloseable {
   interface Handler {
     byte[] reply(Request request) throws Exception;
   }
 
   static final class Request {
-    final String path;
+    final String method, path;
+    byte[] body = new byte[0];
     final Map<String, String> headers = new LinkedHashMap<>();
 
-    Request(String path) {
+    Request(String method, String path) {
+      this.method = method;
       this.path = path;
     }
   }
@@ -55,8 +57,9 @@ final class LoopbackHttp implements AutoCloseable {
                         new String(requestBytes.toByteArray(), StandardCharsets.US_ASCII)
                             .split("\r\n");
                     String line = lines[0];
-                    if (!line.startsWith("GET ")) throw new IllegalArgumentException("测试只接受 GET");
-                    Request request = new Request(line.split(" ")[1]);
+                    if (!line.startsWith("GET ") && !line.startsWith("POST "))
+                      throw new IllegalArgumentException("测试只接受 GET/POST");
+                    Request request = new Request(line.split(" ")[0], line.split(" ")[1]);
                     for (int index = 1; index < lines.length; index++) {
                       line = lines[index];
                       int split = line.indexOf(':');
@@ -64,6 +67,17 @@ final class LoopbackHttp implements AutoCloseable {
                       request.headers.put(
                           line.substring(0, split).toLowerCase(Locale.ROOT),
                           line.substring(split + 1).trim());
+                    }
+                    int length =
+                        Integer.parseInt(request.headers.getOrDefault("content-length", "0"));
+                    if (length < 0 || length > StrictJson.MAX_BYTES)
+                      throw new IllegalArgumentException("测试请求体超限");
+                    request.body = new byte[length];
+                    int received = 0;
+                    while (received < length) {
+                      int n = input.read(request.body, received, length - received);
+                      if (n < 1) throw new IllegalArgumentException("测试请求体不完整");
+                      received += n;
                     }
                     socket.getOutputStream().write(handler.reply(request));
                     socket.getOutputStream().flush();

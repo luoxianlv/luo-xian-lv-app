@@ -18,7 +18,16 @@ public final class StrictJson {
   private StrictJson() {}
 
   public static Obj object(byte[] raw) {
-    require(raw.length > 0 && raw.length <= MAX_BYTES, "JSON 大小超限");
+    return parse(raw, MAX_BYTES);
+  }
+
+  /** 网络信封含多份转义后的签名文档；各内层文档仍受单独的 1 MiB 限制。 */
+  static Obj envelope(byte[] raw) {
+    return parse(raw, 5 * MAX_BYTES);
+  }
+
+  private static Obj parse(byte[] raw, int limit) {
+    require(raw.length > 0 && raw.length <= limit, "JSON 大小超限");
     String text;
     try {
       text =
@@ -83,6 +92,15 @@ public final class StrictJson {
       Object value = fields.get(key);
       require(value instanceof Obj, "缺少对象字段: " + key);
       return (Obj) value;
+    }
+
+    public Map<String, Long> numbers() {
+      Map<String, Long> result = new LinkedHashMap<>();
+      for (Map.Entry<String, Object> entry : fields.entrySet()) {
+        require(entry.getValue() instanceof Long, "对象值必须是整数");
+        result.put(entry.getKey(), (Long) entry.getValue());
+      }
+      return Collections.unmodifiableMap(result);
     }
 
     public List<?> array(String key) {
