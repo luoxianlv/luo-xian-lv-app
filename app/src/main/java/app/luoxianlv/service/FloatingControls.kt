@@ -17,10 +17,12 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import app.luoxianlv.R
+import app.luoxianlv.business.playback.PlaybackSession
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.AppLog
+import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.ui.floating.FloatingPanel
 import app.luoxianlv.ui.floating.PlayerUi
 import app.luoxianlv.ui.floating.PlayerUi.dp
@@ -36,7 +38,7 @@ import kotlinx.coroutines.*
  * - 收起：44dp 气泡（浅色白底 / 深色深蓝底）+ 蓝音符，可拖动；
  * - 展开：播放控制、倍速滑动条和底部播放进度条；播放进度条可点按/拖动 seek。 「选歌」开居中独立小窗，不再是贴面板下拉。
  */
-class FloatingControls(private val service: MusicAccessibilityService) {
+class FloatingControls(private val service: PlaybackSession) {
     private val context = ContextThemeWrapper(service, R.style.AppTheme)
     private val wm = service.getSystemService(WindowManager::class.java)
     private val prefs = Kv.of(service, "floating_position")
@@ -66,6 +68,10 @@ class FloatingControls(private val service: MusicAccessibilityService) {
     private var displayRequested = false
     private var showRetries = 0
     private var destroyed = false
+    private var touching = false
+    val interacting
+        get() =
+            touching || panel?.touching == true || popup != null || dockAnimator?.isRunning == true
 
     // 选歌窗打开时面板先退出，关闭后恢复（两者不共存）。
     private var panelHiddenForPicker = false
@@ -101,6 +107,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
     }
 
     fun hide() {
+        touching = false
         displayRequested = false
         dockAnimator?.cancel()
         dockAnimator = null
@@ -154,7 +161,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
             .apply { gravity = Gravity.TOP or Gravity.LEFT }
 
     private fun render(open: Boolean) {
-        if (destroyed || !displayRequested || !MusicAccessibilityService.isEnabled(service)) return
+        if (destroyed || !displayRequested || !PlaybackBridge.isEnabled(service)) return
         if (!open) speedControlsVisible = false
         palette = PlayerUi.palette(context)
         // render 会先 hide() → dismissPlaylist()，先清标记避免在里面递归恢复面板。
@@ -240,7 +247,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
         if (
             !destroyed &&
                 displayRequested &&
-                MusicAccessibilityService.isEnabled(service) &&
+                PlaybackBridge.isEnabled(service) &&
                 ++showRetries <= 3
         ) {
             handler.postDelayed({ if (displayRequested && root == null) render(expanded) }, 500)
@@ -265,6 +272,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
             val p = params ?: return@setOnTouchListener false
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    touching = true
                     dockAnimator?.cancel()
                     dockAnimator = null
                     initialDock = dock
@@ -306,6 +314,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    touching = false
                     if (moved) {
                         dock =
                             if (expanded) FloatingDock.NONE
@@ -324,6 +333,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
+                    touching = false
                     // 系统接管手势时回到按下前的位置，不把取消误判成点击或贴边。
                     dock = initialDock
                     p.x = bx

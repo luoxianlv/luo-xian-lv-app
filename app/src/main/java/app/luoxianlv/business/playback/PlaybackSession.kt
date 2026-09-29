@@ -1,20 +1,18 @@
-package app.luoxianlv.service
+package app.luoxianlv.business.playback
 
-import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Path
 import android.graphics.Point
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Display
-import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityManager
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.core.playback.PlaybackTimeline
@@ -28,11 +26,20 @@ import app.luoxianlv.data.KeyLayout
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.AppLog
+import app.luoxianlv.hot.contract.AccessibilityBinding
+import app.luoxianlv.hot.contract.NativePlaybackSession
+import app.luoxianlv.hot.contract.PlaybackBridge
+import app.luoxianlv.service.DisplayStability
+import app.luoxianlv.service.DisplayState
+import app.luoxianlv.service.FloatingControls
+import app.luoxianlv.service.PlaybackCoordinates
+import app.luoxianlv.service.PlaybackInterruptionGuard
 import app.luoxianlv.service.recognition.ScreenshotAnalyzer
 import app.luoxianlv.ui.practice.PracticeGeometry
 import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.update.MidiCoreFixer
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,37 +49,16 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MusicAccessibilityService : AccessibilityService() {
-    data class Diagnostics(
-        val serviceEnabled: Boolean,
-        val playing: Boolean,
-        val preparing: Boolean,
-        val songTitle: String,
-        val display: DisplayState?,
-        val error: String?,
-        val gestureFailure: String?,
-        val playbackDisplay: DisplayState?,
-        val lastCoordinates: String?,
-    )
-
+/** 可替换的播放、识别和浮窗业务，不继承系统 Service。 */
+class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     companion object {
-        var instance: MusicAccessibilityService? = null
-            private set
-
         const val TAG = "无障碍手势"
-
-        /**
-         * 系统无障碍设置中本服务是否已开启（instance 只在服务运行期间非空，不能用于判断）。 走 AccessibilityManager 已启用服务列表按包名匹配：
-         * Settings.Secure 字符串存在全类名/短类名两种格式，逐字比对在部分 ROM 上会误判。
-         */
-        fun isEnabled(context: Context): Boolean {
-            val manager = context.getSystemService(AccessibilityManager::class.java) ?: return false
-            return manager
-                .getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                .any { it.resolveInfo.serviceInfo.packageName == context.packageName }
-        }
     }
 
+    private lateinit var binding: AccessibilityBinding
+    @Volatile private var closed = false
+    private val recognitionJobs = AtomicInteger()
+    private val remoteFixJobs = AtomicInteger()
     private val handler = Handler(Looper.getMainLooper())
     private val recognitionExecutor = Executors.newSingleThreadExecutor()
     private lateinit var repository: SongRepository
@@ -262,7 +248,9 @@ class MusicAccessibilityService : AccessibilityService() {
 
     private val next = Runnable { drive() }
 
-    override fun onServiceConnected() {
+    override fun connect(context: Context, binding: AccessibilityBinding) {
+        attachBaseContext(context)
+        this.binding = binding
         AppLog.init(this)
         AppLog.log(
             "无障碍服务已连接：${Build.MANUFACTURER}/${Build.MODEL} 系统 API=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) 显示=${displayState()}"
@@ -271,7 +259,6 @@ class MusicAccessibilityService : AccessibilityService() {
         keys = ConfigStore.load(this)
         speed = repository.speed
         floating = FloatingControls(this)
-        instance = this
         prepareSong()
         getSystemService(DisplayManager::class.java)
             .registerDisplayListener(displayListener, handler)
@@ -280,14 +267,17 @@ class MusicAccessibilityService : AccessibilityService() {
             handler.postDelayed({ if (repository.floatingEnabled) showFloating(true) }, 250)
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun interrupt() = pause()
 
-    override fun onInterrupt() = pause()
-
-    override fun onDestroy() {
+    override fun close() {
+        if (closed) return
+        closed = true
         scoreScope.cancel()
-        PlaybackForegroundService.stop()
-        getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
+        runCatching {
+                getSystemService(DisplayManager::class.java)
+                    .unregisterDisplayListener(displayListener)
+            }
+            .onFailure { AppLog.w(TAG, "释放显示监听失败", it) }
         playing = false
         generation++
         handler.removeCallbacksAndMessages(null)
@@ -295,8 +285,63 @@ class MusicAccessibilityService : AccessibilityService() {
         recognitionExecutor.shutdown()
         recoveringDisplay = false
         if (::floating.isInitialized) floating.destroy()
-        if (instance === this) instance = null
-        super.onDestroy()
+    }
+
+    override fun canReplace() =
+        !closed &&
+            !playing &&
+            !preparing &&
+            !recoveringDisplay &&
+            !loadingSong &&
+            !waitingToPlay &&
+            recognitionJobs.get() == 0 &&
+            remoteFixJobs.get() == 0 &&
+            (!::floating.isInitialized || !floating.interacting)
+
+    override fun query(kind: String): Bundle =
+        when (kind) {
+            "song" -> PlaybackWire.song(song)
+            "diagnostics" -> PlaybackWire.diagnostics(diagnostics())
+            "bounds" ->
+                screenBounds().let {
+                    Bundle().apply {
+                        putInt("width", it.width())
+                        putInt("height", it.height())
+                    }
+                }
+            "state" ->
+                Bundle().apply {
+                    putString("songId", song.id)
+                    putBoolean("playing", playing)
+                    putBoolean("preparing", preparing)
+                    putBoolean("loadingSong", loadingSong)
+                    putBoolean("waitingToPlay", waitingToPlay)
+                    putBoolean("floatingVisible", floatingVisible)
+                    putString("error", error)
+                    putFloat("speed", speed)
+                    putLong("positionMs", positionMs)
+                    putLong("durationMs", durationMs)
+                    putString("modeLabel", modeLabel)
+                }
+            else -> throw IllegalArgumentException("未知的播放查询：$kind")
+        }
+
+    override fun command(action: String, arguments: Bundle) {
+        if (closed) return
+        when (action) {
+            "select" -> select(PlaybackWire.song(arguments))
+            "play" -> play()
+            "pause" -> pause()
+            "stop" -> stop()
+            "toggle" -> toggle()
+            "seek" -> seek(arguments.getLong("position"))
+            "setSpeed" -> setSpeed(arguments.getFloat("speed", 1f).also { require(it.isFinite()) })
+            "showFloating" -> showFloating(arguments.getBoolean("enabled"))
+            "reloadConfig" -> reloadConfig()
+            "reloadExperimentalOptions" -> reloadExperimentalOptions()
+            "refreshFloatingTheme" -> refreshFloatingTheme()
+            else -> throw IllegalArgumentException("未知的播放命令：$action")
+        }
     }
 
     fun select(selected: Song) {
@@ -351,6 +396,7 @@ class MusicAccessibilityService : AccessibilityService() {
     }
 
     fun play() {
+        if (closed) return
         if (!canStartPlayback()) {
             AppLog.log("忽略播放：距离手势中断不足 300 毫秒")
             return
@@ -437,27 +483,34 @@ class MusicAccessibilityService : AccessibilityService() {
         preparing = true
         error = "正在修复谱面…"
         floating.refresh()
+        remoteFixJobs.incrementAndGet()
         MidiCoreFixer.fixSong(this, song) { ok ->
-            val updated =
-                if (ok)
-                    runCatching {
-                        SongRepository(this).songs().firstOrNull { it.id == requestedSongId }
+            try {
+                if (closed) return@fixSong
+                val updated =
+                    if (ok)
+                        runCatching {
+                            SongRepository(this).songs().firstOrNull { it.id == requestedSongId }
+                        }
+                            .getOrNull()
+                    else null
+                handler.post {
+                    if (closed || token != generation || !preparing || song.id != requestedSongId)
+                        return@post
+                    preparing = false
+                    if (!ok) {
+                        error = "谱面修复失败，请到 App 内曲库中修复该谱子"
+                        floating.refresh()
+                        return@post
                     }
-                        .getOrNull()
-                else null
-            handler.post {
-                if (token != generation || !preparing || song.id != requestedSongId) return@post
-                preparing = false
-                if (!ok) {
-                    error = "谱面修复失败，请到 App 内曲库中修复该谱子"
-                    floating.refresh()
-                    return@post
+                    // 重新载入该曲（updateCompiled 已覆盖缓存并清除 needsFix），再正常起播。
+                    updated?.let { updated ->
+                        if (updated.id == song.id && updated.score != song.score) select(updated)
+                    }
+                    play()
                 }
-                // 重新载入该曲（updateCompiled 已覆盖缓存并清除 needsFix），再正常起播。
-                updated?.let { updated ->
-                    if (updated.id == song.id && updated.score != song.score) select(updated)
-                }
-                play()
+            } finally {
+                remoteFixJobs.decrementAndGet()
             }
         }
     }
@@ -513,50 +566,67 @@ class MusicAccessibilityService : AccessibilityService() {
             return
         }
         try {
-            takeScreenshot(
+            binding.screenshot(
                 Display.DEFAULT_DISPLAY,
-                mainExecutor,
-                object : TakeScreenshotCallback {
-                    override fun onSuccess(screenshot: ScreenshotResult) {
+                object : AccessibilityBinding.ScreenshotCallback {
+                    override fun success(screenshot: AccessibilityBinding.Frame) {
                         val currentDisplay = displayState()
                         if (token != generation || playbackDisplay != currentDisplay) {
                             AppLog.log(
-                                "截图请求已过期：令牌有效=${token == generation} 播放显示=$playbackDisplay 当前显示=$currentDisplay 截图尺寸=${screenshot.hardwareBuffer.width}x${screenshot.hardwareBuffer.height}"
+                                "截图请求已过期：令牌有效=${token == generation} 播放显示=$playbackDisplay 当前显示=$currentDisplay 截图尺寸=${screenshot.buffer.width}x${screenshot.buffer.height}"
                             )
-                            screenshot.hardwareBuffer.close()
+                            screenshot.close()
                             done(false)
                             return
                         }
                         val frame =
                             PlaybackCoordinates.Frame(
-                                screenshot.hardwareBuffer.width,
-                                screenshot.hardwareBuffer.height,
+                                screenshot.buffer.width,
+                                screenshot.buffer.height,
                             )
                         AppLog.log("无障碍截图尺寸=${frame.width}x${frame.height} 显示=$currentDisplay")
-                        recognitionExecutor.execute {
-                            val result = ScreenshotAnalyzer.recognize(screenshot)
-                            handler.post {
-                                if (token != generation || playbackDisplay != displayState()) {
-                                    done(false)
-                                    return@post
+                        recognitionJobs.incrementAndGet()
+                        try {
+                            recognitionExecutor.execute {
+                                val result =
+                                    try {
+                                        ScreenshotAnalyzer.recognize(screenshot)
+                                    } finally {
+                                        recognitionJobs.decrementAndGet()
+                                    }
+                                if (closed) return@execute
+                                handler.post {
+                                    if (closed) return@post
+                                    if (token != generation || playbackDisplay != displayState()) {
+                                        done(false)
+                                        return@post
+                                    }
+                                    val valid =
+                                        result != null &&
+                                            PlaybackCoordinates.validLayout(result.layout)
+                                    if (valid) {
+                                        coordinateFrame = frame
+                                        keys = result.layout
+                                        ConfigStore.save(this@PlaybackSession, result.layout)
+                                        result.mode?.let { pitchMode = it }
+                                        result.halfTone?.let { halfToneOn = it }
+                                        AppLog.i(
+                                            TAG,
+                                            "按键识别成功 音区=${result.mode} 半音=${result.halfTone}",
+                                        )
+                                        floating.refresh()
+                                    }
+                                    done(valid)
                                 }
-                                val valid =
-                                    result != null && PlaybackCoordinates.validLayout(result.layout)
-                                if (valid) {
-                                    coordinateFrame = frame
-                                    keys = result.layout
-                                    ConfigStore.save(this@MusicAccessibilityService, result.layout)
-                                    result.mode?.let { pitchMode = it }
-                                    result.halfTone?.let { halfToneOn = it }
-                                    AppLog.i(TAG, "按键识别成功 音区=${result.mode} 半音=${result.halfTone}")
-                                    floating.refresh()
-                                }
-                                done(valid)
                             }
+                        } catch (failure: java.util.concurrent.RejectedExecutionException) {
+                            recognitionJobs.decrementAndGet()
+                            screenshot.close()
+                            if (!closed) done(false)
                         }
                     }
 
-                    override fun onFailure(errorCode: Int) {
+                    override fun failure(errorCode: Int) {
                         AppLog.w(TAG, "截图失败：错误码=$errorCode")
                         done(false)
                     }
@@ -631,10 +701,10 @@ class MusicAccessibilityService : AccessibilityService() {
         repository.floatingEnabled = enabled
         if (enabled) {
             floating.show()
-            PlaybackForegroundService.start(this)
+            binding.foreground(true)
         } else {
             floating.hide()
-            PlaybackForegroundService.stop()
+            binding.foreground(false)
         }
     }
 
@@ -648,9 +718,9 @@ class MusicAccessibilityService : AccessibilityService() {
         return Rect(0, 0, frame?.width ?: display.width, frame?.height ?: display.height)
     }
 
-    fun diagnostics(): Diagnostics =
-        Diagnostics(
-            serviceEnabled = isEnabled(this),
+    fun diagnostics(): PlaybackConnection.Diagnostics =
+        PlaybackConnection.Diagnostics(
+            serviceEnabled = PlaybackBridge.isEnabled(this),
             playing = playing,
             preparing = preparing,
             songTitle = song.title,
@@ -822,18 +892,15 @@ class MusicAccessibilityService : AccessibilityService() {
             val stroke = GestureDescription.StrokeDescription(path, 0, length, false)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
             val accepted =
-                dispatchGesture(
+                binding.gesture(
                     gesture,
-                    object : GestureResultCallback() {
-                        override fun onCompleted(gestureDescription: GestureDescription) {
-                            if (token != generation) return
+                    AccessibilityBinding.GestureCallback { success ->
+                        if (token != generation) return@GestureCallback
+                        if (success) {
                             AppLog.log("手势完成：坐标=${px.toInt()},${py.toInt()}")
                             floating.mark(px, py)
                             finish(true)
-                        }
-
-                        override fun onCancelled(gestureDescription: GestureDescription) {
-                            if (token != generation) return
+                        } else {
                             interruptionGuard.interrupted(SystemClock.uptimeMillis())
                             AppLog.log("手势被取消：坐标=${px.toInt()},${py.toInt()}")
                             gestureFailure =
@@ -841,7 +908,6 @@ class MusicAccessibilityService : AccessibilityService() {
                             finish(false)
                         }
                     },
-                    handler,
                 )
             if (!accepted) {
                 AppLog.log("系统拒绝手势：坐标=${px.toInt()},${py.toInt()}")

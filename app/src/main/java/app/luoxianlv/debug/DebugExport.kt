@@ -7,10 +7,10 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.view.Display
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.Kv
 import app.luoxianlv.hot.contract.SharedFiles
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.io.FileOutputStream
@@ -166,7 +166,7 @@ object DebugExport {
     }
 
     private fun diagnostics(context: Context): JSONObject {
-        val d = MusicAccessibilityService.instance?.diagnostics()
+        val d = PlaybackConnection.instance?.diagnostics()
         val layout = ConfigStore.load(context)
         val prefs = Kv.of(context, "ratio_config_v3").all
         val modes = JSONObject()

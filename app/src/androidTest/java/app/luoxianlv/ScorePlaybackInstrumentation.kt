@@ -7,11 +7,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.core.score.ScoreWork
 import app.luoxianlv.data.ExperimentalOptions
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.Song
-import app.luoxianlv.service.MusicAccessibilityService
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.EmptyCoroutineContext
@@ -102,8 +102,8 @@ class ScorePlaybackInstrumentation : Instrumentation() {
                     .apply { add(component) }
             shell("settings put secure enabled_accessibility_services ${enabled.joinToString(":")}")
             shell("settings put secure accessibility_enabled 1")
-            await("无障碍服务未连接") { MusicAccessibilityService.instance != null }
-            val player = checkNotNull(MusicAccessibilityService.instance)
+            await("无障碍服务未连接") { PlaybackConnection.instance != null }
+            val player = checkNotNull(PlaybackConnection.instance)
             runOnMainSync {
                 player.reloadExperimentalOptions()
                 if (!player.loadingSong) player.select(fixture)
@@ -147,7 +147,7 @@ class ScorePlaybackInstrumentation : Instrumentation() {
             result.putString("stream", error.stackTraceToString())
         } finally {
             blocked?.countDown()
-            runOnMainSync { MusicAccessibilityService.instance?.pause() }
+            runOnMainSync { PlaybackConnection.instance?.pause() }
             library
                 .edit()
                 .putString("songs", previousSongs)

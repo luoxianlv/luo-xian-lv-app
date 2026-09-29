@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.business.ui.ComposePage
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AppearanceStore
@@ -28,7 +29,6 @@ import app.luoxianlv.data.SongRepository
 import app.luoxianlv.hot.contract.NativePage
 import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.service.KeepAlive
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.components.DisclaimerScreen
 import app.luoxianlv.ui.components.OnboardingDialog
 import app.luoxianlv.ui.components.Snowfall
@@ -78,7 +78,7 @@ class MainPage : ComposePage() {
         showOnboarding =
             !BuildConfig.INTERNAL_BUILD &&
                 isFirstLaunch() &&
-                !MusicAccessibilityService.isEnabled(pageContext)
+                !PlaybackConnection.isEnabled(pageContext)
     }
 
     @Composable
@@ -212,7 +212,7 @@ class MainPage : ComposePage() {
                 android.os.Build.VERSION.SDK_INT >= 33 &&
                 repository.floatingEnabled &&
                 appPrefs.getBoolean("auto_start_asked", false) &&
-                MusicAccessibilityService.isEnabled(pageContext) &&
+                PlaybackConnection.isEnabled(pageContext) &&
                 pageContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
                     android.content.pm.PackageManager.PERMISSION_GRANTED &&
                 !appPrefs.getBoolean("notification_permission_asked", false)
@@ -224,7 +224,7 @@ class MainPage : ComposePage() {
             )
         }
         // 无障碍服务可能在本应用暂停期间被启用；回到前台时按持久化偏好重新对齐悬浮窗
-        MusicAccessibilityService.instance?.showFloating(repository.floatingEnabled)
+        PlaybackConnection.instance?.showFloating(repository.floatingEnabled)
         if (!BuildConfig.INTERNAL_BUILD && disclaimerAccepted) {
             if (!updateCheckOnOpenDone) {
                 checkUpdatesAfterDisclaimer()
@@ -256,7 +256,7 @@ class MainPage : ComposePage() {
                 showAutoStartPrompt
         )
             return
-        if (!MusicAccessibilityService.isEnabled(pageContext)) return
+        if (!PlaybackConnection.isEnabled(pageContext)) return
         val pm = pageContext.getSystemService(PowerManager::class.java) ?: return
         if (
             !pm.isIgnoringBatteryOptimizations(pageContext.packageName) &&

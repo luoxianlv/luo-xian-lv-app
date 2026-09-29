@@ -1,5 +1,7 @@
 package app.luoxianlv.ui.practice
 
+import app.luoxianlv.hot.contract.PracticeBridge
+
 /** 控制演练场就绪状态；固定布局模式可读取真实音区，点击仍由无障碍注入。 */
 object PracticePlaybackGate {
     private var owner: Any? = null
@@ -10,39 +12,40 @@ object PracticePlaybackGate {
     }
 
     fun pitchState(): Pair<app.luoxianlv.core.score.PlayMode, Boolean>? =
-        session
-            ?.takeIf { active && ready }
-            ?.let {
-                app.luoxianlv.core.score.PlayMode.valueOf(it.mode.name) to it.half
+        PracticeBridge.pitch()?.let {
+            runCatching {
+                app.luoxianlv.core.score.PlayMode.valueOf(it.mode) to it.half
             }
+                .getOrNull()
+        }
 
     val active
-        get() = owner != null
+        get() = PracticeBridge.active()
 
-    var ready = false
-        private set
+    val ready
+        get() = PracticeBridge.ready()
 
-    fun owns(value: Any) = owner === value
+    fun owns(value: Any) = PracticeBridge.owns(value)
 
     fun enter(value: Any) {
         if (owns(value)) return
         owner = value
         session = null
-        ready = false
+        PracticeBridge.enter(value) { session?.let { PracticeBridge.Pitch(it.mode.name, it.half) } }
     }
 
     fun setReady(owner: Any, value: Boolean) {
-        if (owns(owner)) ready = value
+        PracticeBridge.setReady(owner, value)
     }
 
     fun invalidateSession(value: PracticeSession) {
-        if (session === value) ready = false
+        if (session === value) owner?.let { PracticeBridge.setReady(it, false) }
     }
 
     fun leave(value: Any) {
-        if (!owns(value)) return
+        PracticeBridge.leave(value)
+        if (owner !== value) return
         owner = null
         session = null
-        ready = false
     }
 }

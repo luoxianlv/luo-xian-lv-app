@@ -2,19 +2,14 @@ package app.luoxianlv.ui
 
 import android.os.Handler
 import android.os.Looper
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.data.Song
 import app.luoxianlv.debug.AppLog
-import app.luoxianlv.service.MusicAccessibilityService
 
-/**
- * 把曲目同步给无障碍服务，让悬浮窗立刻切到这首。
- *
- * 曲库选择、谱面导入、平台下载三处都要做这一步，原本各写一遍 `MusicAccessibilityService.instance?.select(song)`。统一走这里，
- * 服务未开启时静默跳过。
- */
+/** 曲库选择、导入和下载统一通过基础值协议同步曲目；未连接时跳过，谱面解析仍在后台。 */
 fun syncSelectionToService(song: Song) {
     val select = Runnable {
-        runCatching { MusicAccessibilityService.instance?.select(song) }
+        runCatching { PlaybackConnection.instance?.select(song) }
             .onFailure { AppLog.w("悬浮窗同步", "曲目已保存，但悬浮窗同步失败", it) }
     }
     if (Looper.myLooper() == Looper.getMainLooper()) select.run()

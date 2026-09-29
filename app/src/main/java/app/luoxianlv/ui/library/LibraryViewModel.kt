@@ -5,10 +5,10 @@ import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.core.score.ScoreParser
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.AppEvents
 import app.luoxianlv.ui.syncSelectionToService
 import app.luoxianlv.update.MidiCoreFixer
@@ -147,7 +147,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      * 表现就是“点什么都没反应”，所以宁可漏掉一个字段也不能让整条状态流断掉。
      */
     private suspend fun readServiceStatus(): ServiceStatus {
-        val service = MusicAccessibilityService.instance
+        val service = PlaybackConnection.instance
         return ServiceStatus(
             connected = service != null,
             // 服务已经在跑就必然已开启，省掉一次系统查询
@@ -155,14 +155,14 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 service != null || withContext(Dispatchers.IO) { accessibilityIsEnabled() },
             floatingVisible = service?.floatingVisible == true,
             error = service?.error,
-            // song 在 onServiceConnected 里先于 instance 赋值，因此 instance 非空时 song 一定已初始化
-            activeSongId = runCatching { service?.song?.id.orEmpty() }.getOrDefault(""),
+            // 连接在业务初始化后发布；这里只取曲目 ID，不传递或解析谱面对象。
+            activeSongId = runCatching { service?.songId.orEmpty() }.getOrDefault(""),
         )
     }
 
     /** 查系统无障碍开关（binder 调用，失败按未开启处理，不让轮询挂掉）。 */
     private fun accessibilityIsEnabled(): Boolean = runCatching {
-        MusicAccessibilityService.isEnabled(getApplication())
+        PlaybackConnection.isEnabled(getApplication())
     }
         .getOrDefault(false)
 
@@ -210,7 +210,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      * 老实现是单向的 startFloating()：窗口已经跑着时再点只会重复 show()， 同一个按钮没有任何办法把它关掉。
      */
     fun toggleFloating() {
-        setFloatingEnabled(MusicAccessibilityService.instance?.floatingVisible != true)
+        setFloatingEnabled(PlaybackConnection.instance?.floatingVisible != true)
     }
 
     /**
@@ -221,7 +221,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setFloatingEnabled(enabled: Boolean) {
         repository.floatingEnabled = enabled
-        val service = MusicAccessibilityService.instance
+        val service = PlaybackConnection.instance
         service?.showFloating(enabled)
         _local.update {
             it.copy(
@@ -269,7 +269,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
             main.post {
                 // 服务可能持有旧 Song 实例，修好后让它也重新载入
                 if (ok) {
-                    MusicAccessibilityService.instance?.let { service ->
+                    PlaybackConnection.instance?.let { service ->
                         runCatching {
                             service.select(songs.first { it.id == song.id })
                         }

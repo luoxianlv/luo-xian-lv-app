@@ -12,8 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.data.ExperimentalOptions
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.components.PreferenceSwitchItem
 import app.luoxianlv.ui.components.SettingsCard
 
@@ -39,7 +39,7 @@ fun ExperimentalSettingsScreen(onBack: () -> Unit) {
                     checked = fixed,
                     onCheckedChange = {
                         ExperimentalOptions.setFixedHarmonicaKeys(context, it)
-                        MusicAccessibilityService.instance?.reloadExperimentalOptions()
+                        PlaybackConnection.instance?.reloadExperimentalOptions()
                         fixed = it
                     },
                 )

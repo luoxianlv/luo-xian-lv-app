@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import app.luoxianlv.hot.contract.PlaybackBridge
 
 /** 悬浮窗与无障碍服务都依赖进程存活；国产 ROM 在电池优化之外还叠加 自启动、后台管理等限制（红魔/小米尤其明显）。这里统一做状态检测与系统页跳转。 */
 data class KeepAliveStatus(
@@ -20,7 +21,7 @@ object KeepAlive {
     fun status(context: Context): KeepAliveStatus {
         val pm = context.getSystemService(PowerManager::class.java)
         return KeepAliveStatus(
-            accessibilityEnabled = MusicAccessibilityService.isEnabled(context),
+            accessibilityEnabled = PlaybackBridge.isEnabled(context),
             batteryExempt = pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false,
             notificationsGranted =
                 (Build.VERSION.SDK_INT < 33 ||

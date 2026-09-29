@@ -13,9 +13,9 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.platform.PlatformScore
 import app.luoxianlv.service.FloatingControls
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.discover.DiscoverViewModel
 import app.luoxianlv.ui.discover.RemoteUiState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -192,10 +192,10 @@ class InteractionInstrumentation : Instrumentation() {
             enabled.add(component)
             shell("settings put secure enabled_accessibility_services ${enabled.joinToString(":")}")
             shell("settings put secure accessibility_enabled 1")
-            await("无障碍服务未连接") { MusicAccessibilityService.instance != null }
-            val service = MusicAccessibilityService.instance!!
+            await("无障碍服务未连接") { PlaybackConnection.instance != null }
+            val service = PlaybackConnection.instance!!
             previousVisible = service.floatingVisible
-            val controls = field(service, "floating") as FloatingControls
+            val controls = field(currentPlaybackSession(), "floating") as FloatingControls
             runOnMainSync { service.showFloating(true) }
             await("悬浮球未显示") { field(controls, "root") != null }
             fun root() = field(controls, "root") as View
@@ -268,7 +268,7 @@ class InteractionInstrumentation : Instrumentation() {
             result.putString("stream", error.stackTraceToString())
         } finally {
             runOnMainSync {
-                MusicAccessibilityService.instance?.showFloating(previousVisible)
+                PlaybackConnection.instance?.showFloating(previousVisible)
                 activity?.finish()
             }
             floatingPrefs

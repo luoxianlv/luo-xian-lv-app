@@ -13,10 +13,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import app.luoxianlv.audio.HarmonicaSampler
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.business.ui.ViewPage
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.hot.contract.NativePage
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.practice.*
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import app.luoxianlv.wallpaper.render.PracticeBackdrop
@@ -245,7 +245,7 @@ class PracticePage : ViewPage() {
             configureWindow()
             if (!ownsSession) {
                 PracticePlaybackGate.enter(this)
-                MusicAccessibilityService.instance?.pause()
+                PlaybackConnection.instance?.pause()
                 keyboard?.let { PracticePlaybackGate.bindSession(this, it.session) }
             }
             backdrop?.resumeRendering()
@@ -260,7 +260,7 @@ class PracticePage : ViewPage() {
         } else {
             if (wasResumed && ownsSession) {
                 PracticePlaybackGate.setReady(this, false)
-                MusicAccessibilityService.instance?.pause()
+                PlaybackConnection.instance?.pause()
             }
             keyboard?.silence()
             sampler?.close()
@@ -282,7 +282,7 @@ class PracticePage : ViewPage() {
         exiting = true
         backdrop?.setSoundEnabled(false)
         PracticePlaybackGate.setReady(this, false)
-        MusicAccessibilityService.instance?.pause()
+        PlaybackConnection.instance?.pause()
         keyboard?.close()
         sampler?.close()
         sampler = null
@@ -329,7 +329,7 @@ class PracticePage : ViewPage() {
         curtain?.close()
         if (ownsSession) {
             PracticePlaybackGate.setReady(this, false)
-            MusicAccessibilityService.instance?.pause()
+            PlaybackConnection.instance?.pause()
         }
         backdrop?.close()
         keyboard?.close()
@@ -360,7 +360,7 @@ class PracticePage : ViewPage() {
             HarmonicaSampler(samples) {
                 if (ownsSession) {
                     keyboard?.silence()
-                    MusicAccessibilityService.instance?.pause()
+                    PlaybackConnection.instance?.pause()
                 }
             }
     }
@@ -373,7 +373,7 @@ class PracticePage : ViewPage() {
         }
 
     override fun canReplace(): Boolean {
-        val service = MusicAccessibilityService.instance
+        val service = PlaybackConnection.instance
         return openingFinished &&
             keyboardReady &&
             !exiting &&
