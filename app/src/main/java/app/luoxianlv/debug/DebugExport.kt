@@ -6,10 +6,10 @@ import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.view.Display
-import androidx.core.content.FileProvider
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.Kv
+import app.luoxianlv.hot.contract.SharedFiles
 import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.storage.AppStorage
 import java.io.File
@@ -37,8 +37,7 @@ object DebugExport {
                 ?: return false
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
             runCatching {
-                val uri =
-                    FileProvider.getUriForFile(context, context.packageName + ".updates", file)
+                val uri = SharedFiles.getUriForFile(context, context.packageName + ".updates", file)
                 val send =
                     Intent(Intent.ACTION_SEND).apply {
                         type = "application/zip"

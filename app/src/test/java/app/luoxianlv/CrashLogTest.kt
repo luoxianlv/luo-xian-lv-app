@@ -19,23 +19,20 @@ class CrashLogTest {
         var delegated = 0
         val handler =
             FatalErrorHandler(
-                save = { thread, failure -> CrashLog.write(directory, "测试版本", thread, failure) },
-                next =
-                    Thread.UncaughtExceptionHandler { thread, failure ->
-                        assertSame(Thread.currentThread(), thread)
-                        assertSame(error, failure)
-                        val bytes = current.readBytes()
-                        assertFalse(
-                            bytes.take(3) == listOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
-                        )
-                        val text = bytes.toString(Charsets.UTF_8)
-                        assertTrue(text.contains("页面切换失败"))
-                        assertTrue(
-                            text.contains("Caused by: java.lang.IllegalArgumentException: 原始原因")
-                        )
-                        assertTrue(text.contains("CrashLogTest"))
-                        delegated++
-                    },
+                { thread, failure -> CrashLog.write(directory, "测试版本", thread, failure) },
+                Thread.UncaughtExceptionHandler { thread, failure ->
+                    assertSame(Thread.currentThread(), thread)
+                    assertSame(error, failure)
+                    val bytes = current.readBytes()
+                    assertFalse(
+                        bytes.take(3) == listOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+                    )
+                    val text = bytes.toString(Charsets.UTF_8)
+                    assertTrue(text.contains("页面切换失败"))
+                    assertTrue(text.contains("Caused by: java.lang.IllegalArgumentException: 原始原因"))
+                    assertTrue(text.contains("CrashLogTest"))
+                    delegated++
+                },
             )
         repeat(3) { handler.uncaughtException(Thread.currentThread(), error) }
         assertEquals(3, delegated)
@@ -48,8 +45,8 @@ class CrashLogTest {
         val original = NoSuchMethodError("缺少系统方法")
         var received: Throwable? = null
         FatalErrorHandler(
-                save = { _, _ -> throw java.io.IOException("磁盘不可写") },
-                next = Thread.UncaughtExceptionHandler { _, error -> received = error },
+                { _, _ -> throw java.io.IOException("磁盘不可写") },
+                Thread.UncaughtExceptionHandler { _, error -> received = error },
             )
             .uncaughtException(Thread.currentThread(), original)
         assertSame(original, received)

@@ -8,11 +8,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.data.Kv
+import app.luoxianlv.hot.contract.SharedFiles
 import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.net.HttpURLConnection
@@ -323,7 +323,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                 release.sources.firstOrNull { it.id == _state.value.selectedSource }
                     ?: release.sources.first()
             val uri =
-                FileProvider.getUriForFile(app, "${app.packageName}.updates", apk(release, source))
+                SharedFiles.getUriForFile(app, "${app.packageName}.updates", apk(release, source))
             activity.startActivity(
                 Intent(Intent.ACTION_VIEW)
                     .setDataAndType(uri, "application/vnd.android.package-archive")
