@@ -91,11 +91,18 @@ class MainHostInstrumentation : Instrumentation() {
             await("关于页未显示") { find("检查新版本") != null }
             val monitor = addMonitor(MainActivity::class.java.name, null, false)
             val old = activity
+            lateinit var previousModels: androidx.lifecycle.ViewModelStore
+            runOnMainSync { previousModels = old.businessModels().viewModelStore }
             runOnMainSync { old.recreate() }
             activity = waitForMonitorWithTimeout(monitor, 15000) as? MainActivity
             removeMonitor(monitor)
             val restored = checkNotNull(activity) { "主 Activity 未完成重建" }
             await("重建后丢失关于页") { find("检查新版本") != null && restored.hasWindowFocus() }
+            runOnMainSync {
+                check(restored.businessModels().viewModelStore === previousModels) {
+                    "同版本重建丢失 ViewModel"
+                }
+            }
             checkMainPageSwap(restored)
             await("原位替换主业务页后丢失关于页") { find("检查新版本") != null }
             runOnMainSync { restored.onBackPressed() }

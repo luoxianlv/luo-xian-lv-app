@@ -269,7 +269,7 @@ internal fun Instrumentation.checkStageEntry() {
     }
 
     runOnMainSync {
-        stage.onBackPressedDispatcher.onBackPressed()
+        stage.onBackPressed()
         check(
             stage.requestedOrientation ==
                 android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.business.ui.PageReplacementGuard
 import app.luoxianlv.wallpaper.data.DefaultWallpaper
 import app.luoxianlv.wallpaper.render.PreparedWallpaper
 import app.luoxianlv.wallpaper.render.WallpaperPreview
@@ -24,6 +25,7 @@ fun rememberWallpaperRequest(onDownloaded: () -> Unit = {}): (Boolean, () -> Uni
     var progress by remember { mutableStateOf(0f) }
     var error by remember { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
+    PageReplacementGuard { !busy && continuation == null }
 
     fun proceed() {
         val next = continuation

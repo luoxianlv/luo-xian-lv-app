@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.luoxianlv.business.ui.PageReplacementGuard
 import app.luoxianlv.business.ui.rememberPageLauncher
 import app.luoxianlv.ui.components.ActionPill
 import app.luoxianlv.ui.components.ImportFilePicker
@@ -37,6 +38,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
     var selected by remember { mutableStateOf(WallpaperProjectStore.selectedId(context)) }
     var soundEnabled by remember { mutableStateOf(WallpaperProjectStore.soundEnabled(context)) }
     var busy by remember { mutableStateOf(false) }
+    PageReplacementGuard { !busy }
     var error by remember { mutableStateOf<String?>(null) }
     var minute by remember { mutableStateOf(WallpaperProjectStore.minute(context)) }
     suspend fun refresh() {

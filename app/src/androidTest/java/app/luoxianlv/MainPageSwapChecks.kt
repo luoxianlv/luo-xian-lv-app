@@ -8,6 +8,7 @@ import androidx.lifecycle.Lifecycle
 import app.luoxianlv.business.MainPage
 import app.luoxianlv.hot.MainSwapFixture
 import app.luoxianlv.hot.PageSwapHost
+import app.luoxianlv.wallpaper.render.PracticeBackdrop
 import java.util.concurrent.atomic.AtomicReference
 
 /** 重建实际主业务页面，不下载新 Dex；用于发现只测简单 View 无法覆盖的 Compose 集成问题。 */
@@ -40,10 +41,23 @@ internal fun Instrumentation.checkMainPageSwap(activity: MainActivity) {
     val fixture = MainSwapFixture(context, targetContext, MainPage::class.java, activity.resources)
     lateinit var original: androidx.compose.ui.platform.ComposeView
     lateinit var oldPage: MainPage
+    fun backdrop(view: View): PracticeBackdrop? =
+        when (view) {
+            is PracticeBackdrop -> view
+            is ViewGroup ->
+                (0 until view.childCount).firstNotNullOfOrNull { backdrop(view.getChildAt(it)) }
+            else -> null
+        }
+    var warmed: PracticeBackdrop? = null
     val window = activity.window
+    await("主页面未准备壁纸缓存") {
+        main { warmed = backdrop(window.decorView) }
+        warmed != null
+    }
     main {
         original = activity.businessComposeView()
         oldPage = activity.businessModels() as MainPage
+        warmed = backdrop(window.decorView)
         val pages = checkNotNull(host(window.decorView))
         pages.bindController(fixture.controller)
         check(pages.offer(fixture.prepared, fixture.ticket))
@@ -59,6 +73,9 @@ internal fun Instrumentation.checkMainPageSwap(activity: MainActivity) {
     main {
         check(activity.window === window && !activity.isFinishing && activity.hasWindowFocus())
         check(activity.businessModels() !== oldPage)
+        check(activity.businessModels().viewModelStore !== oldPage.viewModelStore) {
+            "热更错误共享了旧 ViewModel 对象"
+        }
         check(oldPage.lifecycle.currentState == Lifecycle.State.CREATED) { "试运行期间没有保留旧业务页" }
     }
     // 使用测试时钟缩短本地回归；真实 60 秒观察另由 NativeOnlineChecks 验证。
@@ -69,4 +86,5 @@ internal fun Instrumentation.checkMainPageSwap(activity: MainActivity) {
         released && fixture.stable()
     }
     fixture.cleanSuccessfulRun()
+    main { warmed?.let { check(backdrop(window.decorView) === it) { "旧页销毁清掉了新版接管的壁纸缓存" } } }
 }

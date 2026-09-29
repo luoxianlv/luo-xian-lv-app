@@ -1,8 +1,10 @@
 package app.luoxianlv.wallpaper.render
 
 import android.app.Activity
+import android.content.Context
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import app.luoxianlv.business.ui.resourceApplicationContext
 import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 
@@ -10,23 +12,33 @@ import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 object PreparedWallpaper {
     private var cached: PracticeBackdrop? = null
     private var selection: String? = null
+    private var owner: Any? = null
+    private var rendererLoader: ClassLoader? = null
 
-    private fun key(activity: Activity): String =
-        "${WallpaperProjectStore.selectedId(activity)}:${WallpaperProjectStore.minute(activity)}:${WallpaperProjectStore.hasBundled(activity)}"
+    private fun key(context: Context): String =
+        "${WallpaperProjectStore.selectedId(context)}:${WallpaperProjectStore.minute(context)}:${WallpaperProjectStore.hasBundled(context)}"
 
-    fun prepare(activity: Activity) {
+    fun claim(value: Any) {
+        owner = value
+    }
+
+    fun prepare(activity: Activity, resources: Context = activity, owner: Any? = null) {
+        if (owner != null && this.owner !== owner) return
         if (PracticePlaybackGate.active || activity.isFinishing || activity.isDestroyed) return
-        val next = key(activity)
-        if (selection != next) clear()
+        val next = key(resources)
+        if (selection != next || rendererLoader !== resources.classLoader) clear()
+        this.owner = owner
         val decor = activity.window.decorView as ViewGroup
         val view =
             cached
-                ?: PracticeBackdrop(activity.applicationContext).also {
+                ?: PracticeBackdrop(resources.resourceApplicationContext()).also {
                     selection = next
                     cached = it
+                    rendererLoader = resources.classLoader
                     it.onPrepared = { it.suspendRendering() }
                 }
-        if (view.parent == null) {
+        if (view.parent !== decor) {
+            (view.parent as? ViewGroup)?.removeView(view)
             val metrics = activity.resources.displayMetrics
             decor.addView(
                 view,
@@ -40,19 +52,25 @@ object PreparedWallpaper {
         if (!view.prepared) view.resumeRendering()
     }
 
-    fun pause() {
-        cached?.suspendRendering()
+    fun pause(owner: Any) {
+        if (this.owner === owner) cached?.suspendRendering()
     }
 
-    fun take(activity: Activity): PracticeBackdrop {
-        val view = cached?.takeIf { selection == key(activity) && it.renderState != "error" }
+    fun take(activity: Activity, resources: Context = activity): PracticeBackdrop {
+        val view = cached?.takeIf {
+            selection == key(resources) &&
+                rendererLoader === resources.classLoader &&
+                it.renderState != "error"
+        }
         if (view == null) {
             clear()
-            return PracticeBackdrop(activity)
+            return PracticeBackdrop(resources)
         }
         (view.parent as? ViewGroup)?.removeView(view)
         cached = null
         selection = null
+        owner = null
+        rendererLoader = null
         view.onPrepared = null
         view.resumeRendering()
         return view
@@ -65,5 +83,11 @@ object PreparedWallpaper {
         }
         cached = null
         selection = null
+        owner = null
+        rendererLoader = null
+    }
+
+    fun clear(owner: Any) {
+        if (this.owner === owner) clear()
     }
 }

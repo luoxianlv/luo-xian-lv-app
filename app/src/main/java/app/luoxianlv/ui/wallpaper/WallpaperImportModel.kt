@@ -2,8 +2,7 @@ package app.luoxianlv.ui.wallpaper
 
 import android.app.Application
 import android.net.Uri
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import android.os.Bundle
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,6 +24,22 @@ class WallpaperImportModel(application: Application) : AndroidViewModel(applicat
         private set
 
     private var started = false
+
+    fun saveCompleted() =
+        Bundle().apply {
+            if (started && !busy) {
+                putBoolean("completed", true)
+                putBoolean("success", success)
+                putString("message", message)
+            }
+        }
+
+    fun restoreCompleted(state: Bundle?) {
+        if (started || state?.getBoolean("completed") != true) return
+        started = true
+        success = state.getBoolean("success")
+        message = state.getString("message") ?: "导入已结束。"
+    }
 
     fun start(uri: Uri?) {
         if (started) return

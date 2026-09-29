@@ -24,10 +24,12 @@ import java.util.zip.ZipInputStream
 /** 验证默认项目完整落盘及真正的视频音量，避免只测试按钮状态。 */
 class WallpaperSoundInstrumentation : Instrumentation() {
     private var checkLoops = false
+    private var offlineSource = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         checkLoops = arguments?.getString("checkLoops") == "true"
+        offlineSource = arguments?.getString("offlineSource") == "true"
         start()
     }
 
@@ -77,10 +79,27 @@ class WallpaperSoundInstrumentation : Instrumentation() {
         val previousSound = prefs.getBoolean("sound", false)
         try {
             runOnMainSync {}
-            kotlinx.coroutines.runBlocking { DefaultWallpaper.download(targetContext) { _, _ -> } }
-            val root = DefaultWallpaper.folder(targetContext)
+            val source =
+                File(targetContext.getExternalFilesDir(null), "default-wallpaper-source.zip")
+            val root: File
+            val archiveRoot: File
+            val importedId: String?
+            if (offlineSource) {
+                check(source.isFile) { "缺少本地原始壁纸 ZIP" }
+                WallpaperProjectStore.import(targetContext, android.net.Uri.fromFile(source), false)
+                root = checkNotNull(WallpaperProjectStore.root(targetContext))
+                archiveRoot = checkNotNull(WallpaperProjectStore.current(targetContext))
+                importedId = checkNotNull(WallpaperProjectStore.selectedId(targetContext))
+            } else {
+                kotlinx.coroutines.runBlocking {
+                    DefaultWallpaper.download(targetContext) { _, _ -> }
+                }
+                root = DefaultWallpaper.folder(targetContext)
+                archiveRoot = root
+                importedId = null
+            }
             check(root.path.startsWith(targetContext.getExternalFilesDir(null)!!.path))
-            check(File(root, ".root").isFile)
+            check(File(archiveRoot, ".root").isFile)
             checkWallpaperRanges(root)
             ZipInputStream(
                     File(targetContext.getExternalFilesDir(null), "default-wallpaper-source.zip")
@@ -98,7 +117,7 @@ class WallpaperSoundInstrumentation : Instrumentation() {
                                 expected.update(buffer, 0, count)
                             }
                             val actual = MessageDigest.getInstance("SHA-256")
-                            File(root, entry.name).inputStream().use { input ->
+                            File(archiveRoot, entry.name).inputStream().use { input ->
                                 while (true) {
                                     val count = input.read(buffer)
                                     if (count < 0) break
@@ -112,13 +131,25 @@ class WallpaperSoundInstrumentation : Instrumentation() {
                         zip.closeEntry()
                     }
                 }
-            val stamp = File(root, "project.json").lastModified()
-            prefs.edit().putString("project", "已有用户选择").commit()
-            kotlinx.coroutines.runBlocking { DefaultWallpaper.download(targetContext) { _, _ -> } }
-            check(prefs.getString("project", null) == "已有用户选择")
-            check(File(root, "project.json").lastModified() == stamp)
-            check(root.parentFile!!.listFiles().orEmpty().none { it.name.startsWith(".install-") })
-            prefs.edit().remove("project").remove("sound").commit()
+            if (!offlineSource) {
+                val stamp = File(root, "project.json").lastModified()
+                prefs.edit().putString("project", "已有用户选择").commit()
+                kotlinx.coroutines.runBlocking {
+                    DefaultWallpaper.download(targetContext) { _, _ -> }
+                }
+                check(prefs.getString("project", null) == "已有用户选择")
+                check(File(root, "project.json").lastModified() == stamp)
+                check(
+                    root.parentFile!!.listFiles().orEmpty().none { it.name.startsWith(".install-") }
+                )
+            }
+            prefs
+                .edit()
+                .apply {
+                    if (importedId == null) remove("project") else putString("project", importedId)
+                    remove("sound")
+                }
+                .commit()
             check(!WallpaperProjectStore.soundEnabled(targetContext))
             check(WallpaperProjectStore.entries(targetContext).count { it.root == root } == 1)
             stage =
@@ -249,7 +280,11 @@ class WallpaperSoundInstrumentation : Instrumentation() {
                 )
             )
             awaitState("设置声音状态未同步") { !WallpaperProjectStore.soundEnabled(targetContext) }
-            result.putString("stream", "默认 ZIP 逐文件校验、外部安装去重、保留选择、默认静音、真实视频音量切换、后台停音恢复及设置同步通过。\n")
+            result.putString(
+                "stream",
+                (if (offlineSource) "本地原始 ZIP 导入与逐文件校验（不验证网络下载）" else "默认 ZIP 逐文件校验、外部安装去重、保留选择") +
+                    "、默认静音、真实视频音量切换、后台停音恢复及设置同步通过。\n",
+            )
             success = true
         } catch (error: Throwable) {
             result.putString("stream", error.stackTraceToString())

@@ -13,6 +13,7 @@ import android.view.Display
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.ExperimentalOptions
 import app.luoxianlv.data.Song
@@ -131,7 +132,7 @@ class ExperimentalInstrumentation : Instrumentation() {
                 pauseBackdrop(active.window.decorView)
                 active.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 // 模拟其他软件：无法借助演练场状态，也无法截图。
-                PracticePlaybackGate.leave()
+                PracticePlaybackGate.leave(checkNotNull(keys.findViewTreeLifecycleOwner()))
             }
             SystemClock.sleep(500)
             val blocked = CountDownLatch(1)

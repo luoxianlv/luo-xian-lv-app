@@ -35,7 +35,9 @@ abstract class ComposePage :
     OnBackPressedDispatcherOwner {
     private val registry = LifecycleRegistry(this)
     private val saved = SavedStateRegistryController.create(this)
-    private val models = ViewModelStore()
+    private var models = ViewModelStore()
+    private var modelsRetained = false
+    private val replacementGuards = mutableSetOf<() -> Boolean>()
     private val backDispatcher = OnBackPressedDispatcher {}
     private var view: ComposeView? = null
     private var scope: CoroutineScope? = null
@@ -156,7 +158,35 @@ abstract class ComposePage :
             putString("compose-state", PageSavedState.encode(registryState))
         }
 
-    override fun canReplace() = !::host.isInitialized || !host.hasPendingResults()
+    override fun canReplace() =
+        (!::host.isInitialized || !host.hasPendingResults()) && replacementGuards.all { it() }
+
+    internal fun guardReplacement(allowed: () -> Boolean): AutoCloseable {
+        replacementGuards += allowed
+        return AutoCloseable { replacementGuards -= allowed }
+    }
+
+    final override fun retain(): NativePage.Retained {
+        check(!closed && !modelsRetained)
+        modelsRetained = true
+        return RetainedModels(models)
+    }
+
+    final override fun restoreRetained(state: NativePage.Retained) {
+        check(!closed && view == null && !modelsRetained)
+        require(state is RetainedModels) { "页面重建状态类型不兼容" }
+        models.clear()
+        models = state.take()
+    }
+
+    private class RetainedModels(private var models: ViewModelStore?) : NativePage.Retained {
+        fun take() = checkNotNull(models).also { models = null }
+
+        override fun close() {
+            models?.clear()
+            models = null
+        }
+    }
 
     final override fun lifecycle(state: Int) {
         if (closed) return
@@ -216,8 +246,10 @@ abstract class ComposePage :
         scope = null
         clock = null
         resultHandlers.clear()
-        registry.currentState = Lifecycle.State.DESTROYED
-        models.clear()
+        replacementGuards.clear()
+        if (registry.currentState != Lifecycle.State.INITIALIZED)
+            registry.currentState = Lifecycle.State.DESTROYED
+        if (!modelsRetained) models.clear()
     }
 }
 

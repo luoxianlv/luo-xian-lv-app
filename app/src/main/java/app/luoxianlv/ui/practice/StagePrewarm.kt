@@ -15,6 +15,7 @@ fun StagePrewarmEffect() {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(context, lifecycleOwner) {
+        val lease = Any()
         val activity = context.findActivity()
         val prepare = Runnable {
             if (
@@ -23,29 +24,30 @@ fun StagePrewarmEffect() {
                         androidx.lifecycle.Lifecycle.State.RESUMED
                     )
             ) {
-                app.luoxianlv.wallpaper.render.PreparedWallpaper.prepare(activity)
+                app.luoxianlv.wallpaper.render.PreparedWallpaper.prepare(activity, context, lease)
             }
         }
         val observer =
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onResume(owner: androidx.lifecycle.LifecycleOwner) {
+                    app.luoxianlv.wallpaper.render.PreparedWallpaper.claim(lease)
                     activity?.window?.decorView?.postDelayed(prepare, 500)
                 }
 
                 override fun onPause(owner: androidx.lifecycle.LifecycleOwner) {
                     activity?.window?.decorView?.removeCallbacks(prepare)
-                    app.luoxianlv.wallpaper.render.PreparedWallpaper.pause()
+                    app.luoxianlv.wallpaper.render.PreparedWallpaper.pause(lease)
                 }
 
                 override fun onDestroy(owner: androidx.lifecycle.LifecycleOwner) {
-                    app.luoxianlv.wallpaper.render.PreparedWallpaper.clear()
+                    app.luoxianlv.wallpaper.render.PreparedWallpaper.clear(lease)
                 }
             }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             activity?.window?.decorView?.removeCallbacks(prepare)
             lifecycleOwner.lifecycle.removeObserver(observer)
-            app.luoxianlv.wallpaper.render.PreparedWallpaper.clear()
+            app.luoxianlv.wallpaper.render.PreparedWallpaper.clear(lease)
         }
     }
 }
