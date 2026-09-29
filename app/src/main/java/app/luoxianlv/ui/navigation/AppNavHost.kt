@@ -206,10 +206,10 @@ fun AppNavHost(
                                 onPractice = { dark ->
                                     activity.startActivity(
                                         android.content
-                                            .Intent(
+                                            .Intent()
+                                            .setClassName(
                                                 activity,
-                                                app.luoxianlv.ui.practice.PracticeActivity::class
-                                                    .java,
+                                                "app.luoxianlv.ui.practice.PracticeActivity",
                                             )
                                             .putExtra(
                                                 app.luoxianlv.ui.practice.StageEntry.DARK,

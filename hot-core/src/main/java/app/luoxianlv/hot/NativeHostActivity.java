@@ -1,6 +1,7 @@
 package app.luoxianlv.hot;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -30,8 +31,27 @@ public abstract class NativeHostActivity extends Activity {
   private HostResults results;
   private boolean visible;
   private Object backCallback;
+  private int currentLifecycle = NativePage.CREATED;
+  private Bundle pendingState;
+  private NativePage.Retained pendingRetained;
+  private AutoCloseable preparation;
+  private boolean preparationConsumed;
 
   protected abstract NativePage createPage() throws Exception;
+
+  protected Context initialPageContext() {
+    return this;
+  }
+
+  protected String initialPageIdentity(NativePage page) {
+    return getApplicationInfo().sourceDir + "#" + page.getClass().getName();
+  }
+
+  /** 内置模块准备完成后才创建业务；默认保持原来同步创建行为。 */
+  protected AutoCloseable whenPageReady(Runnable ready) {
+    ready.run();
+    return () -> {};
+  }
 
   protected final PageSwapHost pageHost() {
     StrictJson.require(page instanceof PageSession, "原生页面会话尚未就绪");
@@ -41,7 +61,7 @@ public abstract class NativeHostActivity extends Activity {
   @Override
   protected void onCreate(Bundle state) {
     super.onCreate(state);
-    NativePage.Retained retained =
+    pendingRetained =
         getLastNonConfigurationInstance() instanceof NativePage.Retained
             ? (NativePage.Retained) getLastNonConfigurationInstance()
             : null;
@@ -59,11 +79,33 @@ public abstract class NativeHostActivity extends Activity {
     results = new HostResults(this, null);
     try {
       results = new HostResults(this, state == null ? null : state.getBundle("native.results"));
+      pendingState = state;
+      TextView loading = new TextView(this);
+      loading.setGravity(android.view.Gravity.CENTER);
+      loading.setText("正在准备…");
+      setContentView(loading);
+      preparation = whenPageReady(this::openPreparedPage);
+    } catch (Throwable failure) {
+      pageFailed(failure);
+    }
+    if (Build.VERSION.SDK_INT >= 33) {
+      backCallback = Api33.register(this, this::dispatchBack);
+    }
+  }
+
+  private void openPreparedPage() {
+    if (isDestroyed() || isFinishing() || preparationConsumed) return;
+    preparationConsumed = true;
+    NativePage.Retained retained = pendingRetained;
+    pendingRetained = null;
+    Bundle state = pendingState;
+    pendingState = null;
+    try {
       NativePage baseline = createPage();
       page =
           new PageSession(
               baseline,
-              getApplicationInfo().sourceDir + "#" + baseline.getClass().getName(),
+              initialPageIdentity(baseline),
               COMMITS,
               (code, failure) -> {
                 if (code.equals("baseline_recovery_failed"))
@@ -74,7 +116,8 @@ public abstract class NativeHostActivity extends Activity {
                             if (page != null && !isDestroyed()) pageFailed(failure);
                           });
                 else if (failure != null) warning(code, failure);
-              });
+              },
+              initialPageContext());
       page.attachHost(actions(page));
       if (retained != null) page.restoreRetained(retained);
       Bundle restored = state == null ? null : state.getBundle("native.page");
@@ -87,6 +130,8 @@ public abstract class NativeHostActivity extends Activity {
               () -> {}));
       page.lifecycle(NativePage.CREATED);
       page.newIntent(getIntent());
+      if (currentLifecycle != NativePage.CREATED) page.lifecycle(currentLifecycle);
+      if (currentLifecycle == NativePage.RESUMED) results.deliverAll(page);
     } catch (Throwable failure) {
       pageFailed(failure);
     } finally {
@@ -97,9 +142,6 @@ public abstract class NativeHostActivity extends Activity {
           warning("retained_close_failed", failure);
         }
       }
-    }
-    if (Build.VERSION.SDK_INT >= 33) {
-      backCallback = Api33.register(this, this::dispatchBack);
     }
   }
 
@@ -164,18 +206,21 @@ public abstract class NativeHostActivity extends Activity {
   protected void onStart() {
     super.onStart();
     visible = true;
+    currentLifecycle = NativePage.STARTED;
     forward(() -> page.lifecycle(NativePage.STARTED));
   }
 
   @Override
   protected void onResume() {
     super.onResume();
+    currentLifecycle = NativePage.RESUMED;
     forward(() -> page.lifecycle(NativePage.RESUMED));
     forward(() -> results.deliverAll(page));
   }
 
   @Override
   protected void onPause() {
+    currentLifecycle = NativePage.STARTED;
     forward(() -> page.lifecycle(NativePage.STARTED));
     super.onPause();
   }
@@ -183,6 +228,7 @@ public abstract class NativeHostActivity extends Activity {
   @Override
   protected void onStop() {
     visible = false;
+    currentLifecycle = NativePage.CREATED;
     forward(() -> page.lifecycle(NativePage.CREATED));
     super.onStop();
   }
@@ -195,6 +241,23 @@ public abstract class NativeHostActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    if (preparation != null) {
+      try {
+        preparation.close();
+      } catch (Exception failure) {
+        warning("preparation_close_failed", failure);
+      }
+      preparation = null;
+    }
+    if (pendingRetained != null) {
+      try {
+        pendingRetained.close();
+      } catch (Throwable failure) {
+        warning("retained_close_failed", failure);
+      }
+      pendingRetained = null;
+    }
+    pendingState = null;
     if (Build.VERSION.SDK_INT >= 33 && backCallback != null) Api33.unregister(this, backCallback);
     if (page != null) {
       try {
@@ -209,7 +272,11 @@ public abstract class NativeHostActivity extends Activity {
 
   @Override
   public Object onRetainNonConfigurationInstance() {
-    if (page == null) return null;
+    if (page == null) {
+      NativePage.Retained retained = pendingRetained;
+      pendingRetained = null;
+      return retained;
+    }
     try {
       return page.retain();
     } catch (Throwable failure) {
@@ -224,6 +291,12 @@ public abstract class NativeHostActivity extends Activity {
     if (page != null) {
       try {
         out.putBundle("native.page", PageState.copy(page.save()));
+      } catch (Throwable failure) {
+        warning("page_state_failed", failure);
+      }
+    } else if (pendingState != null && pendingState.containsKey("native.page")) {
+      try {
+        out.putBundle("native.page", PageState.copy(pendingState.getBundle("native.page")));
       } catch (Throwable failure) {
         warning("page_state_failed", failure);
       }

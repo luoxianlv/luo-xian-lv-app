@@ -57,7 +57,7 @@ final class NativePageChecks {
                 System.currentTimeMillis());
         NativeLoader loader = new NativeLoader(runner.getContext(), store, quarantine, 1);
         NativeLoader.Prepared prepared = loader.prepare(snapshot, journal.state());
-        ClassLoader business = prepared.context(runner.getContext()).getClassLoader();
+        ClassLoader business = prepared.classLoader();
         if (sharedRuntime == null) sharedRuntime = business.getParent();
         else if (sharedRuntime != business.getParent()) throw new AssertionError("业务升级重新创建了共享运行时");
         boolean expectedNew = name.equals("next.lxhp");

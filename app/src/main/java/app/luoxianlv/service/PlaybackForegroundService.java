@@ -17,7 +17,7 @@ import app.luoxianlv.hot.contract.HostDiagnostics;
 
 /** 系统前台承诺由 Java 宿主兑现，通知创建不得等待业务加载或谱面准备。 */
 public final class PlaybackForegroundService extends Service {
-  public static final String CHANNEL = "playback_controls";
+  public static final String CHANNEL = app.luoxianlv.hot.contract.PlaybackBridge.FOREGROUND_CHANNEL;
   private static final int ID = 1201;
   private static final String STOP = "app.luoxianlv.STOP_FLOATING_PLAYER";
   private static PlaybackForegroundService instance;

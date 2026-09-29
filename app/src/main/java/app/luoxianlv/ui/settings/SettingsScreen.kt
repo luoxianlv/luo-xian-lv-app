@@ -173,10 +173,12 @@ fun SettingsScreen(
                         iconTint = IconTeal,
                     ) {
                         context.startActivity(
-                            android.content.Intent(
-                                context,
-                                app.luoxianlv.ui.practice.WallpaperPickerActivity::class.java,
-                            )
+                            android.content
+                                .Intent()
+                                .setClassName(
+                                    context,
+                                    "app.luoxianlv.ui.practice.WallpaperPickerActivity",
+                                )
                         )
                     }
                 }

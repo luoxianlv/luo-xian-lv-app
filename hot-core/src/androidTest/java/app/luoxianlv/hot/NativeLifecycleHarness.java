@@ -16,14 +16,26 @@ public final class NativeLifecycleHarness extends NativeHostActivity {
   final List<Integer> lifecycleEvents = new ArrayList<>();
   final List<String> warnings = new ArrayList<>();
   int closes;
+  int creates;
+  int preparationCloses;
+  Runnable prepared;
   HostActions actions;
   int results;
   String resultKey;
   android.content.Intent resultData;
 
   @Override
+  protected AutoCloseable whenPageReady(Runnable callback) {
+    latest = this;
+    if (!mode.startsWith("delayed")) return super.whenPageReady(callback);
+    prepared = callback;
+    return () -> preparationCloses++;
+  }
+
+  @Override
   protected NativePage createPage() {
     latest = this;
+    creates++;
     String failureMode = mode;
     return new NativePage() {
       @Override
@@ -42,7 +54,7 @@ public final class NativeLifecycleHarness extends NativeHostActivity {
       @Override
       public View create(
           Context context, Bundle state, Bundle hostState, Events events, Ready ready) {
-        if (failureMode.equals("create")) throw new IllegalStateException("测试创建故障");
+        if (failureMode.endsWith("create")) throw new IllegalStateException("测试创建故障");
         TextView text = new TextView(context);
         text.setText("业务已显示");
         ready.ready();

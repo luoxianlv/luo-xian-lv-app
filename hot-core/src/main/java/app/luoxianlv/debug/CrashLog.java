@@ -3,7 +3,6 @@ package app.luoxianlv.debug;
 import android.content.Context;
 import android.os.Build;
 import android.os.Process;
-import app.luoxianlv.BuildConfig;
 import app.luoxianlv.hot.contract.AppDirectories;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -21,14 +20,19 @@ public final class CrashLog {
     Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
     if (previous instanceof FatalErrorHandler) return;
     File directory = new File(AppDirectories.visibleRoot(context), "logs");
+    String version = "未知";
+    try {
+      android.content.pm.PackageInfo info =
+          context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+      version = info.versionName + "（" + info.versionCode + "）";
+    } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+    }
     String header =
         "包名="
             + context.getPackageName()
             + "；版本="
-            + BuildConfig.VERSION_NAME
-            + "（"
-            + BuildConfig.VERSION_CODE
-            + "）；设备="
+            + version
+            + "；设备="
             + Build.MANUFACTURER
             + " "
             + Build.MODEL

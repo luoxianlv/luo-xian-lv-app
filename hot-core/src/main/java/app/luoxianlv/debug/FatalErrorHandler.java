@@ -1,6 +1,6 @@
 package app.luoxianlv.debug;
 
-/** 磁盘和业务发生任何异常，都不能吞掉原始崩溃或阻断已有系统/统计处理器。 */
+/** 磁盘和业务发生任何异常，都不能吞掉原始崩溃或阻断系统/统计处理器。 */
 public final class FatalErrorHandler implements Thread.UncaughtExceptionHandler {
   public interface Save {
     void write(Thread thread, Throwable failure) throws Exception;

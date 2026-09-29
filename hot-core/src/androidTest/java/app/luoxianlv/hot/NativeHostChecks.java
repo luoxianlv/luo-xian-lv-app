@@ -57,6 +57,58 @@ final class NativeHostChecks {
     NativeLifecycleHarness.mode = "healthy";
     pendingResultAcrossRecreate(runner);
     sessionIdentity(runner);
+    delayedPreparation(runner);
+  }
+
+  private static void delayedPreparation(Instrumentation runner) {
+    for (String mode : new String[] {"delayed", "delayed-create", "delayed-destroy"}) {
+      NativeLifecycleHarness.mode = mode;
+      NativeLifecycleHarness activity =
+          (NativeLifecycleHarness)
+              runner.startActivitySync(
+                  new Intent(runner.getContext(), NativeLifecycleHarness.class)
+                      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      try {
+        onMain(
+            runner,
+            () -> {
+              check(
+                  activity.creates == 0 && contains(activity.getWindow().getDecorView(), "正在准备…"),
+                  "异步准备之前执行了业务");
+              if (mode.equals("delayed-destroy")) activity.finish();
+              else {
+                activity.prepared.run();
+                activity.prepared.run();
+                check(activity.creates == 1, "就绪回调重复创建业务");
+                check(
+                    contains(
+                        activity.getWindow().getDecorView(),
+                        mode.equals("delayed-create") ? "重试" : "业务已显示"),
+                    "延迟准备的页面或恢复错误");
+                if (mode.equals("delayed"))
+                  check(
+                      activity.lifecycleEvents.get(activity.lifecycleEvents.size() - 1)
+                          == NativePage.RESUMED,
+                      "晚到业务没有收到当前窗口状态");
+              }
+            });
+      } finally {
+        runner.runOnMainSync(activity::finish);
+        runner.waitForIdleSync();
+      }
+      long deadline = android.os.SystemClock.uptimeMillis() + 10000;
+      while (!activity.isDestroyed() && android.os.SystemClock.uptimeMillis() < deadline)
+        android.os.SystemClock.sleep(30);
+      check(activity.isDestroyed(), "系统没有完成测试窗口的销毁");
+      onMain(
+          runner,
+          () -> {
+            activity.prepared.run();
+            check(activity.creates == (mode.equals("delayed-destroy") ? 0 : 1), "已结束窗口仍执行晚到业务");
+            check(activity.preparationCloses == 1, "准备监听没有释放");
+          });
+    }
+    NativeLifecycleHarness.mode = "healthy";
   }
 
   private static void sessionIdentity(Instrumentation runner) {

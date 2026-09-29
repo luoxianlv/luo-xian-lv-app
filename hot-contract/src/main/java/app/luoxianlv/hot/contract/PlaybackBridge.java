@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** 进程内唯一的播放连接；旧系统服务释放时不能注销后来建立的连接。 */
 public final class PlaybackBridge {
+  public static final String FOREGROUND_CHANNEL = "playback_controls";
   private static final AtomicReference<PlaybackPort> CURRENT = new AtomicReference<>();
 
   private PlaybackBridge() {}

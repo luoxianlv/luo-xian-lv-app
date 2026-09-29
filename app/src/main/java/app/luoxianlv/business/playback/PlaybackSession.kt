@@ -274,9 +274,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         closed = true
         scoreScope.cancel()
         runCatching {
-                getSystemService(DisplayManager::class.java)
-                    .unregisterDisplayListener(displayListener)
-            }
+            getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
+        }
             .onFailure { AppLog.w(TAG, "释放显示监听失败", it) }
         playing = false
         generation++
@@ -317,6 +316,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                     putBoolean("loadingSong", loadingSong)
                     putBoolean("waitingToPlay", waitingToPlay)
                     putBoolean("floatingVisible", floatingVisible)
+                    putBoolean("floatingEnabled", repository.floatingEnabled)
                     putString("error", error)
                     putFloat("speed", speed)
                     putLong("positionMs", positionMs)

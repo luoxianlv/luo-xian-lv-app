@@ -116,7 +116,7 @@ final class NativeOnlineChecks {
       check(baseReady.await(20, TimeUnit.SECONDS), "基础 Compose 关于页没有就绪");
       journal.firstFrame(baseAttempt);
       journal.healthy(baseAttempt, 60000);
-      ClassLoader oldLoader = base.context(activity).getClassLoader();
+      ClassLoader oldLoader = base.classLoader();
       try {
         Class.forName("app.luoxianlv.hot.business.NextBadgeView", false, oldLoader);
         throw new AssertionError("基础业务已经包含待下载组件");
@@ -161,7 +161,7 @@ final class NativeOnlineChecks {
       ActivationController.Ticket ticket =
           client.authorize(candidate, 1, android.os.Process.myPid(), () -> false);
       NativeLoader.Prepared prepared = loader.prepare(candidate.snapshot, journal.state());
-      ClassLoader nextLoader = prepared.context(activity).getClassLoader();
+      ClassLoader nextLoader = prepared.classLoader();
       check(nextLoader.getParent() == oldLoader.getParent(), "在线更新重复实例化共享运行时");
       Class.forName("app.luoxianlv.hot.business.NextBadgeView", false, nextLoader);
       long started = SystemClock.elapsedRealtime();

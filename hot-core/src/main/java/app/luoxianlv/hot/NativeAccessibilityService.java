@@ -23,19 +23,41 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
   private final Handler main = new Handler(Looper.getMainLooper());
   private volatile Binding binding;
   private AutoCloseable registration;
+  private AutoCloseable preparation;
+  private boolean connected;
 
   protected abstract NativePlaybackSession createPlaybackSession();
 
   protected abstract void foregroundRequested(boolean enabled);
 
+  protected android.content.Context playbackContext() {
+    return this;
+  }
+
+  protected AutoCloseable whenPlaybackReady(Runnable ready) {
+    ready.run();
+    return () -> {};
+  }
+
   @Override
   protected final void onServiceConnected() {
+    connected = true;
+    closePreparation();
     closeSession();
+    try {
+      preparation = whenPlaybackReady(this::openPreparedSession);
+    } catch (Throwable failure) {
+      failed(binding, failure);
+    }
+  }
+
+  private void openPreparedSession() {
+    if (!connected || binding != null) return;
     Binding candidate = new Binding();
     binding = candidate;
     try {
       candidate.session = createPlaybackSession();
-      candidate.session.connect(this, candidate);
+      candidate.session.connect(playbackContext(), candidate);
       if (binding == candidate) registration = PlaybackBridge.connect(candidate);
     } catch (Throwable failure) {
       failed(candidate, failure);
@@ -56,14 +78,28 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
 
   @Override
   public final boolean onUnbind(Intent intent) {
+    connected = false;
+    closePreparation();
     closeSession();
     return super.onUnbind(intent);
   }
 
   @Override
   public final void onDestroy() {
+    connected = false;
+    closePreparation();
     closeSession();
     super.onDestroy();
+  }
+
+  private void closePreparation() {
+    if (preparation == null) return;
+    try {
+      preparation.close();
+    } catch (Exception failure) {
+      HostDiagnostics.log(Log.WARN, "无障碍宿主", "取消业务准备监听失败", failure);
+    }
+    preparation = null;
   }
 
   private void failed(Binding owner, Throwable failure) {

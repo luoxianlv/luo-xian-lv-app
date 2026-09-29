@@ -30,7 +30,7 @@ object KeepAlive {
                     context.getSystemService(NotificationManager::class.java).let { manager ->
                         manager.areNotificationsEnabled() &&
                             manager
-                                .getNotificationChannel(PlaybackForegroundService.CHANNEL)
+                                .getNotificationChannel(PlaybackBridge.FOREGROUND_CHANNEL)
                                 ?.importance != NotificationManager.IMPORTANCE_NONE
                     },
         )
@@ -58,13 +58,13 @@ object KeepAlive {
         val channel =
             context
                 .getSystemService(NotificationManager::class.java)
-                .getNotificationChannel(PlaybackForegroundService.CHANNEL)
+                .getNotificationChannel(PlaybackBridge.FOREGROUND_CHANNEL)
         if (channel?.importance == NotificationManager.IMPORTANCE_NONE) {
             launch(
                 context,
                 Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                     .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                    .putExtra(Settings.EXTRA_CHANNEL_ID, PlaybackForegroundService.CHANNEL),
+                    .putExtra(Settings.EXTRA_CHANNEL_ID, PlaybackBridge.FOREGROUND_CHANNEL),
             )
             return
         }
