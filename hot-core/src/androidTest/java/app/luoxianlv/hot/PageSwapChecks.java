@@ -38,7 +38,8 @@ final class PageSwapChecks {
           "system_resume_failure",
           "editor_busy",
           "input_isolation",
-          "rollback_restore_failure"
+          "rollback_restore_failure",
+          "async_failure"
         }) {
       new Case(runner, root, mode).run();
     }
@@ -171,13 +172,15 @@ final class PageSwapChecks {
               Class<? extends NativePage> entry =
                   mode.equals("create_failure")
                       ? BrokenPage.class
-                      : mode.equals("input_changed") || mode.equals("input_isolation")
-                          ? DelayedPage.class
-                          : mode.equals("system_resume_failure")
-                              ? ResumeFailurePage.class
-                              : mode.startsWith("system_") || mode.equals("editor_busy")
-                                  ? ActionPage.class
-                                  : TrackingPage.class;
+                      : mode.equals("async_failure")
+                          ? AsyncFailurePage.class
+                          : mode.equals("input_changed") || mode.equals("input_isolation")
+                              ? DelayedPage.class
+                              : mode.equals("system_resume_failure")
+                                  ? ResumeFailurePage.class
+                                  : mode.startsWith("system_") || mode.equals("editor_busy")
+                                      ? ActionPage.class
+                                      : TrackingPage.class;
               NativeLoader.Prepared prepared =
                   new NativeLoader.Prepared(
                       manifest, entry, getClass().getClassLoader(), activity.getResources(), null);
@@ -235,7 +238,9 @@ final class PageSwapChecks {
                 DelayedPage.pending = null;
                 DelayedPage.page = null;
               });
-        } else if (!mode.equals("create_failure") && !mode.equals("system_resume_failure")) {
+        } else if (!mode.equals("create_failure")
+            && !mode.equals("async_failure")
+            && !mode.equals("system_resume_failure")) {
           check(
               exposed.await(15, TimeUnit.SECONDS), "新页面未曝光：" + result.get() + " " + failure.get());
           main(
@@ -252,6 +257,8 @@ final class PageSwapChecks {
                   old.actions.permissions(
                       "permissions", new String[] {"android.permission.CAMERA"});
                   old.actions.finish();
+                  old.actions.open(new Intent(), true);
+                  old.actions.closePage();
                   check(
                       platform.launches == 1 && platform.permissions == 0 && platform.finishes == 0,
                       "旧代际仍能操作系统入口");
@@ -280,15 +287,17 @@ final class PageSwapChecks {
                 ? "candidate_stable"
                 : mode.equals("create_failure")
                     ? "candidate_create_failed"
-                    : mode.equals("trial_failure")
-                            || mode.equals("system_rollback")
-                            || mode.equals("rollback_restore_failure")
-                        ? "candidate_failed"
-                        : mode.equals("system_callback_failure")
-                            ? "candidate_callback_failed"
-                            : mode.equals("system_resume_failure")
-                                ? "candidate_swap_failed"
-                                : "candidate_input_changed";
+                    : mode.equals("async_failure")
+                        ? "candidate_prepare_failed"
+                        : mode.equals("trial_failure")
+                                || mode.equals("system_rollback")
+                                || mode.equals("rollback_restore_failure")
+                            ? "candidate_failed"
+                            : mode.equals("system_callback_failure")
+                                ? "candidate_callback_failed"
+                                : mode.equals("system_resume_failure")
+                                    ? "candidate_swap_failed"
+                                    : "candidate_input_changed";
         check(expected.equals(result.get()), "切换结果错误：" + result.get() + " " + failure.get());
         if (success()) {
           if (lease != null) {
@@ -450,6 +459,15 @@ final class PageSwapChecks {
     }
   }
 
+  public static final class AsyncFailurePage extends TrackingPage {
+    @Override
+    public View create(Context context, Bundle state, Bundle host, Events events, Ready ready) {
+      View view = super.create(context, state, host, events, () -> {});
+      view.post(() -> ready.failed(new IllegalStateException("测试注入的异步准备失败")));
+      return view;
+    }
+  }
+
   public static final class EditorPage extends TrackingPage {
     @Override
     protected TextView view(Context context) {
@@ -467,6 +485,8 @@ final class PageSwapChecks {
       actions.launch("preparing", new Intent(), null);
       actions.permissions("preparing_permission", new String[] {"android.permission.CAMERA"});
       actions.finish();
+      actions.open(new Intent(), true);
+      actions.closePage();
       actions.resultReady("selection");
       return super.create(context, state, host, events, ready);
     }

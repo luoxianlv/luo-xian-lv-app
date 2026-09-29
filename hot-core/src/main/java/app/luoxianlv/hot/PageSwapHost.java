@@ -137,11 +137,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
               PageState.copy(state),
               PageState.copy(hostState),
               (event, payload) -> dispatch(slot, event, payload),
-              () ->
-                  main.post(
-                      () -> {
-                        if (!closed && active == slot) initialReady.ready();
-                      }));
+              readiness(slot, initialReady));
       slot.container = new PageContainer(getContext(), slot.view, true);
       addView(
           slot.container, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
@@ -223,6 +219,13 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     return PageState.copy(state);
   }
 
+  public NativePage.Retained retain() {
+    requireMain();
+    if (active == null || closed) return null;
+    NativePage.Retained value = active.page.retain();
+    return value == null ? null : new RetainedPage(active.identity, active.page.getClass(), value);
+  }
+
   public void newIntent(Intent intent) {
     requireMain();
     inputEpoch++;
@@ -251,6 +254,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   public void hostWarning(String code, Throwable error) {
     requireMain();
     if (active != null && !closed) active.page.hostWarning(code, error);
+  }
+
+  public void finishing() {
+    requireMain();
+    withActive(() -> active.page.finishing());
   }
 
   /** 失效代际的迟到结果只消费，不交给同名但不同内容的旧版/新版回调。 */
@@ -335,11 +343,60 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
       }
 
       @Override
+      public boolean isCurrent() {
+        requireMain();
+        return !closed && !slot.disposed && slot == active && !transitioning;
+      }
+
+      @Override
+      public void open(Intent intent, boolean closeCurrent) {
+        if (allowed()) {
+          inputEpoch++;
+          platform().open(intent, closeCurrent);
+        }
+      }
+
+      @Override
+      public void closePage() {
+        // 用户已经确认的退出可在后台完成，但候选和旧代际不能关闭当前窗口。
+        if (isCurrent() && !settling) {
+          inputEpoch++;
+          platform().closePage();
+        }
+      }
+
+      @Override
       public void finish() {
         if (allowed()) {
           inputEpoch++;
           platform().finish();
         }
+      }
+    };
+  }
+
+  private NativePage.Ready readiness(Slot slot, NativePage.Ready initial) {
+    return new NativePage.Ready() {
+      @Override
+      public void ready() {
+        main.post(
+            () -> {
+              if (pending(slot)) PageSwapHost.this.ready(slot);
+              else if (!closed && active == slot && initial != null) initial.ready();
+            });
+      }
+
+      @Override
+      public void failed(Throwable failure) {
+        main.post(
+            () -> {
+              if (pending(slot)) abort(slot, "candidate_prepare_failed", failure, true);
+              else if (!closed && active == slot) {
+                if (slot.ticket != null && previous != null)
+                  recover("candidate_prepare_failed", failure, true);
+                else listener.event("baseline_recovery_failed", failure);
+              }
+            });
       }
     };
   }
@@ -398,7 +455,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
                           state,
                           PageState.copy(hostState),
                           (event, payload) -> dispatch(slot, event, payload),
-                          () -> main.post(() -> ready(slot)));
+                          readiness(slot, null));
                   slot.container = new PageContainer(getContext(), slot.view, false);
                   addView(
                       slot.container,

@@ -33,6 +33,18 @@ final class PageSession implements NativePage {
   }
 
   @Override
+  public NativePage.Retained retain() {
+    return pages().retain();
+  }
+
+  @Override
+  public void restoreRetained(NativePage.Retained retained) {
+    StrictJson.require(pages == null && baseline != null, "重建状态只能在创建页面前移交");
+    if (retained instanceof RetainedPage) ((RetainedPage) retained).restore(identity, baseline);
+    else retained.close();
+  }
+
+  @Override
   public View create(Context context, Bundle state, Bundle hostState, Events events, Ready ready) {
     StrictJson.require(!closed && pages == null, "页面会话已经创建或关闭");
     pages = new PageSwapHost(context, null, worker, events, listener);
@@ -87,6 +99,11 @@ final class PageSession implements NativePage {
   @Override
   public void configurationChanged(Configuration configuration) {
     pages().configurationChanged(configuration);
+  }
+
+  @Override
+  public void finishing() {
+    pages().finishing();
   }
 
   @Override

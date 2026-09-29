@@ -13,6 +13,20 @@ public interface HostActions {
 
   boolean hasPendingResults();
 
+  /** 当前代际身份与前后台状态分离；退场中的旧页不能继续发起平台操作。 */
+  default boolean isCurrent() {
+    return true;
+  }
+
+  default void open(Intent intent, boolean closeCurrent) {
+    throw new UnsupportedOperationException("宿主未提供页面导航");
+  }
+
+  default void closePage() {
+    throw new UnsupportedOperationException("宿主未提供页面关闭");
+  }
+
+  /** 关闭整个应用任务，仅用于明确的退出/拒绝协议操作。 */
   void finish();
 
   static boolean isStaleWindowOperation(IllegalStateException error) {

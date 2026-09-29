@@ -32,6 +32,18 @@ public interface NativePage extends AutoCloseable {
 
   default void configurationChanged(Configuration configuration) {}
 
+  /** 系统窗口开始退出时立即停用音频和手势，不等窗口动画结束。 */
+  default void finishing() {}
+
+  /** 仅同内容、同加载器的 Activity 重建使用；热更不得借此传递旧业务对象。 */
+  default Retained retain() {
+    return null;
+  }
+
+  default void restoreRetained(Retained state) {
+    state.close();
+  }
+
   Bundle save();
 
   /** 滚动惯性、编辑提交等业务事务结束后才能导出并替换状态。 */
@@ -50,7 +62,14 @@ public interface NativePage extends AutoCloseable {
     void emit(String event, Bundle payload);
   }
 
+  interface Retained extends AutoCloseable {
+    @Override
+    void close();
+  }
+
   interface Ready {
     void ready();
+
+    default void failed(Throwable failure) {}
   }
 }

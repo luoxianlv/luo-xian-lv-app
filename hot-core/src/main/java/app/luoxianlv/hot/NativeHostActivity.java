@@ -41,6 +41,10 @@ public abstract class NativeHostActivity extends Activity {
   @Override
   protected void onCreate(Bundle state) {
     super.onCreate(state);
+    NativePage.Retained retained =
+        getLastNonConfigurationInstance() instanceof NativePage.Retained
+            ? (NativePage.Retained) getLastNonConfigurationInstance()
+            : null;
     if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
     else
       getWindow()
@@ -72,6 +76,7 @@ public abstract class NativeHostActivity extends Activity {
                 else if (failure != null) warning(code, failure);
               });
       page.attachHost(actions(page));
+      if (retained != null) page.restoreRetained(retained);
       Bundle restored = state == null ? null : state.getBundle("native.page");
       setContentView(
           page.create(
@@ -84,6 +89,14 @@ public abstract class NativeHostActivity extends Activity {
       page.newIntent(getIntent());
     } catch (Throwable failure) {
       pageFailed(failure);
+    } finally {
+      if (retained != null) {
+        try {
+          retained.close();
+        } catch (Throwable failure) {
+          warning("retained_close_failed", failure);
+        }
+      }
     }
     if (Build.VERSION.SDK_INT >= 33) {
       backCallback = Api33.register(this, this::dispatchBack);
@@ -123,6 +136,24 @@ public abstract class NativeHostActivity extends Activity {
       }
 
       @Override
+      public boolean isCurrent() {
+        return page == owner && !isDestroyed();
+      }
+
+      @Override
+      public void open(Intent intent, boolean closeCurrent) {
+        if (active()) {
+          startActivity(intent);
+          if (closeCurrent) NativeHostActivity.this.finish();
+        }
+      }
+
+      @Override
+      public void closePage() {
+        if (isCurrent() && !isFinishing()) NativeHostActivity.this.finish();
+      }
+
+      @Override
       public void finish() {
         if (active()) finishAffinity();
       }
@@ -157,6 +188,12 @@ public abstract class NativeHostActivity extends Activity {
   }
 
   @Override
+  public void finish() {
+    if (!isFinishing()) forward(() -> page.finishing());
+    super.finish();
+  }
+
+  @Override
   protected void onDestroy() {
     if (Build.VERSION.SDK_INT >= 33 && backCallback != null) Api33.unregister(this, backCallback);
     if (page != null) {
@@ -168,6 +205,17 @@ public abstract class NativeHostActivity extends Activity {
       page = null;
     }
     super.onDestroy();
+  }
+
+  @Override
+  public Object onRetainNonConfigurationInstance() {
+    if (page == null) return null;
+    try {
+      return page.retain();
+    } catch (Throwable failure) {
+      warning("page_retain_failed", failure);
+      return null;
+    }
   }
 
   @Override
