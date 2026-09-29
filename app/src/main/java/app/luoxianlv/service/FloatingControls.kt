@@ -3,6 +3,7 @@ package app.luoxianlv.service
 import android.animation.ValueAnimator
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.ContextThemeWrapper
@@ -63,15 +64,26 @@ class FloatingControls(private val service: PlaybackSession) {
             ?: FloatingDock.NONE
     private var dockAnimator: ValueAnimator? = null
     private var expanded = false
+    private var restoredExpanded: Boolean? = null
     private var speedControlsVisible = false
     private var panel: FloatingPanel? = null
     private var displayRequested = false
     private var showRetries = 0
     private var destroyed = false
+    var revision = 0L
+        private set
+
     private var touching = false
     val interacting
         get() =
-            touching || panel?.touching == true || popup != null || dockAnimator?.isRunning == true
+            touching ||
+                panel?.touching == true ||
+                popup != null ||
+                playlistJob?.isActive == true ||
+                dockAnimator?.isRunning == true
+
+    val released
+        get() = destroyed && scope.coroutineContext[Job]?.isCompleted == true
 
     // 选歌窗打开时面板先退出，关闭后恢复（两者不共存）。
     private var panelHiddenForPicker = false
@@ -98,15 +110,41 @@ class FloatingControls(private val service: PlaybackSession) {
     val isVisible: Boolean
         get() = displayRequested
 
+    fun snapshot() =
+        Bundle().apply {
+            putInt("schema", 1)
+            putInt("x", x)
+            putInt("y", y)
+            putString("dock", dock.name)
+            putBoolean("expanded", expanded)
+            putBoolean("speedControls", speedControlsVisible)
+        }
+
+    fun restore(state: Bundle?) {
+        check(root == null && popup == null && !touching)
+        if (state == null) return
+        require(state.getInt("schema") == 1)
+        x = state.getInt("x")
+        y = state.getInt("y")
+        dock = FloatingDock.valueOf(checkNotNull(state.getString("dock")))
+        expanded = state.getBoolean("expanded")
+        speedControlsVisible = state.getBoolean("speedControls")
+        restoredExpanded = expanded
+    }
+
     fun show() {
+        revision++
         destroyed = false
         displayRequested = true
         showRetries = 0
         if (root != null) return
-        handler.post { if (displayRequested && root == null) render(false) }
+        val open = restoredExpanded ?: false
+        restoredExpanded = null
+        handler.post { if (displayRequested && root == null) render(open) }
     }
 
     fun hide() {
+        revision++
         touching = false
         displayRequested = false
         dockAnimator?.cancel()
@@ -161,6 +199,7 @@ class FloatingControls(private val service: PlaybackSession) {
             .apply { gravity = Gravity.TOP or Gravity.LEFT }
 
     private fun render(open: Boolean) {
+        revision++
         if (destroyed || !displayRequested || !PlaybackBridge.isEnabled(service)) return
         if (!open) speedControlsVisible = false
         palette = PlayerUi.palette(context)
@@ -272,6 +311,7 @@ class FloatingControls(private val service: PlaybackSession) {
             val p = params ?: return@setOnTouchListener false
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    revision++
                     touching = true
                     dockAnimator?.cancel()
                     dockAnimator = null

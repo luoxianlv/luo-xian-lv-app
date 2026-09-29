@@ -340,6 +340,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
       click("展开播放器");
       await("动态 Material 面板没有显示", () -> find("选歌") != null);
       step("通过：无障碍服务与真实 Material 浮窗面板");
+      PlaybackHandoverChecks.run(this, main);
+      step("通过：两个业务加载器间的播放交接、过期快照拒绝、准备/激活故障与最新状态回退");
       onMain(
           () -> {
             Bundle value = new Bundle();

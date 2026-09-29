@@ -20,11 +20,14 @@ import java.util.concurrent.TimeUnit;
 
 /** 稳定无障碍身份；业务只持有受会话约束的系统能力，不能接管系统服务本身。 */
 public abstract class NativeAccessibilityService extends AccessibilityService {
-  private final Handler main = new Handler(Looper.getMainLooper());
-  private volatile Binding binding;
+  final Handler main = new Handler(Looper.getMainLooper());
+  volatile Binding binding;
   private AutoCloseable registration;
   private AutoCloseable preparation;
-  private boolean connected;
+  boolean connected;
+  PlaybackHandover handover;
+  private final java.util.ArrayList<Binding> retired = new java.util.ArrayList<>();
+  private boolean draining;
 
   protected abstract NativePlaybackSession createPlaybackSession();
 
@@ -55,6 +58,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     if (!connected || binding != null) return;
     Binding candidate = new Binding();
     binding = candidate;
+    candidate.enabled = true;
     try {
       candidate.session = createPlaybackSession();
       candidate.session.connect(playbackContext(), candidate);
@@ -104,6 +108,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
 
   private void failed(Binding owner, Throwable failure) {
     HostDiagnostics.log(Log.ERROR, "无障碍宿主", "播放业务失败，已关闭当前会话", failure);
+    if (handover != null && handover.failed(owner, failure)) return;
     if (binding == owner) closeSession();
   }
 
@@ -113,6 +118,8 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
         previous != null
             && (PlaybackBridge.current() == previous || PlaybackBridge.current() == null);
     binding = null;
+    PlaybackHandover change = handover;
+    handover = null;
     if (registration != null) {
       try {
         registration.close();
@@ -121,15 +128,8 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       }
       registration = null;
     }
-    if (previous != null && previous.session != null) {
-      NativePlaybackSession retired = previous.session;
-      previous.session = null;
-      try {
-        retired.close();
-      } catch (Throwable failure) {
-        HostDiagnostics.log(Log.WARN, "无障碍宿主", "关闭播放业务失败", failure);
-      }
-    }
+    retire(previous);
+    if (change != null) change.disconnect();
     if (ownsForeground) foregroundRequested(false);
   }
 
@@ -149,14 +149,106 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     }
   }
 
-  private final class Binding implements AccessibilityBinding, PlaybackPort {
-    private NativePlaybackSession session;
+  /** 只在已验证候选的准备阶段调用；此连接串行交接，整组协调器另行检查其他组件的租约。 */
+  public final PlaybackHandover preparePlayback(
+      NativeLoader.Prepared source,
+      java.util.function.Supplier<NativePlaybackSession> factory,
+      PlaybackHandover.Listener listener) {
+    StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "播放准备必须在主线程登记");
+    if (handover != null
+        || !retired.isEmpty()
+        || !playbackCanReplace()
+        || !binding.session.supportsHandover()) return null;
+    PlaybackHandover change = new PlaybackHandover(this, listener);
+    handover = change;
+    try {
+      change.prepare(source.context(this), factory);
+    } catch (Throwable failure) {
+      change.cancel();
+      throw failure;
+    }
+    return change;
+  }
+
+  public final boolean playbackRetiring() {
+    return !retired.isEmpty();
+  }
+
+  boolean retiredInputIdle() {
+    return retired.stream().allMatch(value -> value.gestures == 0 && value.captures == 0);
+  }
+
+  void publish(Binding next) {
+    disablePlayback();
+    binding = next;
+    next.activationEpoch++;
+    next.enabled = true;
+    registration = PlaybackBridge.connect(next);
+  }
+
+  void disablePlayback() {
+    if (binding != null) {
+      binding.enabled = false;
+      binding.activationEpoch++;
+    }
+    if (registration != null) {
+      try {
+        registration.close();
+      } catch (Exception failure) {
+        HostDiagnostics.log(Log.WARN, "无障碍宿主", "释放播放连接失败", failure);
+      }
+      registration = null;
+    }
+  }
+
+  void retire(Binding value) {
+    if (value == null || value.session == null) return;
+    value.enabled = false;
+    value.activationEpoch++;
+    value.retiredSession = value.session;
+    value.session = null;
+    try {
+      value.retiredSession.close();
+    } catch (Throwable failure) {
+      value.closeFailed = true;
+      HostDiagnostics.log(Log.WARN, "无障碍宿主", "关闭播放业务失败，延后后续热更", failure);
+    }
+    retired.add(value);
+    if (!draining) {
+      draining = true;
+      main.post(this::drainRetired);
+    }
+  }
+
+  private void drainRetired() {
+    for (var iterator = retired.iterator(); iterator.hasNext(); ) {
+      Binding value = iterator.next();
+      if (value.closeFailed || value.gestures != 0 || value.captures != 0) continue;
+      try {
+        if (!value.retiredSession.released()) continue;
+        value.retiredSession = null;
+        iterator.remove();
+      } catch (Throwable failure) {
+        value.closeFailed = true;
+        HostDiagnostics.log(Log.WARN, "无障碍宿主", "检查退役业务失败，延后后续热更", failure);
+      }
+    }
+    // 关闭已明确失败的记录保留为阻断证据，不每 250ms 永久空转。
+    draining = retired.stream().anyMatch(value -> !value.closeFailed);
+    if (draining) main.postDelayed(this::drainRetired, 250);
+  }
+
+  final class Binding implements AccessibilityBinding, PlaybackPort {
+    NativePlaybackSession session;
+    NativePlaybackSession retiredSession;
+    boolean enabled, closeFailed;
+    volatile long activationEpoch;
     private int gestures;
     private int captures;
 
     @Override
     public boolean current() {
-      return binding == this;
+      return connected && enabled && binding == this && session != null;
     }
 
     void invoke(Runnable action) {
@@ -168,10 +260,19 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       }
     }
 
+    boolean current(long epoch) {
+      return activationEpoch == epoch && current();
+    }
+
+    void invoke(long epoch, Runnable action) {
+      if (current(epoch)) invoke(action);
+    }
+
     @Override
     public Bundle query(String kind) {
-      if (Looper.myLooper() == Looper.getMainLooper()) return queryOnMain(kind);
-      FutureTask<Bundle> task = new FutureTask<>(() -> queryOnMain(kind));
+      long epoch = activationEpoch;
+      if (Looper.myLooper() == Looper.getMainLooper()) return queryOnMain(kind, epoch);
+      FutureTask<Bundle> task = new FutureTask<>(() -> queryOnMain(kind, epoch));
       main.post(task);
       try {
         return task.get(1, TimeUnit.SECONDS);
@@ -183,8 +284,8 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       }
     }
 
-    private Bundle queryOnMain(String kind) {
-      if (!current()) return new Bundle();
+    private Bundle queryOnMain(String kind, long epoch) {
+      if (!current(epoch)) return new Bundle();
       try {
         return PlaybackValues.copy(session.query(kind));
       } catch (Throwable failure) {
@@ -195,14 +296,17 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
 
     @Override
     public void command(String action, Bundle arguments) {
+      long epoch = activationEpoch;
       Bundle data = PlaybackValues.copy(arguments);
-      if (Looper.myLooper() == Looper.getMainLooper()) invoke(() -> session.command(action, data));
-      else main.post(() -> invoke(() -> session.command(action, data)));
+      if (Looper.myLooper() == Looper.getMainLooper())
+        invoke(epoch, () -> session.command(action, data));
+      else main.post(() -> invoke(epoch, () -> session.command(action, data)));
     }
 
     @Override
     public boolean gesture(GestureDescription description, GestureCallback callback) {
       if (!current() || Looper.myLooper() != Looper.getMainLooper()) return false;
+      long epoch = activationEpoch;
       gestures++;
       boolean accepted = false;
       try {
@@ -213,13 +317,13 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
                   @Override
                   public void onCompleted(GestureDescription gesture) {
                     gestures--;
-                    invoke(() -> callback.completed(true));
+                    invoke(epoch, () -> callback.completed(true));
                   }
 
                   @Override
                   public void onCancelled(GestureDescription gesture) {
                     gestures--;
-                    invoke(() -> callback.completed(false));
+                    invoke(epoch, () -> callback.completed(false));
                   }
                 },
                 main);
@@ -240,7 +344,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       }
       captures++;
       try {
-        Api30.capture(NativeAccessibilityService.this, displayId, this, callback);
+        Api30.capture(NativeAccessibilityService.this, displayId, this, activationEpoch, callback);
       } catch (Throwable failure) {
         captures--;
         throw failure;
@@ -249,8 +353,10 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
 
     @Override
     public void foreground(boolean enabled) {
-      if (Looper.myLooper() == Looper.getMainLooper()) invoke(() -> foregroundRequested(enabled));
-      else main.post(() -> invoke(() -> foregroundRequested(enabled)));
+      long epoch = activationEpoch;
+      if (Looper.myLooper() == Looper.getMainLooper())
+        invoke(epoch, () -> foregroundRequested(enabled));
+      else main.post(() -> invoke(epoch, () -> foregroundRequested(enabled)));
     }
   }
 
@@ -260,6 +366,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
         NativeAccessibilityService service,
         int displayId,
         Binding owner,
+        long epoch,
         AccessibilityBinding.ScreenshotCallback callback) {
       service.takeScreenshot(
           displayId,
@@ -271,7 +378,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
               AccessibilityBinding.Frame frame =
                   new AccessibilityBinding.Frame(
                       result.getHardwareBuffer(), result.getColorSpace());
-              if (!owner.current()) {
+              if (!owner.current(epoch)) {
                 frame.close();
                 return;
               }
@@ -286,7 +393,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
             @Override
             public void onFailure(int code) {
               owner.captures--;
-              owner.invoke(() -> callback.failure(code));
+              owner.invoke(epoch, () -> callback.failure(code));
             }
           });
     }

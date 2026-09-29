@@ -27,6 +27,7 @@ import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.hot.contract.AccessibilityBinding
+import app.luoxianlv.hot.contract.NativePage
 import app.luoxianlv.hot.contract.NativePlaybackSession
 import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.service.DisplayStability
@@ -57,6 +58,14 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     private lateinit var binding: AccessibilityBinding
     @Volatile private var closed = false
+    private var active = false
+    private var monitoring = false
+    private var changeRevision = 0L
+    private var restoredFloating = false
+    private var handoverPrepared = false
+    private val current
+        get() = active && !closed && binding.current()
+
     private val recognitionJobs = AtomicInteger()
     private val remoteFixJobs = AtomicInteger()
     private val handler = Handler(Looper.getMainLooper())
@@ -115,6 +124,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private val monitorDisplay =
         object : Runnable {
             override fun run() {
+                if (!current) return
                 if (
                     (playing || preparing) &&
                         !recoveringDisplay &&
@@ -131,6 +141,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             override fun onDisplayRemoved(displayId: Int) = Unit
 
             override fun onDisplayChanged(displayId: Int) {
+                if (!current) return
+                changeRevision++
                 if (displayId == Display.DEFAULT_DISPLAY && ::floating.isInitialized)
                     floating.reposition()
                 if (
@@ -249,6 +261,19 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private val next = Runnable { drive() }
 
     override fun connect(context: Context, binding: AccessibilityBinding) {
+        initialize(context, binding)
+        active = true
+        prepareSong()
+        monitor()
+        if (repository.floatingEnabled)
+            handler.postDelayed(
+                { if (current && repository.floatingEnabled) showFloating(true) },
+                250,
+            )
+    }
+
+    private fun initialize(context: Context, binding: AccessibilityBinding) {
+        check(!closed && !::repository.isInitialized)
         attachBaseContext(context)
         this.binding = binding
         AppLog.init(this)
@@ -259,12 +284,123 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         keys = ConfigStore.load(this)
         speed = repository.speed
         floating = FloatingControls(this)
-        prepareSong()
+    }
+
+    private fun monitor() {
+        if (monitoring) return
         getSystemService(DisplayManager::class.java)
             .registerDisplayListener(displayListener, handler)
+        monitoring = true
         handler.post(monitorDisplay)
-        if (repository.floatingEnabled)
-            handler.postDelayed({ if (repository.floatingEnabled) showFloating(true) }, 250)
+    }
+
+    private fun stopMonitoring() {
+        handler.removeCallbacks(monitorDisplay)
+        if (!monitoring) return
+        monitoring = false
+        runCatching {
+            getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
+        }
+            .onFailure { AppLog.w(TAG, "释放显示监听失败", it) }
+    }
+
+    override fun supportsHandover() = true
+
+    override fun revision() =
+        changeRevision + if (::floating.isInitialized) floating.revision else 0L
+
+    override fun prepare(
+        context: Context,
+        binding: AccessibilityBinding,
+        state: Bundle,
+        ready: NativePage.Ready,
+    ) {
+        check(!binding.current()) { "候选播放会话不能提前获得系统输入" }
+        initialize(context, binding)
+        restoreState(state, ready, background = true)
+    }
+
+    override fun snapshot() =
+        Bundle().apply {
+            check(!closed && ::repository.isInitialized)
+            putInt("schema", 1)
+            putBundle("song", PlaybackWire.song(song))
+            putLong("position", positionMs)
+            putFloat("speed", speed)
+            putString("mode", pitchMode.name)
+            putBoolean("half", halfToneOn)
+            putBoolean("fixed", fixedKeys)
+            putBoolean("fixAttempted", fixAttemptedForSong)
+            putBoolean("floating", if (active) floatingVisible else restoredFloating)
+            putBundle("floatingState", floating.snapshot())
+            putString("error", error)
+        }
+
+    override fun restore(state: Bundle?, ready: NativePage.Ready) =
+        restoreState(state, ready, background = false)
+
+    private fun restoreState(state: Bundle?, ready: NativePage.Ready, background: Boolean) {
+        check(!closed && !active) { "必须先停用播放会话再恢复状态" }
+        handoverPrepared = false
+        songLoadJob?.cancel()
+        songLoadJob = scoreScope.launch {
+            try {
+                val prepared =
+                    withContext(if (background) ScoreWork.preview else ScoreWork.playback) {
+                        if (state != null) require(state.getInt("schema") == 1) { "播放状态版本不支持" }
+                        val selected =
+                            if (state == null) repository.selected()
+                            else
+                                PlaybackWire.song(
+                                    requireNotNull(state.getBundle("song")) { "播放快照缺少曲目" }
+                                )
+                        selected to PlaybackTimeline(selected.events, selected.bpm)
+                    }
+                val restoredSpeed = state?.getFloat("speed", 1f) ?: repository.speed
+                require(restoredSpeed.isFinite() && restoredSpeed in .5f..2f)
+                val mode = state?.getString("mode")?.let(PlayMode::valueOf) ?: PlayMode.NATURAL
+                song = prepared.first
+                timeline = prepared.second
+                baseMs = (state?.getLong("position") ?: 0L).coerceIn(0, durationMs)
+                speed = restoredSpeed
+                pitchMode = mode
+                halfToneOn = state?.getBoolean("half") ?: false
+                fixedKeys =
+                    state?.getBoolean("fixed")
+                        ?: ExperimentalOptions.fixedHarmonicaKeys(this@PlaybackSession)
+                fixAttemptedForSong = state?.getBoolean("fixAttempted") ?: false
+                restoredFloating = state?.getBoolean("floating") ?: repository.floatingEnabled
+                floating.restore(state?.getBundle("floatingState"))
+                error = state?.getString("error")
+                coordinateFrame = null
+                playing = false
+                preparing = false
+                handoverPrepared = true
+                ready.ready()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                ready.failed(failure)
+            }
+        }
+    }
+
+    override fun activate() {
+        check(!closed && !active && handoverPrepared && binding.current())
+        active = true
+        monitor()
+        // 恢复可见性不改用户持久化偏好，也不自动恢复刚才暂停的播放。
+        if (restoredFloating) floating.show()
+        binding.foreground(restoredFloating)
+    }
+
+    override fun deactivate() {
+        if (!active || closed) return
+        restoredFloating = floatingVisible
+        pauseNow()
+        active = false
+        stopMonitoring()
+        floating.hide()
     }
 
     override fun interrupt() = pause()
@@ -272,11 +408,9 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     override fun close() {
         if (closed) return
         closed = true
+        active = false
         scoreScope.cancel()
-        runCatching {
-            getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
-        }
-            .onFailure { AppLog.w(TAG, "释放显示监听失败", it) }
+        stopMonitoring()
         playing = false
         generation++
         handler.removeCallbacksAndMessages(null)
@@ -287,7 +421,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     override fun canReplace() =
-        !closed &&
+        current &&
             !playing &&
             !preparing &&
             !recoveringDisplay &&
@@ -296,6 +430,14 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             recognitionJobs.get() == 0 &&
             remoteFixJobs.get() == 0 &&
             (!::floating.isInitialized || !floating.interacting)
+
+    override fun released() =
+        closed &&
+            recognitionJobs.get() == 0 &&
+            remoteFixJobs.get() == 0 &&
+            scoreScope.coroutineContext[Job]?.isCompleted == true &&
+            recognitionExecutor.isTerminated &&
+            (!::floating.isInitialized || floating.released)
 
     override fun query(kind: String): Bundle =
         when (kind) {
@@ -327,7 +469,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         }
 
     override fun command(action: String, arguments: Bundle) {
-        if (closed) return
+        if (!current) return
         when (action) {
             "select" -> select(PlaybackWire.song(arguments))
             "play" -> play()
@@ -345,6 +487,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun select(selected: Song) {
+        if (!current) return
+        changeRevision++
         pause()
         song = selected
         fixAttemptedForSong = false
@@ -384,6 +528,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun toggle() {
+        if (!current) return
+        changeRevision++
         when {
             // 埋点：用户手动暂停演奏（seek/变速等内部调用 pause() 的路径不计）
             playing -> {
@@ -396,7 +542,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun play() {
-        if (closed) return
+        if (!current) return
+        changeRevision++
         if (!canStartPlayback()) {
             AppLog.log("忽略播放：距离手势中断不足 300 毫秒")
             return
@@ -538,6 +685,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     /** 设置切换时停止旧手势序列，下一次播放再采用新布局。 */
     fun reloadExperimentalOptions() {
+        if (!current) return
+        changeRevision++
         pause()
         fixedKeys = ExperimentalOptions.fixedHarmonicaKeys(this)
         coordinateFrame = null
@@ -639,6 +788,12 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun pause() {
+        if (!current) return
+        pauseNow()
+    }
+
+    private fun pauseNow() {
+        changeRevision++
         songLoad.pause()
         AppLog.log("暂停播放：播放中=$playing 准备中=$preparing")
         if (recoveringDisplay) {
@@ -658,6 +813,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun stop() {
+        if (!current) return
         // 埋点：通知栏「停止并关闭悬浮窗」等显式停止（播放中才计，避免与 toggle 暂停重复）
         if (playing) Analytics.logEvent(this, "play_stop")
         pause()
@@ -666,6 +822,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun seek(milliseconds: Long) {
+        if (!current) return
         val resume = playing
         pause()
         baseMs = milliseconds.coerceIn(0, durationMs)
@@ -673,6 +830,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun setSpeed(value: Float) {
+        if (!current) return
         val resume = playing
         pause()
         speed = value.coerceIn(.5f, 2f)
@@ -694,10 +852,14 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
      * 悬浮窗是本服务里的独立系统窗口，不跟着 Activity 重组， 所以主题变更得显式通知它（见 `FloatingControls.refreshTheme`）。
      */
     fun refreshFloatingTheme() {
+        if (!current) return
+        changeRevision++
         if (::floating.isInitialized) floating.refreshTheme()
     }
 
     fun showFloating(enabled: Boolean) {
+        if (!current) return
+        changeRevision++
         repository.floatingEnabled = enabled
         if (enabled) {
             floating.show()
@@ -709,6 +871,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     fun reloadConfig() {
+        if (!current) return
+        changeRevision++
         if (!fixedKeys) keys = ConfigStore.load(this)
     }
 
