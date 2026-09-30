@@ -7,6 +7,7 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.view.Display
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.Kv
@@ -24,12 +25,11 @@ import org.json.JSONObject
 /** 打包调试信息（日志/截图/布局/设备信息）成 ZIP 并通过 FileProvider 分享。 */
 object DebugExport {
     /** 只生成诊断包，不启动分享界面；导出前等待后台日志写入。 */
-    suspend fun create(context: Context): File =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            AppLog.init(context)
-            AppLog.flush()
-            AppLog.withSnapshot { export(context) }
-        }
+    suspend fun create(context: Context): File = BusinessJobs.io {
+        AppLog.init(context)
+        AppLog.flush()
+        AppLog.withSnapshot { export(context) }
+    }
 
     suspend fun exportAndShare(context: Context): Boolean {
         val file =

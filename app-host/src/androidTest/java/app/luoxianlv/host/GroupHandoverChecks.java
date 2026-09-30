@@ -20,8 +20,8 @@ final class GroupHandoverChecks {
   private final Instrumentation runner;
   private final Activity home;
   private final Consumer<String> click;
-  private final NativeLoader.Prepared next;
-  private final BusinessFactory factory;
+  private NativeLoader.Prepared next;
+  private BusinessFactory factory;
   private final Bootstrap.Source baseline;
   private final NativeAccessibilityService service;
   private Probe current;
@@ -74,8 +74,9 @@ final class GroupHandoverChecks {
     idle();
     try {
       check(next.classLoader() != baseline.prepared.classLoader(), "候选没有独立业务加载器");
-      Probe stale = prepare(factory);
+      Probe stale = prepare(false);
       ready(stale);
+      var candidateWork = holdCandidateWork();
       main(
           () -> {
             check(
@@ -84,13 +85,13 @@ final class GroupHandoverChecks {
             mainHost().updateHostState(new Bundle());
             check(!stale.group.valid() && !stale.group.commit(), "整组接受了已变化的页面快照");
           });
-      restore(stale);
-      step("通过：整组准备不提前发布，失效页面快照阻止全部提交");
+      restore(stale, candidateWork);
+      step("通过：整组准备不提前发布，失效页面快照阻止全部提交，预绘制候选工作实际退出后才完成取消");
 
       idle();
       AutoCloseable[] pin = new AutoCloseable[1];
       main(() -> pin[0] = mainHost().pinActive());
-      Probe trial = prepare(factory);
+      Probe trial = prepare(false);
       ready(trial);
       main(
           () -> {
@@ -123,6 +124,7 @@ final class GroupHandoverChecks {
       restore(trial);
       main(
           () -> {
+            assertRetired(next);
             check(
                 Bootstrap.source() == baseline && PlaybackBridge.current() == original,
                 "整组回退没有恢复来源或播放控制身份");
@@ -142,7 +144,7 @@ final class GroupHandoverChecks {
       step("通过：整组真实提交，旧页面保留到确认，回退保留最新导航与播放速度");
 
       idle();
-      Probe broken = prepare(new FaultFactory(factory));
+      Probe broken = prepare(true);
       ready(broken);
       main(
           () -> {
@@ -159,6 +161,7 @@ final class GroupHandoverChecks {
       restore(broken);
       main(
           () -> {
+            assertRetired(next);
             check(
                 Bootstrap.source() == baseline && PlaybackBridge.current() == original,
                 "页面激活失败后留下了部分新版");
@@ -176,7 +179,7 @@ final class GroupHandoverChecks {
             "第二个真实窗口未登记",
             () -> onMain(() -> Bootstrap.pages().size() == 2 && picker.hasWindowFocus()));
         idle();
-        Probe multi = prepare(factory);
+        Probe multi = prepare(false);
         ready(multi);
         main(
             () -> {
@@ -191,8 +194,20 @@ final class GroupHandoverChecks {
                     "交接丢失页面路由：" + page.route());
               }
               multi.group.finish();
-              check(multi.group.phase() == GroupHandover.Phase.FINISHED, "整组确认未完成");
+            });
+        await(
+            "整组确认后旧代际没有退出",
+            () ->
+                onMain(
+                    () -> {
+                      if (multi.group.phase() == GroupHandover.Phase.FINISHING)
+                        multi.group.finish();
+                      return multi.group.retired();
+                    }));
+        main(
+            () -> {
               check(session(original) == null, "整组确认后旧播放句柄仍保留业务实例");
+              assertRetired(baseline.prepared);
               for (var page : Bootstrap.pages())
                 check(field(page.host(), "previous") == null, "整组确认后仍保留没有租约的旧页面");
             });
@@ -218,15 +233,30 @@ final class GroupHandoverChecks {
     }
   }
 
-  private Probe prepare(BusinessFactory pages) {
+  private Probe prepare(boolean faulty) throws Exception {
     idle();
+    // 退役加载器不可复活；每次独立事务都创建新的业务代际。
+    var application = home.getApplication();
+    File root = new File(application.getNoBackupFilesDir(), "native-update");
+    next =
+        new NativeLoader(
+                application,
+                new ContentStore(root),
+                new ContentQuarantine(new File(root, "quarantine")),
+                1)
+            .prepareBaseline(BundledBaseline.prepare(application));
     Probe probe = new Probe();
     main(
         () -> {
+          try {
+            factory = next.factory();
+          } catch (Exception error) {
+            throw new AssertionError(error);
+          }
           probe.group =
               GroupHandover.prepare(
                   next,
-                  pages,
+                  faulty ? new FaultFactory(factory) : factory,
                   Bootstrap.pages(),
                   service,
                   Bootstrap.publication(next, factory),
@@ -244,6 +274,10 @@ final class GroupHandoverChecks {
   }
 
   private void restore(Probe probe) {
+    restore(probe, null);
+  }
+
+  private void restore(Probe probe, java.util.concurrent.CountDownLatch workRelease) {
     var finished = new java.util.concurrent.atomic.AtomicBoolean();
     var failure = new AtomicReference<Throwable>();
     main(
@@ -261,9 +295,44 @@ final class GroupHandoverChecks {
                     finished.set(true);
                   }
                 }));
+    try {
+      if (workRelease != null) {
+        SystemClock.sleep(300);
+        check(!finished.get(), "尚未提交的候选工作仍在执行就宣布取消完成");
+      }
+    } finally {
+      if (workRelease != null) workRelease.countDown();
+    }
     await("整组回退没有结束", finished::get);
     if (failure.get() != null) throw new AssertionError("整组回退失败", failure.get());
     current = null;
+  }
+
+  private java.util.concurrent.CountDownLatch holdCandidateWork() throws Exception {
+    var loader = next.classLoader();
+    var jobs = Class.forName("app.luoxianlv.business.BusinessJobs", true, loader);
+    var function = Class.forName("kotlin.jvm.functions.Function0", false, loader);
+    var began = new java.util.concurrent.CountDownLatch(1);
+    var release = new java.util.concurrent.CountDownLatch(1);
+    Object action =
+        java.lang.reflect.Proxy.newProxyInstance(
+            loader,
+            new Class<?>[] {function},
+            (proxy, method, arguments) -> {
+              if (method.getName().equals("invoke")) {
+                began.countDown();
+                check(release.await(20, java.util.concurrent.TimeUnit.SECONDS), "候选工作未获释放");
+                return Class.forName("kotlin.Unit", false, loader).getField("INSTANCE").get(null);
+              }
+              return null;
+            });
+    check(
+        (Boolean)
+            jobs.getMethod("thread", String.class, function)
+                .invoke(jobs.getField("INSTANCE").get(null), "预绘制代际工作验收", action),
+        "候选拒绝测试工作");
+    check(began.await(5, java.util.concurrent.TimeUnit.SECONDS), "候选测试工作没有开始");
+    return release;
   }
 
   private void idle() {
@@ -274,6 +343,7 @@ final class GroupHandoverChecks {
                 () ->
                     service.playbackCanReplace()
                         && !service.playbackRetiring()
+                        && Bootstrap.canAutoActivate()
                         && !Bootstrap.pages().isEmpty()
                         && Bootstrap.pages().stream().allMatch(page -> page.host().canStage())));
   }
@@ -285,6 +355,21 @@ final class GroupHandoverChecks {
       check(
           activePage(page.host()).getClass().getClassLoader() == expected,
           "页面代际不一致：" + page.route());
+  }
+
+  private void assertRetired(NativeLoader.Prepared prepared) {
+    if (android.os.Build.VERSION.SDK_INT >= 30) {
+      Object resources = field(prepared, "resources");
+      var loader = (android.content.res.loader.ResourcesLoader) field(resources, "loader");
+      check(loader.getProviders().isEmpty(), "退役模块仍持有资源提供器");
+    }
+    boolean rejected = false;
+    try {
+      prepared.context(home);
+    } catch (IllegalArgumentException expected) {
+      rejected = true;
+    }
+    check(rejected, "退役模块仍能创建业务上下文");
   }
 
   private PageSwapHost mainHost() {

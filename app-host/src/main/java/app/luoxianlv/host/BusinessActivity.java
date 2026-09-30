@@ -49,6 +49,7 @@ public abstract class BusinessActivity extends NativeHostActivity {
     this.session = session;
     source = null;
     Bootstrap.pageOpened(session, route());
+    session.post(Bootstrap::usageChanged);
   }
 
   @Override
@@ -65,6 +66,12 @@ public abstract class BusinessActivity extends NativeHostActivity {
   @Override
   protected void onResume() {
     super.onResume();
+    Bootstrap.usageChanged();
+  }
+
+  @Override
+  public void onWindowFocusChanged(boolean focused) {
+    super.onWindowFocusChanged(focused);
     Bootstrap.usageChanged();
   }
 

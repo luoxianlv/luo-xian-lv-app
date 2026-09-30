@@ -170,6 +170,18 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
       StrictJson.require(!blocked, "旧页面释放失败，禁止继续交接");
     }
 
+    boolean previousReleased() {
+      requireMain();
+      StrictJson.require(!blocked, "页面退出失败，禁止结束整组交接");
+      return original == null || original.disposed;
+    }
+
+    boolean candidateReleased() {
+      requireMain();
+      StrictJson.require(!blocked, "候选页面退出失败，禁止结束回退");
+      return slot.disposed;
+    }
+
     private void fail(String code, Throwable failure, boolean contentFailure) {
       if (reported || ended) return;
       reported = true;
@@ -675,8 +687,10 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
         releases.post(
             () -> {
               slot.pins--;
-              if (closed && slot.pins == 0) dispose(slot);
-              else if (slot == previous
+              if ((closed || slot.disposing) && slot.pins == 0) {
+                dispose(slot);
+                if (slot == previous) previous = null;
+              } else if (slot == previous
                   && !settling
                   && (active == null || (active.ticket == null && active.change == null)))
                 retirePrevious();

@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.core.score.ScoreParser
 import app.luoxianlv.data.Song
@@ -12,7 +13,6 @@ import app.luoxianlv.data.SongRepository
 import app.luoxianlv.ui.AppEvents
 import app.luoxianlv.ui.syncSelectionToService
 import app.luoxianlv.update.MidiCoreFixer
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 
 /**
  * 曲库筛选。
@@ -151,8 +150,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         return ServiceStatus(
             connected = service != null,
             // 服务已经在跑就必然已开启，省掉一次系统查询
-            accessibilityEnabled =
-                service != null || withContext(Dispatchers.IO) { accessibilityIsEnabled() },
+            accessibilityEnabled = service != null || BusinessJobs.io { accessibilityIsEnabled() },
             floatingVisible = service?.floatingVisible == true,
             error = service?.error,
             // 连接在业务初始化后发布；这里只取曲目 ID，不传递或解析谱面对象。
@@ -171,7 +169,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         refreshJob = viewModelScope.launch {
             try {
                 val (songs, hidden) =
-                    withContext(Dispatchers.IO) {
+                    BusinessJobs.io {
                         libraryMutex.withLock {
                             repository.songs() to repository.hiddenBuiltInCount()
                         }
@@ -249,7 +247,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     /** JSON 读写与谱面校验串行放在后台，主线程只更新界面。 */
     private fun changeLibrary(change: () -> String) = viewModelScope.launch {
         try {
-            val notice = withContext(Dispatchers.IO) { libraryMutex.withLock { change() } }
+            val notice = BusinessJobs.io { libraryMutex.withLock { change() } }
             refresh()
             _local.update { it.copy(notice = notice) }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -266,7 +264,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         MidiCoreFixer.fixSong(getApplication(), song) { ok ->
             val songs = repository.songs()
             // 回调在后台线程：服务 select 会碰悬浮窗视图，回主线程执行。
-            main.post {
+            BusinessJobs.post(main) {
                 // 服务可能持有旧 Song 实例，修好后让它也重新载入
                 if (ok) {
                     PlaybackConnection.instance?.let { service ->
@@ -292,17 +290,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         _local.update { it.copy(saving = true) }
         viewModelScope.launch {
             try {
-                val song =
-                    withContext(Dispatchers.IO) {
-                        libraryMutex.withLock {
-                            repository.add(
-                                title.ifBlank { original.title },
-                                score,
-                                ScoreParser.tempo(score, original.bpm),
-                                "简谱",
-                            )
-                        }
+                val song = BusinessJobs.io {
+                    libraryMutex.withLock {
+                        repository.add(
+                            title.ifBlank { original.title },
+                            score,
+                            ScoreParser.tempo(score, original.bpm),
+                            "简谱",
+                        )
                     }
+                }
                 refresh()
                 syncSelectionToService(song)
                 _local.update { it.copy(notice = "已另存为《${song.title}》") }

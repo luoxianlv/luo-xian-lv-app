@@ -114,6 +114,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation(libs.kotlin.stdlib)
     implementation(project(":hot-core"))
     implementation(project(":business-ui"))
     implementation(libs.material)

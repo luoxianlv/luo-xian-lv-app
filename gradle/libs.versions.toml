@@ -16,6 +16,7 @@ umengApm = "2.1.0"
 umengApmPlugin = "2.0.0"
 
 [libraries]
+kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }

@@ -243,6 +243,16 @@ public final class PlaybackHandover {
     owner.retire(previous);
   }
 
+  boolean previousReleased() {
+    requireMain();
+    return previous.released();
+  }
+
+  boolean candidateReleased() {
+    requireMain();
+    return next == null || next.released();
+  }
+
   public void cancel() {
     requireMain();
     if (!current()) return;

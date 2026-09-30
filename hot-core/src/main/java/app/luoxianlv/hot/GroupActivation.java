@@ -10,6 +10,10 @@ import java.util.concurrent.Executor;
 /** 一个已获许可的完整业务更新：后台落盘，主线程整组提交，所有参与者共用观察与恢复。 */
 public final class GroupActivation implements GroupHandover.Listener {
   public interface Environment {
+    default boolean workSafe() {
+      return true;
+    }
+
     List<GroupHandover.Page> pages();
 
     NativeAccessibilityService playback();
@@ -58,9 +62,11 @@ public final class GroupActivation implements GroupHandover.Listener {
   private final Runnable pulse = this::observe;
   private Phase phase = Phase.WAITING;
   private GroupHandover group;
+  private GroupHandover.Publication publication;
   private boolean checking, wasExposed, diskRestored, componentsRestored, recoveryFailed;
   private Throwable failure;
   private boolean confirmedFailure;
+  private long retirementStarted;
 
   public boolean contentFailure() {
     requireMain();
@@ -106,7 +112,8 @@ public final class GroupActivation implements GroupHandover.Listener {
               () -> {
                 List<GroupHandover.Page> pages = environment.pages();
                 NativeAccessibilityService playback = environment.playback();
-                if ((pages.isEmpty() && playback == null)
+                if (!environment.workSafe()
+                    || (pages.isEmpty() && playback == null)
                     || pages.stream().anyMatch(page -> !page.host().canStage())
                     || (playback != null
                         && (!playback.playbackCanReplace() || playback.playbackRetiring()))) return;
@@ -118,14 +125,9 @@ public final class GroupActivation implements GroupHandover.Listener {
                   stop(error, true);
                   return;
                 }
+                publication = environment.publication(prepared, factory);
                 group =
-                    GroupHandover.prepare(
-                        prepared,
-                        factory,
-                        pages,
-                        playback,
-                        environment.publication(prepared, factory),
-                        this);
+                    GroupHandover.prepare(prepared, factory, pages, playback, publication, this);
                 if (group == null) stop(new IllegalStateException("整组安全点已改变"), false);
               });
       if (!obtained || phase == Phase.WAITING) main.postDelayed(this::prepare, 125);
@@ -250,14 +252,21 @@ public final class GroupActivation implements GroupHandover.Listener {
 
   private void finish() {
     if (phase != Phase.FINALIZING) return;
-    if (!group.observing()) {
+    if (group.phase() != GroupHandover.Phase.FINISHING && !group.observing()) {
       // 健康落盘后新窗口可能还在准备，旧组仍保留到它提交首帧。
       main.removeCallbacks(pulse);
       main.postDelayed(pulse, 125);
       return;
     }
     try {
+      if (retirementStarted == 0) retirementStarted = android.os.SystemClock.elapsedRealtime();
       group.finish();
+      if (!group.retired()) {
+        if (android.os.SystemClock.elapsedRealtime() - retirementStarted >= 30000)
+          throw new IllegalStateException("旧代际后台工作未能退出，停止后续更新");
+        main.postDelayed(pulse, 125);
+        return;
+      }
       complete(Result.STABLE, null);
     } catch (Throwable error) {
       complete(Result.CLEANUP_FAILED, error);
@@ -291,8 +300,12 @@ public final class GroupActivation implements GroupHandover.Listener {
               });
         });
     if (group == null) {
-      componentsRestored = true;
-      restored();
+      try {
+        if (publication != null) publication.discardCandidate();
+      } catch (Throwable closing) {
+        addFailure(closing);
+      }
+      restoreUnstaged(android.os.SystemClock.elapsedRealtime());
       return;
     }
     try {
@@ -316,6 +329,24 @@ public final class GroupActivation implements GroupHandover.Listener {
       addFailure(restoring);
       restored();
     }
+  }
+
+  /** 创建页面之前取消也须退出已建立的进程钩子，不能绕过代际清理。 */
+  private void restoreUnstaged(long started) {
+    if (phase != Phase.RESTORING || componentsRestored) return;
+    try {
+      if (!recoveryFailed && publication != null && !publication.candidateReleased()) {
+        if (android.os.SystemClock.elapsedRealtime() - started >= 30000)
+          throw new IllegalStateException("未挂载候选的后台工作未能退出");
+        main.postDelayed(() -> restoreUnstaged(started), 125);
+        return;
+      }
+      if (publication == null) prepared.closeCallbacks();
+    } catch (Throwable closing) {
+      addFailure(closing);
+    }
+    componentsRestored = true;
+    restored();
   }
 
   private void addFailure(Throwable error) {

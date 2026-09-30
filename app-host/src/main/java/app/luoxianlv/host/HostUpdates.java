@@ -359,7 +359,10 @@ final class HostUpdates {
       var candidate = client.prepare(schema(), this::metered, () -> !active || blocked);
       var current = Bootstrap.source().prepared;
       boolean restart =
-          candidate != null && candidate.needsRestart(current.runtimeHash, current.runtimeAbi);
+          candidate != null
+              && (candidate.needsRestart(current.runtimeHash, current.runtimeAbi)
+                  || !Bootstrap.supportsLiveWork()
+                  || state.pendingRestart.current().equals(candidate.snapshot.manifest.snapshotId));
       if (restart) state.pendingRestart.record(state.store, candidate.snapshot);
       main.post(
           () -> {
@@ -410,6 +413,12 @@ final class HostUpdates {
       NativeLoader.Prepared prepared) {
     requireMain();
     if (!active || blocked || !Bootstrap.canAutoActivate()) {
+      try {
+        prepared.closeCallbacks();
+      } catch (Throwable closing) {
+        blocked = true;
+        Log.e("原生宿主", "取消候选资源释放失败，停止后续更新", closing);
+      }
       worker.execute(
           () -> {
             try {
@@ -446,6 +455,24 @@ final class HostUpdates {
 
                 @Override
                 public void finished(GroupActivation.Result result, Throwable failure) {
+                  if (failure instanceof app.luoxianlv.hot.contract.HandoverDeferred deferred
+                      && deferred.restartRequired)
+                    worker.execute(
+                        () -> {
+                          try {
+                            state.pendingRestart.record(state.store, candidate.snapshot);
+                          } catch (Exception error) {
+                            blocked = true;
+                            Log.e("原生宿主", "暂缓组合未能保存", error);
+                          }
+                        });
+                  if (failure instanceof app.luoxianlv.hot.contract.HandoverDeferred deferred
+                      && !deferred.restartRequired
+                      && (result == GroupActivation.Result.CANCELLED
+                          || result == GroupActivation.Result.ROLLED_BACK)) {
+                    pending = candidate;
+                    preparedAt = SystemClock.elapsedRealtime();
+                  }
                   if (result == GroupActivation.Result.RECOVERY_FAILED
                       || result == GroupActivation.Result.CLEANUP_FAILED) blocked = true;
                   group = null;
@@ -467,6 +494,12 @@ final class HostUpdates {
                 }
               });
     } catch (Throwable failure) {
+      try {
+        prepared.closeCallbacks();
+      } catch (Throwable closing) {
+        blocked = true;
+        failure.addSuppressed(closing);
+      }
       worker.execute(
           () -> {
             try {

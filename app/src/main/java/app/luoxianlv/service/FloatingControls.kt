@@ -18,6 +18,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import app.luoxianlv.R
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.business.playback.PlaybackSession
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.Song
@@ -433,7 +434,7 @@ class FloatingControls(private val service: PlaybackSession) {
         if (playlistJob?.isActive == true) return
         playlistJob = scope.launch {
             try {
-                val songs = withContext(Dispatchers.IO) { SongRepository(service).songs() }
+                val songs = BusinessJobs.io { SongRepository(service).songs() }
                 if (!destroyed && displayRequested) showPlaylist(songs)
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -31,6 +31,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String restartPrepared;
   private String coldRuntime;
   private String offlineRestart;
+  private boolean holdWork;
+  private app.luoxianlv.hot.contract.ProcessHooks heldProcess;
+  private final java.util.concurrent.CountDownLatch workRelease =
+      new java.util.concurrent.CountDownLatch(1);
 
   private void onMain(Runnable action) {
     var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -65,6 +69,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
     restartPrepared = arguments == null ? null : arguments.getString("restartPrepared");
     coldRuntime = arguments == null ? null : arguments.getString("coldRuntime");
     offlineRestart = arguments == null ? null : arguments.getString("offlineRestart");
+    holdWork = arguments != null && "true".equals(arguments.getString("holdWork"));
     start();
   }
 
@@ -283,6 +288,45 @@ public final class NativeAppInstrumentation extends Instrumentation {
       automation.setServiceInfo(info);
       previousServices = shell("settings get secure enabled_accessibility_services");
       previousEnabled = shell("settings get secure accessibility_enabled");
+      if (holdWork) {
+        await(
+            "持有工作前业务未就绪",
+            () -> {
+              try {
+                Bootstrap.source();
+                return true;
+              } catch (Exception notReady) {
+                return false;
+              }
+            });
+        var field = Bootstrap.class.getDeclaredField("process");
+        field.setAccessible(true);
+        heldProcess = (app.luoxianlv.hot.contract.ProcessHooks) field.get(null);
+        var loader = Bootstrap.source().prepared.classLoader();
+        var jobs = Class.forName("app.luoxianlv.business.BusinessJobs", true, loader);
+        var function = Class.forName("kotlin.jvm.functions.Function0", false, loader);
+        var began = new java.util.concurrent.CountDownLatch(1);
+        Object action =
+            java.lang.reflect.Proxy.newProxyInstance(
+                loader,
+                new Class<?>[] {function},
+                (proxy, method, args) -> {
+                  if (method.getName().equals("invoke")) {
+                    began.countDown();
+                    workRelease.await();
+                    return Class.forName("kotlin.Unit", false, loader)
+                        .getField("INSTANCE")
+                        .get(null);
+                  }
+                  return null;
+                });
+        require(
+            (Boolean)
+                jobs.getMethod("thread", String.class, function)
+                    .invoke(jobs.getField("INSTANCE").get(null), "代际工作验收", action),
+            "旧代际拒绝测试工作");
+        require(began.await(5, java.util.concurrent.TimeUnit.SECONDS), "测试工作未运行");
+      }
       main =
           startActivitySync(
               new Intent()
@@ -299,6 +343,11 @@ public final class NativeAppInstrumentation extends Instrumentation {
             }
           });
       Bootstrap.Source source = Bootstrap.source();
+      if (holdWork) {
+        SystemClock.sleep(3000);
+        require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
+        workRelease.countDown();
+      }
       if (offlineRestart != null) {
         require(app.luoxianlv.hot.HotManifest.validHash(offlineRestart), "离线目标身份无效");
         var startup = Bootstrap.startupState();
@@ -340,6 +389,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
         success = true;
       } else if (automaticSnapshot != null) {
         NativeAutomaticChecks.run(this, main, automaticSnapshot, receiptFault);
+        if (holdWork) require(heldProcess.released(), "健康确认后旧进程业务队列未退出");
         report.putString("stream", "通过：普通入口自动更新验收。\n");
         success = true;
       } else if (startupSnapshot != null) {
@@ -529,6 +579,53 @@ public final class NativeAppInstrumentation extends Instrumentation {
       }
     } catch (Throwable failure) {
       report.putString("stream", android.util.Log.getStackTraceString(failure));
+      if (holdWork && heldProcess != null) {
+        try {
+          var loader = Bootstrap.source().prepared.classLoader();
+          var jobs = Class.forName("app.luoxianlv.business.BusinessJobs", false, loader);
+          var gate =
+              (app.luoxianlv.hot.contract.WorkGate)
+                  jobs.getMethod("getGate").invoke(jobs.getField("INSTANCE").get(null));
+          report.putString(
+              "stream",
+              report.getString("stream")
+                  + "\n工作诊断：支持退出="
+                  + heldProcess.supportsRetirement()
+                  + "，可替换="
+                  + heldProcess.canReplace()
+                  + "，活动任务="
+                  + gate.activeCount()
+                  + "\n");
+          var updateField = Bootstrap.class.getDeclaredField("updates");
+          updateField.setAccessible(true);
+          Object updater = updateField.get(null);
+          if (updater != null)
+            for (String name : new String[] {"active", "busy", "blocked", "pending", "nextCheck"}) {
+              var statusField = updater.getClass().getDeclaredField(name);
+              statusField.setAccessible(true);
+              Object value = statusField.get(updater);
+              report.putString(
+                  "stream",
+                  report.getString("stream")
+                      + name
+                      + "="
+                      + (name.equals("pending") ? value != null : value)
+                      + "\n");
+            }
+          for (var thread : Thread.getAllStackTraces().entrySet()) {
+            if (thread.getKey().getName().matches("平台请求|同步曲库|曲目版本检查|单曲修复|代际工作验收|谱面播放准备|曲目时长"))
+              report.putString(
+                  "stream",
+                  report.getString("stream")
+                      + thread.getKey().getName()
+                      + ": "
+                      + java.util.Arrays.toString(thread.getValue())
+                      + "\n");
+          }
+        } catch (Throwable unavailable) {
+          report.putString("stream", report.getString("stream") + "工作诊断不可用\n");
+        }
+      }
       var diagnostic = new java.util.concurrent.atomic.AtomicReference<String>("主线程未及时返回");
       var collected = new java.util.concurrent.CountDownLatch(1);
       new android.os.Handler(android.os.Looper.getMainLooper())
@@ -583,6 +680,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
                 + "\n");
       }
     } finally {
+      workRelease.countDown();
       try {
         if (previousFloating != null && PlaybackBridge.current() != null) {
           Bundle restore = new Bundle();

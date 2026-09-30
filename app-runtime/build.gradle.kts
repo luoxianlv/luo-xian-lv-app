@@ -58,7 +58,7 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.navigation.compose)
     implementation(libs.fastkv)
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")
+    implementation(libs.kotlin.stdlib)
     releaseImplementation(libs.umeng.common)
     releaseImplementation(libs.umeng.asms)
     releaseImplementation(libs.umeng.uyumao)

@@ -31,9 +31,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.ui.components.decodeSampleSize
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 /**
  * 顶部插画候选资源名，按序取第一个能解码的。
@@ -123,7 +122,7 @@ private fun rememberHeroImage(): ImageBitmap? {
     val context = LocalContext.current
     val state =
         produceState<ImageBitmap?>(initialValue = null) {
-            value = withContext(Dispatchers.IO) { decodeHeroAsset(context) }
+            value = BusinessJobs.io { decodeHeroAsset(context) }
         }
     return state.value
 }

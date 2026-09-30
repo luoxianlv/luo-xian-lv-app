@@ -6,12 +6,11 @@ import android.os.Bundle
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class WallpaperImportModel(application: Application) : AndroidViewModel(application) {
     var busy by mutableStateOf(false)
@@ -51,13 +50,12 @@ class WallpaperImportModel(application: Application) : AndroidViewModel(applicat
         busy = true
         viewModelScope.launch {
             try {
-                val title =
-                    withContext(Dispatchers.IO) {
-                        val job = currentCoroutineContext()
-                        WallpaperProjectStore.import(getApplication(), uri, false) {
-                            job.ensureActive()
-                        }
+                val title = BusinessJobs.io {
+                    val job = currentCoroutineContext()
+                    WallpaperProjectStore.import(getApplication(), uri, false) {
+                        job.ensureActive()
                     }
+                }
                 success = true
                 message = "已导入：$title"
             } catch (error: Exception) {

@@ -92,6 +92,8 @@ public final class Bootstrap {
         && activation == null
         && (updates == null || !updates.coldPending())
         && !updateBlocked
+        && process != null
+        && process.canReplace()
         && (!PAGES.isEmpty() || playback != null)
         && PAGES.keySet().stream().allMatch(PageSwapHost::canStage)
         && (playback == null || (playback.playbackCanReplace() && !playback.playbackRetiring()));
@@ -100,6 +102,10 @@ public final class Bootstrap {
   static boolean diagnosticsAllowed() {
     ProcessHooks selected = process;
     return selected != null && selected.diagnosticsAllowed();
+  }
+
+  static boolean supportsLiveWork() {
+    return process != null && process.supportsRetirement();
   }
 
   public static boolean initialCreation(Runnable create) {
@@ -137,6 +143,11 @@ public final class Bootstrap {
             ticket,
             prepared,
             new GroupActivation.Environment() {
+              @Override
+              public boolean workSafe() {
+                return process != null && process.canReplace();
+              }
+
               @Override
               public List<GroupHandover.Page> pages() {
                 return Bootstrap.pages();
@@ -206,14 +217,33 @@ public final class Bootstrap {
       throw new IllegalStateException("业务来源切换必须在主线程");
     Source previous = source();
     ProcessHooks previousProcess = process;
+    // 预绘制页也会启动 I/O；先取得本代退出钩子，但只在正式提交时初始化进程业务。
+    ProcessHooks candidateProcess = factory.process(prepared.context(application));
     return new GroupHandover.Publication() {
       private final Source candidate = new Source(prepared, factory);
-      private ProcessHooks candidateProcess;
+      private final NativeAccessibilityService previousPlayback = playback;
+      private boolean oldFrozen;
+      private boolean candidateClosed;
+
+      private void closeCandidate() {
+        if (candidateProcess == null || candidateClosed) return;
+        candidateClosed = true;
+        candidateProcess.close();
+      }
+
+      @Override
+      public boolean canCommit() {
+        return !oldFrozen && previousProcess.canReplace();
+      }
 
       @Override
       public void selectCandidate() {
         if (source != previous) throw new IllegalStateException("业务来源已改变");
-        candidateProcess = factory.process(prepared.context(application));
+        if (!candidateProcess.supportsRetirement())
+          throw new app.luoxianlv.hot.contract.HandoverDeferred("候选业务缺少代际退出协议", true);
+        if (!previousProcess.quiesce())
+          throw new app.luoxianlv.hot.contract.HandoverDeferred("旧代际还有后台工作");
+        oldFrozen = true;
         source = candidate;
         process = candidateProcess;
         app.luoxianlv.service.PlaybackForegroundService.businessChanged();
@@ -228,8 +258,10 @@ public final class Bootstrap {
         process = previousProcess;
         app.luoxianlv.service.PlaybackForegroundService.businessChanged();
         try {
-          if (candidateProcess != null) candidateProcess.close();
+          closeCandidate();
         } finally {
+          previousProcess.resumeWork();
+          oldFrozen = false;
           previousProcess.initialize();
         }
       }
@@ -237,6 +269,28 @@ public final class Bootstrap {
       @Override
       public void finish() {
         previousProcess.close();
+      }
+
+      @Override
+      public boolean released() {
+        if (!previousProcess.released()
+            || (previousPlayback != null && previousPlayback.playbackRetiring())) return false;
+        previous.prepared.closeCallbacks();
+        return true;
+      }
+
+      @Override
+      public void discardCandidate() {
+        closeCandidate();
+      }
+
+      @Override
+      public boolean candidateReleased() {
+        if ((candidateProcess != null && !candidateProcess.released())
+            || (playback != null && playback.playbackRetiring())
+            || (previousPlayback != null && previousPlayback.playbackRetiring())) return false;
+        prepared.closeCallbacks();
+        return true;
       }
     };
   }

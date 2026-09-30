@@ -2,6 +2,7 @@ package app.luoxianlv.wallpaper.data
 
 import android.content.Context
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.net.HttpURLConnection
@@ -40,109 +41,107 @@ object DefaultWallpaper {
         prefs(context).edit().putBoolean("skip_default_download", true).apply()
     }
 
-    suspend fun download(context: Context, onProgress: (Long, Long) -> Unit) =
-        withContext(Dispatchers.IO) {
-            downloadLock.withLock {
-                if (installed(context)) return@withLock
-                val job = currentCoroutineContext()
-                val manifestConnection =
-                    open("${BuildConfig.UPDATE_BASE_URL.trimEnd('/')}/api/wallpapers/default")
-                val metadata =
-                    try {
-                        checkResponse(manifestConnection)
-                        val bytes =
-                            manifestConnection.inputStream.use { it.readBytesLimited(64 * 1024) }
-                        JSONObject(bytes.toString(Charsets.UTF_8))
-                    } finally {
-                        manifestConnection.disconnect()
-                    }
-                val size = metadata.getLong("size")
-                val sha = metadata.getString("sha256")
-                require(size in 1..256L * 1024 * 1024 && sha.matches(Regex("[0-9a-f]{64}"))) {
-                    "壁纸下载资料无效"
-                }
-                val url = URL(metadata.getString("url"))
-                require(
-                    url.protocol == "https" &&
-                        url.host == "oss-luoxianlv.admilk.cn" &&
-                        url.userInfo == null
-                ) {
-                    "壁纸下载地址无效"
-                }
-                val archive = File(AppStorage.imports(context), "default-wallpaper.download")
-                val destination = folder(context)
-                val staging = File(destination.parentFile, ".install-$ID")
+    suspend fun download(context: Context, onProgress: (Long, Long) -> Unit) = BusinessJobs.io {
+        downloadLock.withLock {
+            if (installed(context)) return@withLock
+            val job = currentCoroutineContext()
+            val manifestConnection =
+                open("${BuildConfig.UPDATE_BASE_URL.trimEnd('/')}/api/wallpapers/default")
+            val metadata =
                 try {
-                    require(archive.parentFile!!.usableSpace > size + 32L * 1024 * 1024) {
-                        "存储空间不足"
-                    }
-                    val connection = open(url.toString())
-                    try {
-                        checkResponse(connection)
-                        val digest = MessageDigest.getInstance("SHA-256")
-                        var received = 0L
-                        var lastPercent = -1L
-                        connection.inputStream.use { input ->
-                            archive.outputStream().use { output ->
-                                val buffer = ByteArray(65536)
-                                while (true) {
-                                    job.ensureActive()
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    received += count
-                                    require(received <= size) { "壁纸文件大小异常" }
-                                    output.write(buffer, 0, count)
-                                    digest.update(buffer, 0, count)
-                                    val percent = received * 100 / size
-                                    if (percent != lastPercent) {
-                                        lastPercent = percent
-                                        withContext(Dispatchers.Main) { onProgress(received, size) }
-                                    }
+                    checkResponse(manifestConnection)
+                    val bytes =
+                        manifestConnection.inputStream.use { it.readBytesLimited(64 * 1024) }
+                    JSONObject(bytes.toString(Charsets.UTF_8))
+                } finally {
+                    manifestConnection.disconnect()
+                }
+            val size = metadata.getLong("size")
+            val sha = metadata.getString("sha256")
+            require(size in 1..256L * 1024 * 1024 && sha.matches(Regex("[0-9a-f]{64}"))) {
+                "壁纸下载资料无效"
+            }
+            val url = URL(metadata.getString("url"))
+            require(
+                url.protocol == "https" &&
+                    url.host == "oss-luoxianlv.admilk.cn" &&
+                    url.userInfo == null
+            ) {
+                "壁纸下载地址无效"
+            }
+            val archive = File(AppStorage.imports(context), "default-wallpaper.download")
+            val destination = folder(context)
+            val staging = File(destination.parentFile, ".install-$ID")
+            try {
+                require(archive.parentFile!!.usableSpace > size + 32L * 1024 * 1024) {
+                    "存储空间不足"
+                }
+                val connection = open(url.toString())
+                try {
+                    checkResponse(connection)
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var received = 0L
+                    var lastPercent = -1L
+                    connection.inputStream.use { input ->
+                        archive.outputStream().use { output ->
+                            val buffer = ByteArray(65536)
+                            while (true) {
+                                job.ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                received += count
+                                require(received <= size) { "壁纸文件大小异常" }
+                                output.write(buffer, 0, count)
+                                digest.update(buffer, 0, count)
+                                val percent = received * 100 / size
+                                if (percent != lastPercent) {
+                                    lastPercent = percent
+                                    withContext(Dispatchers.Main) { onProgress(received, size) }
                                 }
                             }
                         }
-                        require(
-                            received == size &&
-                                digest.digest().joinToString("") { "%02x".format(it) } == sha
-                        ) {
-                            "壁纸文件校验失败，请重试"
-                        }
-                    } finally {
-                        connection.disconnect()
                     }
-                    job.ensureActive()
-                    if (staging.exists()) check(staging.deleteRecursively()) { "无法清理未完成的壁纸" }
-                    check(staging.mkdirs()) { "无法准备壁纸目录" }
-                    WallpaperArchive.extract(archive, staging) { job.ensureActive() }
-                    val projectFile = File(staging, "project.json")
-                    require(projectFile.isFile && projectFile.length() <= 1024 * 1024) {
-                        "壁纸缺少项目资料"
-                    }
-                    val project = JSONObject(projectFile.readText(Charsets.UTF_8))
                     require(
-                        project.optString("type").lowercase(java.util.Locale.ROOT) in
-                            setOf("video", "scene", "image", "web", "gif")
+                        received == size &&
+                            digest.digest().joinToString("") { "%02x".format(it) } == sha
                     ) {
-                        "壁纸类型不支持"
+                        "壁纸文件校验失败，请重试"
                     }
-                    require(WallpaperArchive.resolve(staging, project.getString("file")) != null) {
-                        "壁纸入口文件缺失"
-                    }
-                    require(!File(staging, ".root").exists()) { "壁纸包含保留文件" }
-                    File(staging, ".root").writeText("", Charsets.UTF_8)
-                    job.ensureActive()
-                    if (installed(context)) return@withLock
-                    // 本下载器只接管固定默认项目目录，不覆盖用户导入的其他项目。
-                    if (destination.exists())
-                        check(destination.deleteRecursively()) { "无法清理未完成的默认壁纸" }
-                    check(staging.renameTo(destination)) { "无法安装壁纸" }
-                    app.luoxianlv.debug.AppLog.i("壁纸", "默认壁纸下载完成，已校验并安装")
                 } finally {
-                    archive.delete()
-                    staging.deleteRecursively()
+                    connection.disconnect()
                 }
+                job.ensureActive()
+                if (staging.exists()) check(staging.deleteRecursively()) { "无法清理未完成的壁纸" }
+                check(staging.mkdirs()) { "无法准备壁纸目录" }
+                WallpaperArchive.extract(archive, staging) { job.ensureActive() }
+                val projectFile = File(staging, "project.json")
+                require(projectFile.isFile && projectFile.length() <= 1024 * 1024) {
+                    "壁纸缺少项目资料"
+                }
+                val project = JSONObject(projectFile.readText(Charsets.UTF_8))
+                require(
+                    project.optString("type").lowercase(java.util.Locale.ROOT) in
+                        setOf("video", "scene", "image", "web", "gif")
+                ) {
+                    "壁纸类型不支持"
+                }
+                require(WallpaperArchive.resolve(staging, project.getString("file")) != null) {
+                    "壁纸入口文件缺失"
+                }
+                require(!File(staging, ".root").exists()) { "壁纸包含保留文件" }
+                File(staging, ".root").writeText("", Charsets.UTF_8)
+                job.ensureActive()
+                if (installed(context)) return@withLock
+                // 本下载器只接管固定默认项目目录，不覆盖用户导入的其他项目。
+                if (destination.exists()) check(destination.deleteRecursively()) { "无法清理未完成的默认壁纸" }
+                check(staging.renameTo(destination)) { "无法安装壁纸" }
+                app.luoxianlv.debug.AppLog.i("壁纸", "默认壁纸下载完成，已校验并安装")
+            } finally {
+                archive.delete()
+                staging.deleteRecursively()
             }
         }
+    }
 
     private fun open(url: String) =
         (URL(url).openConnection() as HttpURLConnection).apply {

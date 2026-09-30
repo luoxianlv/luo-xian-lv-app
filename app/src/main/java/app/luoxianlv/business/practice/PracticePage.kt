@@ -13,6 +13,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import app.luoxianlv.audio.HarmonicaSampler
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.business.ui.ViewPage
 import app.luoxianlv.debug.AppLog
@@ -21,10 +22,8 @@ import app.luoxianlv.ui.practice.*
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import app.luoxianlv.wallpaper.render.PracticeBackdrop
 import app.luoxianlv.wallpaper.render.PreparedWallpaper
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /** 演奏和渲染属于业务代际；只有实际展示的代际能持有播放入口和窗口设置。 */
 class PracticePage : ViewPage() {
@@ -92,7 +91,7 @@ class PracticePage : ViewPage() {
         }
         lifecycleScope.launch {
             try {
-                loadedSamples = withContext(Dispatchers.IO) { HarmonicaSampler.load(pageContext) }
+                loadedSamples = BusinessJobs.io { HarmonicaSampler.load(pageContext) }
                 while (!started && !ending) delay(50)
                 if (ending) return@launch
                 var lastSize = Triple(0, 0, -1)

@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
 import app.luoxianlv.business.ui.PageReplacementGuard
 import app.luoxianlv.business.ui.rememberPageLauncher
@@ -25,11 +26,9 @@ import app.luoxianlv.ui.components.ImportFilePicker
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.ui.theme.OnBackdropContent
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Unit) {
@@ -43,7 +42,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
     var error by remember { mutableStateOf<String?>(null) }
     var minute by remember { mutableStateOf(WallpaperProjectStore.minute(context)) }
     suspend fun refresh() {
-        entries = withContext(Dispatchers.IO) { WallpaperProjectStore.entries(context) }
+        entries = BusinessJobs.io { WallpaperProjectStore.entries(context) }
     }
     val requestWallpaper = rememberWallpaperRequest { scope.launch { refresh() } }
     LaunchedEffect(Unit) {
@@ -62,7 +61,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
         busy = true
         scope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                BusinessJobs.io {
                     val job = currentCoroutineContext()
                     WallpaperProjectStore.import(context, uri, false) { job.ensureActive() }
                 }

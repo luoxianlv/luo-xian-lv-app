@@ -11,11 +11,26 @@ public final class GroupHandover {
   public record Page(PageSwapHost host, String route) {}
 
   public interface Publication {
+    default boolean canCommit() {
+      return true;
+    }
+
     void selectCandidate();
 
     void restorePrevious();
 
     default void finish() {}
+
+    default boolean released() {
+      return true;
+    }
+
+    /** 页面恢复后关闭候选；准备取消也会执行，不能留下候选注册的进程监听。 */
+    default void discardCandidate() {}
+
+    default boolean candidateReleased() {
+      return true;
+    }
   }
 
   public interface Listener {
@@ -42,6 +57,14 @@ public final class GroupHandover {
 
     void finish();
 
+    default boolean previousReleased() {
+      return true;
+    }
+
+    default boolean candidateReleased() {
+      return true;
+    }
+
     default boolean observing() {
       return true;
     }
@@ -50,6 +73,7 @@ public final class GroupHandover {
   }
 
   private final List<Part> parts = new ArrayList<>();
+  private final List<Part> detached = new ArrayList<>();
   private final java.util.Map<PageSwapHost, Part> windows = new java.util.IdentityHashMap<>();
   private final NativeLoader.Prepared source;
   private PlaybackHandover watchedPlayback;
@@ -116,7 +140,11 @@ public final class GroupHandover {
       public void failed(
           PageSwapHost.Change change, String code, Throwable failure, boolean contentFailure) {
         if (code.equals("page_closed") && phase == Phase.TRIAL) {
-          parts.remove(windows.remove(host));
+          Part closed = windows.remove(host);
+          if (closed != null) {
+            parts.remove(closed);
+            detached.add(closed);
+          }
           return;
         }
         fail(
@@ -143,6 +171,7 @@ public final class GroupHandover {
         if (watchedPlayback != change) return;
         if (phase == Phase.TRIAL) {
           parts.remove(playbackPart);
+          detached.add(playbackPart);
           watchedPlayback = null;
           playbackPart = null;
         } else topologyChanged();
@@ -177,6 +206,16 @@ public final class GroupHandover {
           @Override
           public void finish() {
             change.finish();
+          }
+
+          @Override
+          public boolean previousReleased() {
+            return change.previousReleased();
+          }
+
+          @Override
+          public boolean candidateReleased() {
+            return change.candidateReleased();
           }
 
           @Override
@@ -236,6 +275,16 @@ public final class GroupHandover {
           public void input(boolean allowed) {
             host.groupInput(allowed);
           }
+
+          @Override
+          public boolean previousReleased() {
+            return change.previousReleased();
+          }
+
+          @Override
+          public boolean candidateReleased() {
+            return change.candidateReleased();
+          }
         };
     windows.put(host, part);
     parts.add(part);
@@ -287,7 +336,10 @@ public final class GroupHandover {
 
   public boolean valid() {
     requireMain();
-    return phase == Phase.READY && !failureReported && parts.stream().allMatch(Part::valid);
+    return phase == Phase.READY
+        && !failureReported
+        && publication.canCommit()
+        && parts.stream().allMatch(Part::valid);
   }
 
   /** 上层在 controller.expose 的同一临界区调用；任何失败均由上层统一触发 rollback。 */
@@ -299,7 +351,7 @@ public final class GroupHandover {
       try {
         publication.selectCandidate();
       } catch (Throwable failure) {
-        fail(failure, true);
+        fail(failure, !(failure instanceof app.luoxianlv.hot.contract.HandoverDeferred));
         throw failure;
       }
       for (Part part : parts) if (!part.commit()) throw new IllegalStateException("组件状态在提交期间改变");
@@ -332,18 +384,12 @@ public final class GroupHandover {
     Runnable complete =
         () -> {
           if (remaining[0] != 0) return;
-          phase = Phase.FINISHED;
-          if (failures.isEmpty()) parts.forEach(part -> part.input(true));
-          parts.clear();
-          windows.clear();
-          watchedPlayback = null;
-          playbackPart = null;
-          if (failures.isEmpty()) completion.ready();
-          else {
-            IllegalStateException failure = new IllegalStateException("部分组件恢复失败");
-            failures.forEach(failure::addSuppressed);
-            completion.failed(failure);
+          try {
+            publication.discardCandidate();
+          } catch (Throwable error) {
+            failures.add(error);
           }
+          awaitCandidateRetirement(completion, failures, android.os.SystemClock.elapsedRealtime());
         };
     List<Part> restoring = new ArrayList<>(parts);
     java.util.Collections.reverse(restoring);
@@ -377,15 +423,55 @@ public final class GroupHandover {
     if (restoring.isEmpty()) complete.run();
   }
 
+  private void awaitCandidateRetirement(
+      NativePage.Ready completion, List<Throwable> failures, long started) {
+    if (phase != Phase.RESTORING) return;
+    if (failures.isEmpty()) {
+      try {
+        if (!parts.stream().allMatch(Part::candidateReleased)
+            || !detached.stream().allMatch(Part::candidateReleased)
+            || !publication.candidateReleased()) {
+          if (android.os.SystemClock.elapsedRealtime() - started >= 30000)
+            throw new IllegalStateException("回退候选的后台工作未能退出，停止后续更新");
+          new android.os.Handler(Looper.getMainLooper())
+              .postDelayed(() -> awaitCandidateRetirement(completion, failures, started), 125);
+          return;
+        }
+      } catch (Throwable error) {
+        failures.add(error);
+      }
+    }
+    phase = Phase.FINISHED;
+    if (failures.isEmpty()) parts.forEach(part -> part.input(true));
+    parts.clear();
+    detached.clear();
+    windows.clear();
+    watchedPlayback = null;
+    playbackPart = null;
+    if (failures.isEmpty()) completion.ready();
+    else {
+      IllegalStateException failure = new IllegalStateException("部分组件恢复或候选退出失败");
+      failures.forEach(failure::addSuppressed);
+      completion.failed(failure);
+    }
+  }
+
   public void finish() {
     requireMain();
-    StrictJson.require(phase == Phase.TRIAL && !failureReported, "整组尚未成功曝光或已经发生故障");
+    StrictJson.require(
+        (phase == Phase.TRIAL || phase == Phase.FINISHING) && !failureReported, "整组尚未成功曝光或已经发生故障");
     // 任一释放失败保留错误，由上层阻断后续代际，不将部分收尾伪装成成功。
-    phase = Phase.FINISHING;
     try {
-      for (Part part : parts) part.finish();
-      publication.finish();
+      if (phase == Phase.TRIAL) {
+        phase = Phase.FINISHING;
+        for (Part part : parts) part.finish();
+        publication.finish();
+      }
+      if (!parts.stream().allMatch(Part::previousReleased)
+          || !detached.stream().allMatch(Part::previousReleased)
+          || !publication.released()) return;
       parts.clear();
+      detached.clear();
       windows.clear();
       watchedPlayback = null;
       playbackPart = null;
@@ -394,6 +480,11 @@ public final class GroupHandover {
       fail(failure, false);
       throw failure;
     }
+  }
+
+  public boolean retired() {
+    requireMain();
+    return phase == Phase.FINISHED;
   }
 
   /** 准备期间新增/关闭窗口或系统连接时作废整个快照，不能遗漏新参与者。 */

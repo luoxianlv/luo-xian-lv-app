@@ -7,6 +7,7 @@ import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import app.luoxianlv.business.BusinessJobs
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
@@ -27,6 +28,7 @@ class HarmonicaSampler(
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
     @Volatile private var running = true
+    @Volatile private var closed = false
     private val track =
         AudioTrack.Builder()
             .setAudioAttributes(attributes)
@@ -53,12 +55,21 @@ class HarmonicaSampler(
     private val worker: Thread
 
     init {
-        check(track.state == AudioTrack.STATE_INITIALIZED) { "无法初始化音频输出" }
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            track.release()
+            error("无法初始化音频输出")
+        }
+        val lease =
+            BusinessJobs.gate.retain()
+                ?: run {
+                    track.release()
+                    error("本代音频已退役")
+                }
         worker =
             Thread(
                     {
-                        Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                         try {
+                            Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                             track.play()
                             val buffer = ShortArray(240)
                             while (running) {
@@ -80,16 +91,34 @@ class HarmonicaSampler(
                                 }
                             }
                         } catch (_: Exception) {
-                            if (running) main.post { onInterrupted() }
+                            if (running)
+                                BusinessJobs.post(main) {
+                                    if (!closed) onInterrupted()
+                                }
                         } finally {
                             running = false
-                            runCatching { track.stop() }
-                            track.release()
+                            try {
+                                runCatching { track.stop() }
+                                track.release()
+                            } finally {
+                                lease.close()
+                            }
                         }
                     },
                     "harmonica-output",
                 )
-                .apply { start() }
+                .apply {
+                    try {
+                        start()
+                    } catch (failure: Throwable) {
+                        try {
+                            track.release()
+                        } finally {
+                            lease.close()
+                        }
+                        throw failure
+                    }
+                }
     }
 
     fun noteOn(midi: Int): Boolean {
@@ -104,6 +133,7 @@ class HarmonicaSampler(
     }
 
     override fun close() {
+        closed = true
         running = false
         // 暂停用于唤醒阻塞写入；音轨仅由输出线程释放。
         runCatching {

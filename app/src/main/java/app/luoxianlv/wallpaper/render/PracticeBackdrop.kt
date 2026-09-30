@@ -8,6 +8,7 @@ import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.Toast
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import kotlinx.coroutines.*
@@ -37,14 +38,13 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     init {
         addView(posterView, LayoutParams(-1, -1))
         previewScope.launch {
-            project =
-                withContext(Dispatchers.IO) {
-                    WallpaperProjectStore.root(context)
-                }
+            project = BusinessJobs.io {
+                WallpaperProjectStore.root(context)
+            }
             if (closed) return@launch
             initialized = true
             if (renderingRequested) startRendering()
-            val preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, project) }
+            val preview = BusinessJobs.io { WallpaperPreview.load(context, project) }
             if (!closed && renderState != "ready") {
                 posterView.setImageDrawable(preview)
                 if (!suspended) (preview as? Animatable)?.start()
@@ -158,7 +158,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
         AppLog.w("壁纸", "渲染失败，切换到预览背景：$reason")
         releaseWeb()
         previewScope.launch {
-            val preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, project) }
+            val preview = BusinessJobs.io { WallpaperPreview.load(context, project) }
             if (!closed && renderState == "error") {
                 posterView.setImageDrawable(preview)
                 if (!suspended) (preview as? Animatable)?.start()

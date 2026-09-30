@@ -126,7 +126,7 @@ dependencies {
     compileOnly(libs.lifecycle.runtime.compose)
     compileOnly(libs.navigation.compose)
     compileOnly(libs.fastkv)
-    compileOnly("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")
+    compileOnly(libs.kotlin.stdlib)
     "releaseCompileOnly"(libs.umeng.common)
     "releaseCompileOnly"(libs.umeng.asms)
     "releaseCompileOnly"(libs.umeng.uyumao)

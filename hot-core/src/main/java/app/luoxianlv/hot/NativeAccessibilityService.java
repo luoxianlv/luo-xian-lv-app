@@ -294,6 +294,11 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     private int gestures;
     private int captures;
 
+    boolean released() {
+      StrictJson.require(!closeFailed, "播放业务退出失败，禁止结束整组交接");
+      return session == null && retiredSession == null && gestures == 0 && captures == 0;
+    }
+
     @Override
     public boolean current() {
       return connected && enabled && binding == this && session != null;

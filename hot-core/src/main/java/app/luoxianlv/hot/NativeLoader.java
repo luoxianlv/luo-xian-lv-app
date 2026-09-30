@@ -60,6 +60,7 @@ public final class NativeLoader {
     public final File resourceRoot;
     private final String identity;
     private ModuleApplication moduleApplication;
+    private boolean retired;
 
     Prepared(
         HotManifest manifest,
@@ -108,6 +109,7 @@ public final class NativeLoader {
     /** 构造业务对象可能建立主线程生命周期，必须由宿主在主线程调用。 */
     public NativePage instantiate() throws Exception {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "业务页面必须在主线程创建");
+      requireActive();
       markRuntimeUsed();
       Object value = entry.getDeclaredConstructor().newInstance();
       return value instanceof BusinessFactory
@@ -117,6 +119,7 @@ public final class NativeLoader {
 
     public BusinessFactory factory() throws Exception {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "业务工厂必须在主线程创建");
+      requireActive();
       markRuntimeUsed();
       return entry.asSubclass(BusinessFactory.class).getDeclaredConstructor().newInstance();
     }
@@ -133,6 +136,18 @@ public final class NativeLoader {
 
     public ClassLoader classLoader() {
       return loader;
+    }
+
+    /** 调用者先证明页面/会话与工作队列退出；此处只解除本代应用监听。 */
+    public synchronized void closeCallbacks() {
+      StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "代际监听必须在主线程释放");
+      retired = true;
+      if (moduleApplication != null) moduleApplication.closeCallbacks();
+      resources.close();
+    }
+
+    private void requireActive() {
+      StrictJson.require(!retired, "已退役模块不能重新创建业务或上下文");
     }
 
     public PageTarget page(String route, BusinessFactory factory) {
@@ -157,6 +172,7 @@ public final class NativeLoader {
 
     public synchronized Context context(Context owner) {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "模块上下文必须在主线程创建");
+      requireActive();
       if (moduleApplication == null) {
         Context app = owner.getApplicationContext();
         StrictJson.require(app instanceof Application, "模块上下文缺少真实 Application");

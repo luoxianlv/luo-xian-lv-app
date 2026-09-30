@@ -51,14 +51,18 @@ object Analytics {
     fun recordScheme(dataString: String?) = record("唤起", dataString ?: "(无 data)")
 
     fun preInitialize(context: Context) {
-        UMConfigure.preInit(context, APP_KEY, CHANNEL)
+        UMConfigure.preInit(
+            app.luoxianlv.hot.contract.PlatformApplication.of(context),
+            APP_KEY,
+            CHANNEL,
+        )
     }
 
     fun initialize(context: Context) {
         if (initialized) return
         synchronized(this) {
             if (initialized) return
-            val app = context.applicationContext
+            val app = app.luoxianlv.hot.contract.PlatformApplication.of(context)
             record("SDK", "initialize 调用")
             // U-APM 性能监控配置：必须在 UMConfigure.init 之前调用。
             // 放在这里（而非 Application.onCreate）是为了和统计一样等用户同意协议后再开启。

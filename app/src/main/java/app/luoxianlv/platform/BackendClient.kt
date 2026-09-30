@@ -112,4 +112,7 @@ internal class BackendClient(private val baseUrl: String, private val sessionSto
 internal fun <T> background(
     callback: (Result<T>) -> Unit,
     block: () -> T,
-) = Thread { callback(runCatching(block)) }.start()
+) {
+    if (!app.luoxianlv.business.BusinessJobs.thread("平台请求") { callback(runCatching(block)) })
+        callback(Result.failure(IllegalStateException("本代工作已停用，请重新操作")))
+}

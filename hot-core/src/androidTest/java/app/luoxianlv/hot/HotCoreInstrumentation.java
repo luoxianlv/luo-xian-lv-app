@@ -30,7 +30,9 @@ public final class HotCoreInstrumentation extends Instrumentation {
     try {
       if (recoveryOnly) {
         GroupRecoveryChecks.run(this);
-        report.putString("stream", "整组恢复收尾检查通过：关闭错误准确报告一次，保留最新状态并阻断后续交接。\n");
+        GroupRetirementChecks.run(this);
+        report.putString(
+            "stream", "整组恢复收尾检查通过：关闭错误准确报告一次，保留最新状态并阻断后续交接；提交回退及准备取消等待真实后台工作退出，候选监听退役，退出故障准确报告。\n");
         finish(-1, report);
         return;
       }
@@ -79,6 +81,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
       }
       PageSwapChecks.run(this, root);
       GroupRecoveryChecks.run(this);
+      GroupRetirementChecks.run(this);
       NativeTransferChecks.run(this, root);
       if (nativePage) NativePageChecks.run(this, root);
       if (online != null) NativeOnlineChecks.run(this, root, online);
