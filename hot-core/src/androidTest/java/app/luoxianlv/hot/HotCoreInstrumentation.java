@@ -15,6 +15,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
   private String online;
   private boolean recoveryOnly;
   private boolean collectionOnly;
+  private boolean historyOnly;
 
   @Override
   public void onCreate(Bundle arguments) {
@@ -23,6 +24,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
     online = arguments == null ? null : arguments.getString("online");
     recoveryOnly = arguments != null && "true".equals(arguments.getString("recoveryOnly"));
     collectionOnly = arguments != null && "true".equals(arguments.getString("collectionOnly"));
+    historyOnly = arguments != null && "true".equals(arguments.getString("historyOnly"));
     start();
   }
 
@@ -30,6 +32,15 @@ public final class HotCoreInstrumentation extends Instrumentation {
   public void onStart() {
     Bundle report = new Bundle();
     try {
+      if (historyOnly) {
+        File root = new File(getContext().getFilesDir(), "hot-history-" + UUID.randomUUID());
+        check(root.mkdirs(), "无法创建独立历史目录");
+        HealthHistoryChecks.run(root);
+        deleteOwnTree(root);
+        report.putString("stream", "Android 回报历史检查通过：旧格式迁移、健康回执跨实例去重、稳定与回退序号延续、未上传事件和迟到确认保留。\n");
+        finish(-1, report);
+        return;
+      }
       if (collectionOnly) {
         checkCollection();
         report.putString("stream", "Android 对象回收检查通过：运行中快照与共享运行时保护、真实只读对象清理、符号链接拒绝、目录外文件保留。\n");

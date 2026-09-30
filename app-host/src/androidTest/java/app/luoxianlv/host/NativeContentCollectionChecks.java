@@ -77,6 +77,9 @@ final class NativeContentCollectionChecks {
             .put("backgroundWorkerCollected", true)
             .put("orphanBytes", bytes.length)
             .put("protectedSnapshots", protectedIds.size())
+            .put(
+                "activeHotSnapshot",
+                source.prepared.manifest == null ? "" : source.prepared.identity())
             .put("bundledRecoveryVerified", true)
             .put("activeSourceUnchanged", true);
     Files.write(

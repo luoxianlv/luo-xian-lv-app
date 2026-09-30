@@ -293,6 +293,7 @@ final class HostUpdates {
             state.config.hostContract,
             SystemClock::elapsedRealtime);
     outbox = new HealthOutbox(new File(root, "health"));
+    compactHistory();
     var budget = new DownloadBudget(new File(root, "budget"));
     // 可执行内容始终复制回内部只读对象库；外部仅保留可观察的有界下载暂存。
     File visible = application.getExternalFilesDir("hot-update");
@@ -574,6 +575,7 @@ final class HostUpdates {
   }
 
   private void flush() throws Exception {
+    compactHistory();
     OutcomeRecovery.reconcile(state.journal, outbox);
     if (!active || !(state.config.testHealthReports || Bootstrap.diagnosticsAllowed())) return;
     var batch = outbox.batch(100);
@@ -583,6 +585,12 @@ final class HostUpdates {
     if (reply.revision >= state.journal.state().revision)
       controller.observe(reply.revision, null, null, reply.serverTime);
     outbox.acknowledge(batch);
+  }
+
+  private void compactHistory() throws Exception {
+    // 在转入新回执前让已结束历史让出容量；读取磁盘保护身份，不能重置当前/恢复版序号。
+    File root = new File(application.getNoBackupFilesDir(), "native-update");
+    outbox.compact(() -> new ActivationJournal(new File(root, "state")).state(), 64);
   }
 
   private void retry(Throwable failure) {

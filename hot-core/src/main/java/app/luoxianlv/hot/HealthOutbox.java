@@ -16,7 +16,8 @@ public final class HealthOutbox {
   private static final class State {
     final Map<String, Long> sequences = new LinkedHashMap<>();
     final List<HealthEvent> events = new ArrayList<>();
-    final Set<String> receipts = new LinkedHashSet<>();
+    // 旧格式仅有摘要，迁移时关联仍在日志或队列中的回执；新格式同时保存尝试身份。
+    final Map<String, String> receipts = new LinkedHashMap<>();
   }
 
   public HealthOutbox(File directory) throws Exception {
@@ -42,15 +43,19 @@ public final class HealthOutbox {
   private HealthEvent append(String attemptId, String kind, String code, boolean once)
       throws Exception {
     new HealthEvent(attemptId, 1, kind, code);
-    String receipt =
-        HotSignatures.hash(
-            (attemptId + "\0" + kind + "\0" + code)
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    String receipt = receiptHash(attemptId, kind, code);
     try (var channel = lockChannel();
         FileLock lock = channel.tryLock()) {
       StrictJson.require(lock != null, "另一个任务正在更新健康队列");
       State state = read();
-      if (once && state.receipts.contains(receipt)) return null;
+      if (once && state.receipts.containsKey(receipt)) {
+        if (state.receipts.get(receipt).isEmpty()) {
+          StrictJson.require(state.sequences.containsKey(attemptId), "旧结果回执缺少序号记录");
+          state.receipts.put(receipt, attemptId);
+          save(state);
+        }
+        return null;
+      }
       StrictJson.require(!once || state.receipts.size() < 8192, "结果回执历史已满，保留未确认记录");
       StrictJson.require(
           state.events.size() < MAX_EVENTS
@@ -60,7 +65,7 @@ public final class HealthOutbox {
           new HealthEvent(attemptId, state.sequences.getOrDefault(attemptId, 0L) + 1, kind, code);
       state.sequences.put(attemptId, event.sequence);
       state.events.add(event);
-      if (once) state.receipts.add(receipt);
+      if (once) state.receipts.put(receipt, attemptId);
       save(state);
       return event;
     }
@@ -70,6 +75,68 @@ public final class HealthOutbox {
     StrictJson.require(limit > 0 && limit <= 100, "健康批次大小无效");
     var events = read().events;
     return List.copyOf(events.subList(0, Math.min(limit, events.size())));
+  }
+
+  public interface JournalStateReader {
+    ActivationJournal.State read() throws Exception;
+  }
+
+  public record Compaction(int removedAttempts, int removedReceipts) {}
+
+  /** 在更新工作线程空闲点调用；只有已结束且没有未确认事件/日志回执的历史可回收。 */
+  public synchronized Compaction compact(JournalStateReader journal, int recentCount)
+      throws Exception {
+    StrictJson.require(recentCount >= 0 && recentCount <= 256, "回报历史保留数量无效");
+    try (var channel = lockChannel();
+        FileLock lock = channel.tryLock()) {
+      StrictJson.require(lock != null, "健康队列正在更新，推迟历史清理");
+      var active = journal.read();
+      State state = read();
+      Set<String> keep = new HashSet<>();
+      boolean associated = false;
+      for (String id :
+          new String[] {active.attempt, active.stableAttempt, active.previousStableAttempt})
+        if (!id.isEmpty()) keep.add(id);
+      for (var event : state.events) {
+        keep.add(event.attemptId);
+        associated |= associateLegacyReceipt(state, event.attemptId, event.kind, event.code);
+      }
+      for (var outcome : active.outcomes) {
+        keep.add(outcome.attemptId);
+        associated |= associateLegacyReceipt(state, outcome.attemptId, outcome.kind, outcome.code);
+      }
+      List<String> history = new ArrayList<>(state.sequences.keySet());
+      for (int i = Math.max(0, history.size() - recentCount); i < history.size(); i++)
+        keep.add(history.get(i));
+      int attemptsBefore = state.sequences.size(), receiptsBefore = state.receipts.size();
+      state.sequences.keySet().removeIf(id -> !keep.contains(id));
+      // 无法关联的旧摘要已不在当前持久日志或待上传队列中，不能再有合法日志重放。
+      state
+          .receipts
+          .entrySet()
+          .removeIf(entry -> entry.getValue().isEmpty() || !keep.contains(entry.getValue()));
+      if (associated
+          || attemptsBefore != state.sequences.size()
+          || receiptsBefore != state.receipts.size()) save(state);
+      return new Compaction(
+          attemptsBefore - state.sequences.size(), receiptsBefore - state.receipts.size());
+    }
+  }
+
+  private static boolean associateLegacyReceipt(
+      State state, String attempt, String kind, String code) throws Exception {
+    String hash = receiptHash(attempt, kind, code);
+    if ("".equals(state.receipts.get(hash))) {
+      StrictJson.require(state.sequences.containsKey(attempt), "待重放回执缺少原序号");
+      state.receipts.put(hash, attempt);
+      return true;
+    }
+    return false;
+  }
+
+  private static String receiptHash(String attempt, String kind, String code) throws Exception {
+    return HotSignatures.hash(
+        (attempt + "\0" + kind + "\0" + code).getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   /** 重复确认同一批次不会移除之后的事件；并发追加不改变已发送前缀。 */
@@ -116,7 +183,7 @@ public final class HealthOutbox {
     try (var input = new DataInputStream(new ByteArrayInputStream(body))) {
       StrictJson.require(input.readInt() == MAGIC, "健康队列格式无效");
       int format = input.readInt();
-      StrictJson.require(format == 1 || format == 2, "健康队列格式无效");
+      StrictJson.require(format >= 1 && format <= 3, "健康队列格式无效");
       int count = input.readInt();
       StrictJson.require(count >= 0 && count <= MAX_ATTEMPTS, "健康尝试数量超限");
       for (int i = 0; i < count; i++) {
@@ -145,8 +212,12 @@ public final class HealthOutbox {
         StrictJson.require(count >= 0 && count <= 8192, "结果回执数量超限");
         for (int i = 0; i < count; i++) {
           String receipt = input.readUTF();
+          String attempt = format >= 3 ? input.readUTF() : "";
+          if (!attempt.isEmpty())
+            StrictJson.require(state.sequences.containsKey(attempt), "结果回执没有对应序号");
           StrictJson.require(
-              HotManifest.validHash(receipt) && state.receipts.add(receipt), "结果回执身份无效或重复");
+              HotManifest.validHash(receipt) && state.receipts.put(receipt, attempt) == null,
+              "结果回执身份无效或重复");
         }
       }
       StrictJson.require(input.available() == 0, "健康队列含尾随记录");
@@ -158,7 +229,7 @@ public final class HealthOutbox {
     var buffer = new ByteArrayOutputStream();
     try (var output = new DataOutputStream(buffer)) {
       output.writeInt(MAGIC);
-      output.writeInt(2);
+      output.writeInt(3);
       output.writeInt(state.sequences.size());
       for (var entry : state.sequences.entrySet()) {
         output.writeUTF(entry.getKey());
@@ -172,7 +243,10 @@ public final class HealthOutbox {
         output.writeUTF(event.code);
       }
       output.writeInt(state.receipts.size());
-      for (String receipt : state.receipts) output.writeUTF(receipt);
+      for (var receipt : state.receipts.entrySet()) {
+        output.writeUTF(receipt.getKey());
+        output.writeUTF(receipt.getValue());
+      }
     }
     byte[] body = buffer.toByteArray();
     buffer.write(MessageDigest.getInstance("SHA-256").digest(body));
