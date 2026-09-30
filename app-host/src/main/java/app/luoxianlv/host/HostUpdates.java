@@ -367,6 +367,7 @@ final class HostUpdates {
 
   private void prepare() {
     try {
+      collectIdleContent();
       flush();
       var candidate = client.prepare(schema(), this::metered, () -> !active || blocked);
       var current = Bootstrap.source().prepared;
@@ -390,6 +391,41 @@ final class HostUpdates {
     } catch (Throwable failure) {
       retry(failure);
     }
+  }
+
+  /** 与下载、准备、激活收尾共用单线程；候选转交主线程后不插入清理任务。 */
+  private void collectIdleContent() throws Exception {
+    File root = new File(application.getNoBackupFilesDir(), "native-update");
+    var result =
+        new ContentCollector(state.store)
+            .collect(
+                () -> {
+                  // 从磁盘重新读取，损坏或另一个进程的更新不能被内存旧值掩盖。
+                  var current = new ActivationJournal(new File(root, "state")).state();
+                  Set<String> protectedIds = new HashSet<>();
+                  for (String id :
+                      new String[] {
+                        current.stable,
+                        current.active,
+                        current.candidate,
+                        current.previousStable,
+                        state.pendingRestart.current()
+                      }) if (!id.isEmpty()) protectedIds.add(id);
+                  var execution = state.execution.current();
+                  if (execution != null) protectedIds.add(execution.snapshot);
+                  return protectedIds;
+                },
+                2,
+                512L << 20);
+    if (result.beforeBytes() != result.afterBytes())
+      Log.i(
+          "原生宿主",
+          "热更缓存已回收 "
+              + (result.beforeBytes() - result.afterBytes())
+              + " 字节，删除历史组合 "
+              + result.removedSnapshots()
+              + " 个");
+    if (result.overBudget()) throw new ContentCollector.Deferred();
   }
 
   private void authorize(UpdateClient.PreparedUpdate candidate) {
@@ -558,7 +594,8 @@ final class HostUpdates {
             retry = Math.max(retry, apiFailure.retryAfterMillis);
           if (failure instanceof HttpObjectSource.Failure sourceFailure)
             retry = Math.max(retry, sourceFailure.retryAfterMillis);
-          if (failure instanceof DownloadBudget.Deferred) retry = INTERVAL;
+          if (failure instanceof DownloadBudget.Deferred
+              || failure instanceof ContentCollector.Deferred) retry = INTERVAL;
           nextCheck = SystemClock.elapsedRealtime() + retry;
           Log.w("原生宿主", "自动热更暂缓，当前版本继续使用：" + failure.getClass().getSimpleName());
           usageChanged();

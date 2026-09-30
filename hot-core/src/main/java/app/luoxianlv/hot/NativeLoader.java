@@ -36,6 +36,7 @@ public final class NativeLoader {
     final File apk;
     final ClassLoader loader;
     volatile boolean used;
+    AutoCloseable contentLease;
 
     RuntimeSlot(String hash, String abi, File apk, ClassLoader loader) {
       this.hash = hash;
@@ -61,6 +62,7 @@ public final class NativeLoader {
     private final String identity;
     private ModuleApplication moduleApplication;
     private boolean retired;
+    private AutoCloseable contentLease;
 
     Prepared(
         HotManifest manifest,
@@ -144,6 +146,14 @@ public final class NativeLoader {
       retired = true;
       if (moduleApplication != null) moduleApplication.closeCallbacks();
       resources.close();
+      if (contentLease != null) {
+        try {
+          contentLease.close();
+        } catch (Exception error) {
+          throw new IllegalStateException("模块文件租约释放失败", error);
+        }
+        contentLease = null;
+      }
     }
 
     private void requireActive() {
@@ -192,6 +202,11 @@ public final class NativeLoader {
     synchronized (NativeLoader.class) {
       if (runtime == null) return true;
       if (!runtime.hash.equals(expectedHash) || runtime.used) return false;
+      try {
+        if (runtime.contentLease != null) runtime.contentLease.close();
+      } catch (Exception error) {
+        throw new IllegalStateException("未使用运行时租约释放失败", error);
+      }
       runtime = null;
       return true;
     }
@@ -242,6 +257,18 @@ public final class NativeLoader {
   }
 
   private Prepared prepareVerified(ContentStore.Snapshot snapshot) throws Exception {
+    AutoCloseable lease = store.pin(snapshot);
+    try {
+      Prepared prepared = preparePinned(snapshot);
+      prepared.contentLease = lease;
+      return prepared;
+    } catch (Throwable error) {
+      lease.close();
+      throw error;
+    }
+  }
+
+  private Prepared preparePinned(ContentStore.Snapshot snapshot) throws Exception {
     HotManifest manifest = snapshot.manifest;
     quarantine.requireAllowed(manifest, hostContract);
     store.verifySnapshotObjects(snapshot);
@@ -372,7 +399,9 @@ public final class NativeLoader {
               application.getCodeCacheDir().getAbsolutePath(),
               libraries,
               application.getClassLoader());
+      AutoCloseable lease = store.pinRuntime(manifest.runtime.sha256);
       runtime = new RuntimeSlot(manifest.runtime.sha256, manifest.runtimeAbi, apk, loader);
+      runtime.contentLease = lease;
       return runtime;
     }
   }

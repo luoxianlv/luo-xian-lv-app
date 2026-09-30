@@ -14,6 +14,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
   private boolean nativePage;
   private String online;
   private boolean recoveryOnly;
+  private boolean collectionOnly;
 
   @Override
   public void onCreate(Bundle arguments) {
@@ -21,6 +22,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
     nativePage = arguments != null && "true".equals(arguments.getString("native"));
     online = arguments == null ? null : arguments.getString("online");
     recoveryOnly = arguments != null && "true".equals(arguments.getString("recoveryOnly"));
+    collectionOnly = arguments != null && "true".equals(arguments.getString("collectionOnly"));
     start();
   }
 
@@ -28,6 +30,12 @@ public final class HotCoreInstrumentation extends Instrumentation {
   public void onStart() {
     Bundle report = new Bundle();
     try {
+      if (collectionOnly) {
+        checkCollection();
+        report.putString("stream", "Android 对象回收检查通过：运行中快照与共享运行时保护、真实只读对象清理、符号链接拒绝、目录外文件保留。\n");
+        finish(-1, report);
+        return;
+      }
       if (recoveryOnly) {
         GroupRecoveryChecks.run(this);
         GroupRetirementChecks.run(this);
@@ -105,6 +113,56 @@ public final class HotCoreInstrumentation extends Instrumentation {
           "Android 热更核心检查失败：" + failure + "\n" + android.util.Log.getStackTraceString(failure));
       finish(0, report);
     }
+  }
+
+  private void checkCollection() throws Exception {
+    File root = new File(getContext().getFilesDir(), "hot-collection-" + UUID.randomUUID());
+    check(root.mkdirs(), "无法创建独立回收目录");
+    var publicKey = new HotSignatures.PublicKey(StrictJson.object(asset("root.public.json")));
+    var policy =
+        new HotPackage.Policy(
+            publicKey,
+            "app.luoxianlv.debug",
+            "test",
+            1,
+            1,
+            Instant.parse("2026-09-29T00:00:00Z"),
+            Collections.emptySet(),
+            null,
+            null);
+    var store = new ContentStore(new File(root, "internal"));
+    var collector = new ContentCollector(store);
+    try (var base = new HotPackage(fixture(root, "base.lxhp"), policy);
+        var delta = new HotPackage(fixture(root, "delta.lxhp"), policy)) {
+      var old = store.prepare(base);
+      var next = store.prepare(delta);
+      try (var lease = store.pin(old);
+          var runtime = store.pinRuntime(old.manifest.runtime.sha256)) {
+        var result = collector.collect(() -> java.util.Set.of(next.manifest.snapshotId), 0, 0);
+        check(result.overBudget() && result.removedSnapshots() == 0, "预算不能删除运行中快照");
+        store.verifySnapshotObjects(old);
+        store.verifySnapshotObjects(next);
+      }
+      var result =
+          collector.collect(() -> java.util.Set.of(next.manifest.snapshotId), 0, Long.MAX_VALUE);
+      check(result.removedSnapshots() == 1 && !old.directory.exists(), "退役快照未回收");
+      store.verifySnapshotObjects(next);
+      var outside = new File(root, "outside.txt").toPath();
+      java.nio.file.Files.write(outside, new byte[] {9});
+      var link = store.objectFile("e".repeat(64)).toPath();
+      java.nio.file.Files.createSymbolicLink(link, outside);
+      boolean rejected = false;
+      try {
+        collector.collect(() -> java.util.Set.of(next.manifest.snapshotId), 0, 0);
+      } catch (Exception expected) {
+        rejected = true;
+      }
+      check(rejected && java.nio.file.Files.exists(outside), "链接越界未拒绝");
+      java.nio.file.Files.delete(link);
+      check(collector.collect(java.util.Set::of, 0, 0).afterBytes() == 0, "只读对象未清理完整");
+      check(java.nio.file.Files.readAllBytes(outside)[0] == 9, "目录外文件改变");
+    }
+    deleteOwnTree(root);
   }
 
   private byte[] asset(String name) throws Exception {

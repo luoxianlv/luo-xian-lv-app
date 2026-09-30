@@ -122,6 +122,38 @@ public final class ContentStore {
     return new File(objects, hash);
   }
 
+  File rootDirectory() {
+    return root;
+  }
+
+  /** 验证和登记在清理共用的文件锁内；拿到租约后才能建立加载器或资源副本。 */
+  AutoCloseable pin(Snapshot snapshot) throws Exception {
+    try (var channel =
+            FileChannel.open(
+                new File(root, "prepare.lock").toPath(),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE);
+        FileLock lock = channel.tryLock()) {
+      StrictJson.require(lock != null, "对象库正在准备或清理，稍后建立模块");
+      Snapshot current = snapshot(snapshot.manifest.snapshotId);
+      return ContentLeases.pin(root, current.manifest.snapshotId, current.manifest.runtime.sha256);
+    }
+  }
+
+  AutoCloseable pinRuntime(String hash) throws Exception {
+    StrictJson.require(HotManifest.validHash(hash), "运行时租约身份无效");
+    try (var channel =
+            FileChannel.open(
+                new File(root, "prepare.lock").toPath(),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE);
+        FileLock lock = channel.tryLock()) {
+      StrictJson.require(lock != null, "对象库正在准备或清理，稍后建立运行时");
+      StrictJson.require(objectFile(hash).isFile(), "运行时对象已丢失");
+      return ContentLeases.pin(root, "", hash);
+    }
+  }
+
   File runtimeDirectory(String hash) throws Exception {
     StrictJson.require(HotManifest.validHash(hash), "运行时身份无效");
     File result = new File(directory("runtimes"), hash);

@@ -35,6 +35,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String crashStable, recoveredSnapshot, recoveredFrom;
   private String prepareStable;
   private String controlledRecovery;
+  private boolean collectionOnly;
   private app.luoxianlv.hot.contract.ProcessHooks heldProcess;
   private final java.util.concurrent.CountDownLatch workRelease =
       new java.util.concurrent.CountDownLatch(1);
@@ -78,6 +79,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
     recoveredFrom = arguments == null ? null : arguments.getString("recoveredFrom");
     prepareStable = arguments == null ? null : arguments.getString("prepareStable");
     controlledRecovery = arguments == null ? null : arguments.getString("controlledRecovery");
+    collectionOnly = arguments != null && "true".equals(arguments.getString("collectionOnly"));
     start();
   }
 
@@ -356,7 +358,11 @@ public final class NativeAppInstrumentation extends Instrumentation {
         require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
         workRelease.countDown();
       }
-      if (controlledRecovery != null) {
+      if (collectionOnly) {
+        NativeContentCollectionChecks.run(this);
+        report.putString("stream", "通过：真实宿主后台更新线程回收无引用对象，保留运行和恢复组合，页面继续可用。\n");
+        success = true;
+      } else if (controlledRecovery != null) {
         NativeControlledRecoveryChecks.run(
             this, main, controlledRecovery, previousServices, previousEnabled);
       } else if (prepareStable != null) {
