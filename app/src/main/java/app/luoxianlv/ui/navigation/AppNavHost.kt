@@ -282,7 +282,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                                     android.content.Intent(
                                                         android.content.Intent.ACTION_VIEW,
                                                         android.net.Uri.parse(
-                                                            "https://luoxianlv.com/login?mode=register"
+                                                            "https://www.luoxianlv.cn/login?mode=register"
                                                         ),
                                                     )
                                                 )
@@ -290,7 +290,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                                                 .onFailure {
                                                     android.widget.Toast.makeText(
                                                             activity,
-                                                            "无法打开浏览器，请访问 luoxianlv.com 注册",
+                                                            "无法打开浏览器，请访问 www.luoxianlv.cn 注册",
                                                             android.widget.Toast.LENGTH_LONG,
                                                         )
                                                         .show()

@@ -375,7 +375,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                             ),
                         mandatory = false,
                         sources =
-                            listOf(UpdateSource("oss", "https://luoxianlv.com/app-release.apk")),
+                            listOf(UpdateSource("oss", "$baseUrl/api/update/oss")),
                     ),
                 selectedSource = "oss",
             )

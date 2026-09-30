@@ -32,9 +32,8 @@ android {
         versionCode = appVersionCode
         versionName = appVersionName
 
-        // 本地模拟器构建指向宿主机上的 Rust 服务；
-        // Release 构建用 -PupdateBaseUrl=https://... 覆盖
-        val updateBaseUrl = project.findProperty("updateBaseUrl") as String? ?: "https://luoxianlv-api.admilk.cn"
+        // 默认经官网 ESA 入口访问 Rust API；本地联调用 -PupdateBaseUrl=http://... 覆盖。
+        val updateBaseUrl = project.findProperty("updateBaseUrl") as String? ?: "https://www.luoxianlv.cn"
         require(updateBaseUrl.matches(Regex("https?://[A-Za-z0-9.:-]+"))) { "updateBaseUrl must be an HTTP(S) origin" }
         buildConfigField("String", "UPDATE_BASE_URL", "\"$updateBaseUrl\"")
         val updateSource = project.findProperty("updateSource") as String? ?: "oss"
