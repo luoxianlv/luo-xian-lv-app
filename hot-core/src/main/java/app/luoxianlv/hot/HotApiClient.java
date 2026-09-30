@@ -256,13 +256,30 @@ public final class HotApiClient {
   public HttpObjectSource object(SignedSnapshot candidate, String hash) {
     Long size = candidate.manifest.objects.get(hash);
     StrictJson.require(size != null && HotManifest.validHash(hash), "对象不属于签名清单");
-    return new HttpObjectSource(
-        origin.resolve(
-            "/api/hot/v2/objects/" + hash + "?snapshotId=" + candidate.manifest.snapshotId),
-        size,
-        origin,
-        installation.credential(),
-        localTest);
+    String snapshot = candidate.manifest.snapshotId;
+    return HttpObjectSource.withFreshGrant(size, () -> {
+      register();
+      Response response = post("/objects/" + hash + "/grant",
+          JsonWire.fields("snapshotId", snapshot), "", true);
+      var grant = response.value.only("transport", "method", "url", "headers", "sha256", "size", "expiresAt");
+      grant.object("headers").only();
+      long expires = grant.number("expiresAt");
+      StrictJson.require(grant.string("method").equals("GET") && grant.string("sha256").equals(hash)
+          && grant.number("size") == size && expires > response.time.getEpochSecond()
+          && expires <= response.time.getEpochSecond() + 600, "下载授权的对象、方法或有效期无效");
+      URI url;
+      try { url = URI.create(grant.string("url")); }
+      catch (IllegalArgumentException malformed) { throw new IOException("下载授权地址格式无效"); }
+      String transport = grant.string("transport");
+      if (transport.equals("oss")) {
+        StrictJson.require(url.isAbsolute(), "OSS 下载授权必须提供完整地址");
+        return new HttpObjectSource(url, size, null, "", localTest);
+      }
+      StrictJson.require(transport.equals("local-test"), "下载授权存储后端不支持");
+      URI expected = origin.resolve("/api/hot/v2/objects/" + hash + "?snapshotId=" + snapshot);
+      StrictJson.require(origin.resolve(url).equals(expected), "本地测试下载授权必须绑定 API 同源对象路径");
+      return new HttpObjectSource(expected, size, origin, installation.credential(), localTest);
+    });
   }
 
   Response post(String route, Map<String, ?> body, String idempotency, boolean authenticated)
