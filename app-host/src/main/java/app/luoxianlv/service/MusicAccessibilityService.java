@@ -14,6 +14,11 @@ public final class MusicAccessibilityService extends NativeAccessibilityService 
   }
 
   @Override
+  protected boolean initialCreation(Runnable create) {
+    return Bootstrap.initialCreation(create);
+  }
+
+  @Override
   protected NativePlaybackSession createPlaybackSession() {
     source = Bootstrap.source();
     return source.factory.playback();

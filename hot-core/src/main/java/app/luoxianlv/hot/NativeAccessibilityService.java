@@ -68,6 +68,22 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
 
   private void openPreparedSession() {
     if (!connected || binding != null) return;
+    try {
+      if (!initialCreation(this::installPreparedSession))
+        new android.os.Handler(android.os.Looper.getMainLooper())
+            .postDelayed(this::openPreparedSession, 16);
+    } catch (Throwable failure) {
+      failed(binding, failure);
+    }
+  }
+
+  protected boolean initialCreation(Runnable create) {
+    create.run();
+    return true;
+  }
+
+  private void installPreparedSession() {
+    if (!connected || binding != null) return;
     Binding candidate = new Binding();
     binding = candidate;
     candidate.enabled = true;

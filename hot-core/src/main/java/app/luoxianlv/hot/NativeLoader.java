@@ -35,6 +35,7 @@ public final class NativeLoader {
     final String hash, abi;
     final File apk;
     final ClassLoader loader;
+    volatile boolean used;
 
     RuntimeSlot(String hash, String abi, File apk, ClassLoader loader) {
       this.hash = hash;
@@ -107,6 +108,7 @@ public final class NativeLoader {
     /** 构造业务对象可能建立主线程生命周期，必须由宿主在主线程调用。 */
     public NativePage instantiate() throws Exception {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "业务页面必须在主线程创建");
+      markRuntimeUsed();
       Object value = entry.getDeclaredConstructor().newInstance();
       return value instanceof BusinessFactory
           ? ((BusinessFactory) value).page("main")
@@ -115,7 +117,14 @@ public final class NativeLoader {
 
     public BusinessFactory factory() throws Exception {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "业务工厂必须在主线程创建");
+      markRuntimeUsed();
       return entry.asSubclass(BusinessFactory.class).getDeclaredConstructor().newInstance();
+    }
+
+    private void markRuntimeUsed() {
+      synchronized (NativeLoader.class) {
+        if (runtime != null && runtime.hash.equals(runtimeHash)) runtime.used = true;
+      }
     }
 
     public String identity() {
@@ -160,6 +169,16 @@ public final class NativeLoader {
   public NativeLoader(
       Context application, ContentStore store, ContentQuarantine quarantine, long hostContract) {
     this(application, store, quarantine, hostContract, java.util.Collections.emptySet());
+  }
+
+  /** 只允许准备失败、尚未构造任何业务时放弃加载器；执行过业务后不能混用另一运行时。 */
+  public boolean discardUninitializedRuntime(String expectedHash) {
+    synchronized (NativeLoader.class) {
+      if (runtime == null) return true;
+      if (!runtime.hash.equals(expectedHash) || runtime.used) return false;
+      runtime = null;
+      return true;
+    }
   }
 
   public NativeLoader(

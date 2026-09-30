@@ -39,6 +39,225 @@ final class HostUpdates {
   private GroupActivation group;
   private String attempt;
   private final Set<String> used = new HashSet<>();
+  private ActivationController.Ticket coldTicket;
+  private boolean coldPersisting, coldExposed, coldChecking, coldFailed;
+  private final Runnable coldPulse = this::observeCold;
+
+  /** 在运行时加载前为缓存组合取得本次许可；失败不启用新代码。 */
+  NativeLoader.Prepared prepareCold() throws Exception {
+    String target = state.pendingRestart.current();
+    if (target.isEmpty()) return null;
+    if (target.equals(state.journal.state().stable)
+        || state.journal.state().quarantine.contains(target)) {
+      state.pendingRestart.clear(target);
+      return null;
+    }
+    ActivationController.Ticket ticket = null;
+    UpdateClient.PreparedUpdate cached = null;
+    try {
+      api.timeouts(750, 750);
+      cached = client.cached(target);
+      long schema =
+          state.journal.state().stable.isEmpty()
+              ? 1
+              : state.store.snapshot(state.journal.state().stable).manifest.stateCurrent;
+      ticket =
+          client.authorize(
+              cached,
+              schema,
+              android.os.Process.myPid(),
+              () -> Thread.currentThread().isInterrupted());
+      outbox.append(ticket.attemptId, "prepared", "cold_group_prepared");
+      var prepared = state.loader.prepare(cached.snapshot, state.journal.state());
+      coldTicket = ticket;
+      busy = true;
+      return prepared;
+    } catch (Throwable error) {
+      boolean confirmed =
+          error instanceof ReflectiveOperationException || error instanceof LinkageError;
+      if (ticket != null) controller.abort(ticket, confirmed);
+      if (cached != null
+          && !state.loader.discardUninitializedRuntime(cached.snapshot.manifest.runtime.sha256))
+        throw new IllegalStateException("未能安全放弃启动运行时", error);
+      if (confirmed) state.pendingRestart.clear(target);
+      Log.w("原生宿主", "待重启组合暂未启用，继续稳定版本：" + error.getClass().getSimpleName());
+      return null;
+    } finally {
+      api.timeouts(10000, 15000);
+    }
+  }
+
+  boolean coldPending() {
+    return coldTicket != null;
+  }
+
+  private static final class ColdGuardFailure extends IllegalStateException {
+    ColdGuardFailure(Throwable cause) {
+      super("启动许可已失效或组合已停用", cause);
+    }
+  }
+
+  static boolean contentFailure(Throwable error) {
+    for (Throwable value = error; value != null; value = value.getCause())
+      if (value instanceof ColdGuardFailure) return false;
+    return true;
+  }
+
+  boolean initialCreation(Runnable create) {
+    requireMain();
+    if (coldFailed) throw new ColdGuardFailure(null);
+    if (coldTicket == null || coldExposed) {
+      create.run();
+      return true;
+    }
+    if (coldPersisting) return false;
+    var creationError = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+    try {
+      return controller.prepareView(
+          coldTicket,
+          () -> {
+            try {
+              create.run();
+            } catch (RuntimeException | Error error) {
+              creationError.set(error);
+              throw error;
+            }
+          });
+    } catch (RuntimeException | Error error) {
+      if (creationError.get() != null) throw error;
+      throw new ColdGuardFailure(error);
+    }
+  }
+
+  void startColdObservation() {
+    requireMain();
+    if (coldTicket != null) main.post(coldPulse);
+  }
+
+  private boolean coldFramesReady() {
+    var pages = Bootstrap.pages();
+    return pages.isEmpty()
+        ? Bootstrap.playbackReady()
+        : pages.stream().allMatch(value -> value.host().readyFrame());
+  }
+
+  private void observeCold() {
+    requireMain();
+    var ticket = coldTicket;
+    if (ticket == null || blocked) return;
+    if (!coldExposed) {
+      if (coldPersisting) return;
+      if (!coldFramesReady()) {
+        try {
+          controller.prepareView(ticket, () -> {});
+        } catch (Throwable expired) {
+          failCold(expired, false);
+          return;
+        }
+        main.postDelayed(coldPulse, 100);
+        return;
+      }
+      coldPersisting = true;
+      worker.execute(
+          () -> {
+            try {
+              controller.firstFrame(ticket);
+              main.post(() -> exposeCold(ticket));
+            } catch (Throwable error) {
+              main.post(() -> failCold(error, false));
+            }
+          });
+      return;
+    }
+    coldUsage();
+    if (!coldChecking && coldFramesReady()) {
+      coldChecking = true;
+      worker.execute(
+          () -> {
+            try {
+              boolean healthy = controller.healthy(ticket);
+              if (healthy) {
+                state.pendingRestart.clear(ticket.snapshot.manifest.snapshotId);
+                OutcomeRecovery.reconcile(state.journal, outbox);
+              }
+              main.post(
+                  () -> {
+                    coldChecking = false;
+                    if (coldTicket != ticket) return;
+                    if (healthy) {
+                      coldTicket = null;
+                      busy = false;
+                      nextCheck = SystemClock.elapsedRealtime() + INTERVAL;
+                      worker.execute(
+                          () -> {
+                            try {
+                              flush();
+                            } catch (Exception error) {
+                              Log.w("原生宿主", "启动健康回报保留，等待联网");
+                            }
+                          });
+                      usageChanged();
+                    }
+                  });
+            } catch (Throwable error) {
+              main.post(() -> failCold(error, false));
+            }
+          });
+    }
+    main.postDelayed(coldPulse, 1000);
+  }
+
+  private void exposeCold(ActivationController.Ticket ticket) {
+    if (coldTicket != ticket || blocked) return;
+    try {
+      if (!controller.expose(ticket, () -> {})) {
+        main.postDelayed(() -> exposeCold(ticket), 16);
+        return;
+      }
+      coldPersisting = false;
+      coldExposed = true;
+      attempt = ticket.attemptId;
+      used.clear();
+      enqueue(attempt, "activated", "cold_group_exposed");
+      coldUsage();
+      main.post(coldPulse);
+    } catch (Throwable error) {
+      failCold(error, false);
+    }
+  }
+
+  private void coldUsage() {
+    if (coldTicket == null) return;
+    boolean observed = coldExposed && coldFramesReady();
+    controller.setActive(coldTicket, observed && Bootstrap.inUse());
+    if (observed) {
+      for (var page : Bootstrap.pages())
+        if (page.host().inUse()) recordUse(page.route().replace('.', '_'));
+      if (Bootstrap.playbackInUse()) recordUse("playback");
+    }
+  }
+
+  void failCold(Throwable error, boolean confirmed) {
+    requireMain();
+    var ticket = coldTicket;
+    if (ticket == null) return;
+    coldTicket = null;
+    coldFailed = true;
+    blocked = true;
+    main.removeCallbacks(coldPulse);
+    controller.setActive(ticket, false);
+    worker.execute(
+        () -> {
+          try {
+            controller.revert(ticket, confirmed);
+            if (confirmed) state.pendingRestart.clear(ticket.snapshot.manifest.snapshotId);
+            OutcomeRecovery.reconcile(state.journal, outbox);
+          } catch (Throwable recovery) {
+            error.addSuppressed(recovery);
+          }
+          Log.e("原生宿主", "启动组合未通过，已停止自动激活，等待下一进程恢复", error);
+        });
+  }
 
   HostUpdates(Application application, HostStartup state) throws Exception {
     this.application = application;
@@ -85,6 +304,7 @@ final class HostUpdates {
   void usageChanged() {
     requireMain();
     active = Bootstrap.inUse();
+    coldUsage();
     if (group != null && attempt != null && group.phase() == GroupActivation.Phase.OBSERVING) {
       for (var page : Bootstrap.pages())
         if (page.host().inUse()) recordUse(page.route().replace('.', '_'));

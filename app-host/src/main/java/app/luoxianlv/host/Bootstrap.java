@@ -83,9 +83,14 @@ public final class Bootstrap {
     return playback != null && playback.playbackInUse();
   }
 
+  static boolean playbackReady() {
+    return playback != null && (playback.playbackInUse() || playback.playbackCanReplace());
+  }
+
   static boolean canAutoActivate() {
     return source != null
         && activation == null
+        && (updates == null || !updates.coldPending())
         && !updateBlocked
         && (!PAGES.isEmpty() || playback != null)
         && PAGES.keySet().stream().allMatch(PageSwapHost::canStage)
@@ -97,7 +102,18 @@ public final class Bootstrap {
     return selected != null && selected.diagnosticsAllowed();
   }
 
+  public static boolean initialCreation(Runnable create) {
+    if (updates != null) return updates.initialCreation(create);
+    create.run();
+    return true;
+  }
+
   public static void componentFailed(Throwable error) {
+    if (updates != null && updates.coldPending()) {
+      updateBlocked = true;
+      updates.failCold(error, HostUpdates.contentFailure(error));
+      return;
+    }
     if (activation != null)
       activation.stop(
           error,
@@ -256,11 +272,6 @@ public final class Bootstrap {
                         new ContentQuarantine(new File(root, "quarantine")),
                         1)
                     : startup.loader;
-            NativeLoader.Prepared stable = startup == null ? null : startup.prepareStable();
-            NativeLoader.Prepared prepared =
-                stable != null
-                    ? stable
-                    : loader.prepareBaseline(BundledBaseline.prepare(application));
             if (startup != null && startup.config.automatic && !updateBlocked) {
               try {
                 updates = new HostUpdates(application, startup);
@@ -269,45 +280,16 @@ public final class Bootstrap {
                 Log.e("原生宿主", "自动热更状态不可用，保留已有组合", invalidQueue);
               }
             }
-            MAIN.post(
-                () -> {
-                  try {
-                    BusinessFactory factory = prepared.factory();
-                    process = factory.process(prepared.context(application));
-                    process.initialize();
-                    source = new Source(prepared, factory);
-                  } catch (Throwable error) {
-                    failure = error;
-                    if (process != null) {
-                      try {
-                        process.close();
-                      } catch (Throwable closing) {
-                        error.addSuppressed(closing);
-                      }
-                      process = null;
-                    }
-                    if (startup != null && prepared.manifest != null) {
-                      worker.execute(
-                          () -> {
-                            try {
-                              startup.journal.stableContentFailed(
-                                  prepared.manifest,
-                                  startup.quarantine,
-                                  startup.config.hostContract);
-                            } catch (Throwable recoveryFailure) {
-                              error.addSuppressed(recoveryFailure);
-                              updateBlocked = true;
-                            } finally {
-                              MAIN.post(Bootstrap::complete);
-                              worker.shutdown();
-                            }
-                          });
-                      return;
-                    }
-                  }
-                  complete();
-                  worker.shutdown();
-                });
+            NativeLoader.Prepared cold = updates == null ? null : updates.prepareCold();
+            NativeLoader.Prepared stable =
+                cold != null || startup == null ? null : startup.prepareStable();
+            NativeLoader.Prepared prepared =
+                cold != null
+                    ? cold
+                    : stable != null
+                        ? stable
+                        : loader.prepareBaseline(BundledBaseline.prepare(application));
+            MAIN.post(() -> initializePrepared(prepared, worker));
           } catch (Throwable error) {
             MAIN.post(
                 () -> {
@@ -317,6 +299,59 @@ public final class Bootstrap {
                 });
           }
         });
+  }
+
+  private static void initializePrepared(
+      NativeLoader.Prepared prepared, java.util.concurrent.ExecutorService worker) {
+    try {
+      boolean created =
+          initialCreation(
+              () -> {
+                try {
+                  BusinessFactory factory = prepared.factory();
+                  process = factory.process(prepared.context(application));
+                  process.initialize();
+                  source = new Source(prepared, factory);
+                } catch (Exception error) {
+                  throw new IllegalStateException("业务初始化失败", error);
+                }
+              });
+      if (!created) {
+        MAIN.postDelayed(() -> initializePrepared(prepared, worker), 16);
+        return;
+      }
+    } catch (Throwable error) {
+      failure = error;
+      if (process != null) {
+        try {
+          process.close();
+        } catch (Throwable closing) {
+          error.addSuppressed(closing);
+        }
+        process = null;
+      }
+      if (updates != null && updates.coldPending()) {
+        updates.failCold(error, HostUpdates.contentFailure(error));
+      } else if (startup != null && prepared.manifest != null) {
+        worker.execute(
+            () -> {
+              try {
+                startup.journal.stableContentFailed(
+                    prepared.manifest, startup.quarantine, startup.config.hostContract);
+              } catch (Throwable recoveryFailure) {
+                error.addSuppressed(recoveryFailure);
+                updateBlocked = true;
+              } finally {
+                MAIN.post(Bootstrap::complete);
+                worker.shutdown();
+              }
+            });
+        return;
+      }
+    }
+    complete();
+    if (updates != null) updates.startColdObservation();
+    worker.shutdown();
   }
 
   private static void complete() {

@@ -19,6 +19,11 @@ public abstract class BusinessActivity extends NativeHostActivity {
   }
 
   @Override
+  protected boolean initialCreation(Runnable create) {
+    return Bootstrap.initialCreation(create);
+  }
+
+  @Override
   protected NativePage createPage() {
     source = Bootstrap.source();
     return source.factory.page(route());

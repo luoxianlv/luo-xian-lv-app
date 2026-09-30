@@ -63,6 +63,11 @@ public abstract class NativeHostActivity extends Activity {
     return () -> {};
   }
 
+  protected boolean initialCreation(Runnable create) {
+    create.run();
+    return true;
+  }
+
   protected final PageSwapHost pageHost() {
     StrictJson.require(page instanceof PageSession, "原生页面会话尚未就绪");
     return ((PageSession) page).pages();
@@ -104,6 +109,16 @@ public abstract class NativeHostActivity extends Activity {
   }
 
   private void openPreparedPage() {
+    if (isDestroyed() || isFinishing() || preparationConsumed) return;
+    try {
+      if (!initialCreation(this::installPreparedPage))
+        getWindow().getDecorView().postDelayed(this::openPreparedPage, 16);
+    } catch (Throwable error) {
+      pageFailed(error);
+    }
+  }
+
+  private void installPreparedPage() {
     if (isDestroyed() || isFinishing() || preparationConsumed) return;
     preparationConsumed = true;
     NativePage.Retained retained = pendingRetained;

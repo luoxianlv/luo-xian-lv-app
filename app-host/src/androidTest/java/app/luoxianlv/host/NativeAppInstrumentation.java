@@ -29,6 +29,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private boolean receiptFault;
   private boolean receiptRecovered;
   private String restartPrepared;
+  private String coldRuntime;
+  private String offlineRestart;
 
   private void onMain(Runnable action) {
     var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -61,6 +63,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
     receiptRecovered = arguments != null && "true".equals(arguments.getString("receiptRecovered"));
     restartPrepared = arguments == null ? null : arguments.getString("restartPrepared");
+    coldRuntime = arguments == null ? null : arguments.getString("coldRuntime");
+    offlineRestart = arguments == null ? null : arguments.getString("offlineRestart");
     start();
   }
 
@@ -295,7 +299,42 @@ public final class NativeAppInstrumentation extends Instrumentation {
             }
           });
       Bootstrap.Source source = Bootstrap.source();
-      if (restartPrepared != null) {
+      if (offlineRestart != null) {
+        require(app.luoxianlv.hot.HotManifest.validHash(offlineRestart), "离线目标身份无效");
+        var startup = Bootstrap.startupState();
+        require(
+            startup != null && startup.pendingRestart.current().equals(offlineRestart),
+            "离线启动丢失待更新组合");
+        var cached = startup.store.snapshot(offlineRestart);
+        require(
+            !source.prepared.runtimeHash.equals(cached.manifest.runtime.sha256),
+            "离线仍加载了未取得新许可的运行时");
+        require(
+            startup.journal.state().phase == app.luoxianlv.hot.ActivationJournal.Phase.STABLE
+                && startup.journal.state().quarantine.isEmpty(),
+            "离线失败被错误记为内容故障");
+        Activity retained = main;
+        await("离线恢复页面没有显示", () -> find("演练场") != null && retained.hasWindowFocus());
+        var result =
+            new org.json.JSONObject()
+                .put("passed", true)
+                .put("productionTouched", false)
+                .put("target", offlineRestart)
+                .put("pendingPreserved", true)
+                .put("oldRuntimeUsed", true)
+                .put("oldPageVisible", true)
+                .put("notQuarantined", true);
+        java.nio.file.Files.write(
+            new java.io.File(getTargetContext().getFilesDir(), "native-cold-offline-report.json")
+                .toPath(),
+            result.toString(2).getBytes(StandardCharsets.UTF_8));
+        report.putString("stream", "通过：待更新组合离线启动保留缓存，原组合正常显示，不隔离内容。\n");
+        success = true;
+      } else if (coldRuntime != null) {
+        NativeColdRuntimeChecks.run(this, main, coldRuntime);
+        report.putString("stream", "通过：普通冷启动重新授权，实际新共享运行时与业务整组启用、真实观察及回报。\n");
+        success = true;
+      } else if (restartPrepared != null) {
         NativeRestartChecks.run(this, restartPrepared);
         report.putString("stream", "通过：不同共享运行时完整缓存并持久等待重启，当前组合未改变。\n");
         success = true;

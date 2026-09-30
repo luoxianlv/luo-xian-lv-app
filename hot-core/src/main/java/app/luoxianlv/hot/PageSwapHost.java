@@ -299,6 +299,12 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
     return !closed && lifecycle == NativePage.RESUMED && isShown();
   }
 
+  /** 冷启动观察使用实际已提交首帧，不用窗口创建或 Compose 语义就绪冒充显示。 */
+  public boolean readyFrame() {
+    requireMain();
+    return !closed && active != null && active.ready && active.frameObserved;
+  }
+
   public PageSwapHost(
       Context context,
       ActivationController controller,

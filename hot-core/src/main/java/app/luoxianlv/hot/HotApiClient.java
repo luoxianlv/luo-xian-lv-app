@@ -18,6 +18,16 @@ public final class HotApiClient {
   private final URI origin;
   private final boolean localTest;
   private boolean registered;
+  private int connectTimeout = 10000, readTimeout = 15000;
+
+  /** 冷启动只给已缓存组合较短联网等待；普通后台检查随后恢复默认超时。 */
+  public void timeouts(int connectMillis, int readMillis) {
+    StrictJson.require(
+        connectMillis >= 250 && connectMillis <= 30000 && readMillis >= 250 && readMillis <= 30000,
+        "接口等待时间无效");
+    connectTimeout = connectMillis;
+    readTimeout = readMillis;
+  }
 
   public static final class Failure extends IOException {
     public final int status;
@@ -263,8 +273,8 @@ public final class HotApiClient {
     try {
       connection.setInstanceFollowRedirects(false);
       connection.setUseCaches(false);
-      connection.setConnectTimeout(10000);
-      connection.setReadTimeout(15000);
+      connection.setConnectTimeout(connectTimeout);
+      connection.setReadTimeout(readTimeout);
       connection.setRequestMethod("POST");
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(raw.length);
@@ -294,7 +304,8 @@ public final class HotApiClient {
       StrictJson.require(stamp != null && stamp.matches("[0-9]{1,12}"), "API 未提供可验证来源的服务端时间");
       Instant serverTime = Instant.ofEpochSecond(Long.parseLong(stamp));
       try (InputStream input = connection.getInputStream()) {
-        return new Response(StrictJson.envelope(read(input, 5 * StrictJson.MAX_BYTES)), serverTime);
+        return new Response(
+            StrictJson.envelope(read(input, 5 * StrictJson.MAX_BYTES, readTimeout)), serverTime);
       }
     } finally {
       connection.disconnect();
@@ -302,13 +313,17 @@ public final class HotApiClient {
   }
 
   private static byte[] read(InputStream input, int limit) throws Exception {
+    return read(input, limit, 30000);
+  }
+
+  private static byte[] read(InputStream input, int limit, int timeoutMillis) throws Exception {
     long start = System.nanoTime();
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     byte[] buffer = new byte[8192];
     int n;
     while ((n = input.read(buffer)) != -1) {
       StrictJson.require(n > 0 && output.size() + n <= limit, "API 响应大小无效");
-      if (System.nanoTime() - start > 30_000_000_000L)
+      if (System.nanoTime() - start > timeoutMillis * 1_000_000L)
         throw new java.net.SocketTimeoutException("API 响应等待超时");
       output.write(buffer, 0, n);
     }
