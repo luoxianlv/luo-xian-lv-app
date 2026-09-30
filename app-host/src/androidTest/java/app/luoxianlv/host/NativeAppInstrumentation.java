@@ -25,6 +25,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private boolean onlineRollback;
   private boolean onlinePersist;
   private String startupSnapshot;
+  private String automaticSnapshot;
 
   private void onMain(Runnable action) {
     var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -53,6 +54,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
     onlineRollback = arguments != null && "true".equals(arguments.getString("onlineRollback"));
     onlinePersist = arguments != null && "true".equals(arguments.getString("onlinePersist"));
     startupSnapshot = arguments == null ? null : arguments.getString("startupSnapshot");
+    automaticSnapshot = arguments == null ? null : arguments.getString("automaticSnapshot");
     start();
   }
 
@@ -287,7 +289,11 @@ public final class NativeAppInstrumentation extends Instrumentation {
             }
           });
       Bootstrap.Source source = Bootstrap.source();
-      if (startupSnapshot != null) {
+      if (automaticSnapshot != null) {
+        NativeAutomaticChecks.run(this, main, automaticSnapshot);
+        report.putString("stream", "通过：普通入口自动更新验收。\n");
+        success = true;
+      } else if (startupSnapshot != null) {
         require(
             getTargetContext().getPackageName().equals("app.luoxianlv.debug")
                 && app.luoxianlv.hot.HotManifest.validHash(startupSnapshot),

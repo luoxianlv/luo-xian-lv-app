@@ -36,7 +36,7 @@ public final class Bootstrap {
   private static final Handler MAIN = new Handler(Looper.getMainLooper());
   private static final ArrayList<Waiting> WAITING = new ArrayList<>();
   private static volatile Source source;
-  private static ProcessHooks process;
+  private static volatile ProcessHooks process;
   private static volatile Throwable failure;
   private static boolean started, finished;
   private static Application application;
@@ -45,20 +45,24 @@ public final class Bootstrap {
   private static GroupActivation activation;
   private static boolean updateBlocked;
   private static HostStartup startup;
+  private static HostUpdates updates;
 
   static void pageOpened(PageSwapHost page, String route) {
     PAGES.put(page, route);
     if (activation != null) activation.pageOpened(new GroupHandover.Page(page, route));
+    usageChanged();
   }
 
   static void pageClosed(PageSwapHost page) {
     PAGES.remove(page);
     if (activation != null) activation.pageClosed();
+    usageChanged();
   }
 
   public static void playbackOpened(NativeAccessibilityService service) {
     playback = service;
     if (activation != null) activation.playbackOpened(service);
+    usageChanged();
   }
 
   public static void playbackClosed(NativeAccessibilityService service) {
@@ -68,6 +72,29 @@ public final class Bootstrap {
 
   public static void usageChanged() {
     if (activation != null) activation.usageChanged();
+    if (updates != null) updates.usageChanged();
+  }
+
+  static boolean inUse() {
+    return PAGES.keySet().stream().anyMatch(PageSwapHost::inUse) || playbackInUse();
+  }
+
+  static boolean playbackInUse() {
+    return playback != null && playback.playbackInUse();
+  }
+
+  static boolean canAutoActivate() {
+    return source != null
+        && activation == null
+        && !updateBlocked
+        && (!PAGES.isEmpty() || playback != null)
+        && PAGES.keySet().stream().allMatch(PageSwapHost::canStage)
+        && (playback == null || (playback.playbackCanReplace() && !playback.playbackRetiring()));
+  }
+
+  static boolean diagnosticsAllowed() {
+    ProcessHooks selected = process;
+    return selected != null && selected.diagnosticsAllowed();
   }
 
   public static void componentFailed(Throwable error) {
@@ -234,6 +261,14 @@ public final class Bootstrap {
                 stable != null
                     ? stable
                     : loader.prepareBaseline(BundledBaseline.prepare(application));
+            if (startup != null && startup.config.automatic && !updateBlocked) {
+              try {
+                updates = new HostUpdates(application, startup);
+              } catch (Exception invalidQueue) {
+                updateBlocked = true;
+                Log.e("原生宿主", "自动热更状态不可用，保留已有组合", invalidQueue);
+              }
+            }
             MAIN.post(
                 () -> {
                   try {

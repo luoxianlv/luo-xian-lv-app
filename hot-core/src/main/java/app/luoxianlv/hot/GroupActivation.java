@@ -60,6 +60,12 @@ public final class GroupActivation implements GroupHandover.Listener {
   private GroupHandover group;
   private boolean checking, wasExposed, diskRestored, componentsRestored, recoveryFailed;
   private Throwable failure;
+  private boolean confirmedFailure;
+
+  public boolean contentFailure() {
+    requireMain();
+    return confirmedFailure;
+  }
 
   /** 只接受同一次签名许可的即时业务快照；运行时和显式 restart 候选由冷启动流程处理。 */
   public GroupActivation(
@@ -262,6 +268,7 @@ public final class GroupActivation implements GroupHandover.Listener {
   public void stop(Throwable error, boolean contentFailure) {
     requireMain();
     if (phase == Phase.FINISHED || phase == Phase.RESTORING) return;
+    confirmedFailure = contentFailure;
     failure = error;
     wasExposed |= group != null && group.phase() == GroupHandover.Phase.TRIAL;
     phase = Phase.RESTORING;

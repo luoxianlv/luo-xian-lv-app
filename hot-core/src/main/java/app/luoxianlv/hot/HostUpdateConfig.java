@@ -15,6 +15,7 @@ public final class HostUpdateConfig {
   public final URI origin;
   public final HotSignatures.PublicKey root;
   public final Set<String> mounts;
+  public final boolean automatic, testHealthReports;
 
   private HostUpdateConfig(Context context, byte[] raw) throws Exception {
     var value =
@@ -27,13 +28,17 @@ public final class HostUpdateConfig {
                 "fingerprint",
                 "origin",
                 "root",
-                "mounts");
+                "mounts",
+                "automatic",
+                "testHealthReports");
     applicationId = value.string("applicationId");
     environment = value.string("environment");
     fingerprint = value.string("fingerprint");
     hostContract = value.number("hostContract");
     origin = URI.create(value.string("origin"));
     root = new HotSignatures.PublicKey(value.object("root"));
+    automatic = !value.has("automatic") || value.bool("automatic");
+    testHealthReports = value.has("testHealthReports") && value.bool("testHealthReports");
     var supported = new HashSet<String>();
     for (String mount : value.strings("mounts"))
       StrictJson.require(HotManifest.validId(mount) && supported.add(mount), "宿主挂载声明重复或无效");
@@ -51,6 +56,9 @@ public final class HostUpdateConfig {
             && hostContract > 0
             && hostContract <= Integer.MAX_VALUE
             && root.purpose.equals("root")
+            && (!testHealthReports
+                || ((context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                    && environment.equals("test")))
             && origin.getHost() != null
             && ("https".equals(origin.getScheme()) || localDebug)
             && origin.getRawUserInfo() == null

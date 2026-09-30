@@ -52,6 +52,7 @@ public final class NativeLoader {
 
   public static final class Prepared {
     public final HotManifest manifest;
+    public final String runtimeHash, runtimeAbi;
     private final Class<?> entry;
     private final ClassLoader loader;
     private final ModuleResources resources;
@@ -71,7 +72,9 @@ public final class NativeLoader {
           loader,
           testResources(resources),
           resourceRoot,
-          manifest == null ? "baseline" : manifest.snapshotId);
+          manifest == null ? "baseline" : manifest.snapshotId,
+          manifest == null ? "" : manifest.runtime.sha256,
+          manifest == null ? "" : manifest.runtimeAbi);
     }
 
     private static ModuleResources testResources(Resources resources) {
@@ -88,13 +91,17 @@ public final class NativeLoader {
         ClassLoader loader,
         ModuleResources resources,
         File resourceRoot,
-        String identity) {
+        String identity,
+        String runtimeHash,
+        String runtimeAbi) {
       this.manifest = manifest;
       this.entry = entry;
       this.loader = loader;
       this.resources = resources;
       this.resourceRoot = resourceRoot;
       this.identity = identity;
+      this.runtimeHash = runtimeHash;
+      this.runtimeAbi = runtimeAbi;
     }
 
     /** 构造业务对象可能建立主线程生命周期，必须由宿主在主线程调用。 */
@@ -227,7 +234,9 @@ public final class NativeLoader {
         loader,
         new ModuleResources(resources, shared.apk, business),
         mounted,
-        manifest.snapshotId);
+        manifest.snapshotId,
+        shared.hash,
+        shared.abi);
   }
 
   /** APK 签名保护的内置恢复组合；文件与哈希必须先由 BundledBaseline 校验，不能用于下载候选。 */
@@ -274,7 +283,9 @@ public final class NativeLoader {
         loader,
         new ModuleResources(resources, shared.apk, baseline.business),
         null,
-        "apk:" + baseline.runtimeHash + ":" + baseline.businessHash);
+        "apk:" + baseline.runtimeHash + ":" + baseline.businessHash,
+        shared.hash,
+        shared.abi);
   }
 
   private static Class<?> businessEntry(String name, ClassLoader loader) throws Exception {

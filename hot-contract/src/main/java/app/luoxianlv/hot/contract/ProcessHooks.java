@@ -6,6 +6,11 @@ public interface ProcessHooks extends AutoCloseable {
 
   void trimMemory(int level);
 
+  /** 后台读取当前隐私选择；缺省禁止远端诊断，不影响本地回退。 */
+  default boolean diagnosticsAllowed() {
+    return false;
+  }
+
   @Override
   default void close() {}
 }

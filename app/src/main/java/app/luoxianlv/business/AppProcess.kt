@@ -3,7 +3,9 @@ package app.luoxianlv.business
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.util.Log
+import app.luoxianlv.BuildConfig
 import app.luoxianlv.core.Analytics
+import app.luoxianlv.data.DisclaimerStore
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.hot.contract.HostDiagnostics
 import app.luoxianlv.hot.contract.ProcessHooks
@@ -48,4 +50,11 @@ class AppProcess(private val context: Context) : ProcessHooks {
         diagnostics?.close()
         diagnostics = null
     }
+
+    override fun diagnosticsAllowed(): Boolean =
+        !BuildConfig.DEBUG &&
+            runCatching {
+                    DisclaimerStore(context).agreedSha() == DisclaimerStore.currentSha(context)
+                }
+                .getOrDefault(false)
 }
