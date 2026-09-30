@@ -19,6 +19,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    if (providers.gradleProperty("nativeRuntimeProbe").orNull == "true") {
+        sourceSets.getByName("debug").java.srcDir("src/hotProbe/java")
+    }
 }
 
 androidComponents.onVariants { variant ->

@@ -140,6 +140,7 @@ final class HostUpdates {
       var current = Bootstrap.source().prepared;
       boolean restart =
           candidate != null && candidate.needsRestart(current.runtimeHash, current.runtimeAbi);
+      if (restart) state.pendingRestart.record(state.store, candidate.snapshot);
       main.post(
           () -> {
             busy = false;

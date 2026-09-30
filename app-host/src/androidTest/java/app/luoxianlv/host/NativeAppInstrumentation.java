@@ -28,6 +28,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String automaticSnapshot;
   private boolean receiptFault;
   private boolean receiptRecovered;
+  private String restartPrepared;
 
   private void onMain(Runnable action) {
     var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -59,6 +60,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
     automaticSnapshot = arguments == null ? null : arguments.getString("automaticSnapshot");
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
     receiptRecovered = arguments != null && "true".equals(arguments.getString("receiptRecovered"));
+    restartPrepared = arguments == null ? null : arguments.getString("restartPrepared");
     start();
   }
 
@@ -293,7 +295,11 @@ public final class NativeAppInstrumentation extends Instrumentation {
             }
           });
       Bootstrap.Source source = Bootstrap.source();
-      if (automaticSnapshot != null) {
+      if (restartPrepared != null) {
+        NativeRestartChecks.run(this, restartPrepared);
+        report.putString("stream", "通过：不同共享运行时完整缓存并持久等待重启，当前组合未改变。\n");
+        success = true;
+      } else if (automaticSnapshot != null) {
         NativeAutomaticChecks.run(this, main, automaticSnapshot, receiptFault);
         report.putString("stream", "通过：普通入口自动更新验收。\n");
         success = true;

@@ -71,7 +71,10 @@ androidComponents.onVariants { variant ->
             runtimeApk.set(layout.file(provider { runtime.singleFile }))
             businessApk.set(layout.file(provider { business.singleFile }))
             output.set(layout.buildDirectory.dir("generated/baseline/${variant.name}"))
-            if (providers.gradleProperty("nativeBusinessProbe").orNull == "true") {
+            if (
+                providers.gradleProperty("nativeBusinessProbe").orNull == "true" ||
+                    providers.gradleProperty("nativeRuntimeProbe").orNull == "true"
+            ) {
                 doFirst { error("在线验收用的新组件不能内置到宿主恢复基线") }
             }
             dependsOn(runtime, business)

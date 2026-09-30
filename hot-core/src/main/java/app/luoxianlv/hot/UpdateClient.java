@@ -152,6 +152,11 @@ public final class UpdateClient {
     return controller.begin(prepared.snapshot, permit, reply.serverTime, processId);
   }
 
+  /** 待重启身份仅找回缓存，不改变日志；调用者仍须 authorize 取得当前签名许可。 */
+  public PreparedUpdate cached(String snapshotId) throws Exception {
+    return new PreparedUpdate(store.snapshot(snapshotId), false);
+  }
+
   private void accept(HotApiClient.Decision decision) throws Exception {
     controller.observe(
         decision.revision, decision.trust, decision.trustSignature, decision.serverTime);

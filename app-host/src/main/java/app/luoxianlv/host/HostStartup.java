@@ -16,6 +16,7 @@ final class HostStartup {
   final TrustStore trust;
   final ContentQuarantine quarantine;
   final NativeLoader loader;
+  final PendingRestart pendingRestart;
 
   private HostStartup(Application application, HostUpdateConfig config) throws Exception {
     this.config = config;
@@ -25,6 +26,7 @@ final class HostStartup {
     trust = new TrustStore(new File(root, "trust"), config.root);
     quarantine = new ContentQuarantine(new File(root, "quarantine"));
     loader = new NativeLoader(application, store, quarantine, config.hostContract, config.mounts);
+    pendingRestart = new PendingRestart(new File(root, "restart"));
     recoverPending(application);
   }
 
