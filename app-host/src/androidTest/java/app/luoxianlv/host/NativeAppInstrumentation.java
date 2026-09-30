@@ -34,6 +34,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private boolean holdWork;
   private String crashStable, recoveredSnapshot, recoveredFrom;
   private String prepareStable;
+  private String controlledRecovery;
   private app.luoxianlv.hot.contract.ProcessHooks heldProcess;
   private final java.util.concurrent.CountDownLatch workRelease =
       new java.util.concurrent.CountDownLatch(1);
@@ -76,6 +77,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
     recoveredSnapshot = arguments == null ? null : arguments.getString("recoveredSnapshot");
     recoveredFrom = arguments == null ? null : arguments.getString("recoveredFrom");
     prepareStable = arguments == null ? null : arguments.getString("prepareStable");
+    controlledRecovery = arguments == null ? null : arguments.getString("controlledRecovery");
     start();
   }
 
@@ -354,7 +356,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
         require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
         workRelease.countDown();
       }
-      if (prepareStable != null) {
+      if (controlledRecovery != null) {
+        NativeControlledRecoveryChecks.run(
+            this, main, controlledRecovery, previousServices, previousEnabled);
+      } else if (prepareStable != null) {
         NativeStableRecoveryChecks.prepare(this, main, prepareStable);
         report.putString("stream", "通过：真实进程故障前的稳定组合与用户文件资料准备完成。\n");
         success = true;

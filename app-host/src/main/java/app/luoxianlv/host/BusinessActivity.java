@@ -14,6 +14,34 @@ public abstract class BusinessActivity extends NativeHostActivity {
   protected abstract String route();
 
   @Override
+  protected void onCreate(android.os.Bundle saved) {
+    Bootstrap.windowOpened(this);
+    super.onCreate(saved);
+  }
+
+  @Override
+  protected void onDestroy() {
+    Bootstrap.windowClosed(this);
+    super.onDestroy();
+  }
+
+  @Override
+  protected boolean processRecoveryRequired() {
+    return Bootstrap.businessStopped();
+  }
+
+  @Override
+  protected boolean recoveryAvailable() {
+    return Bootstrap.recoveryAvailable();
+  }
+
+  @Override
+  protected void reopenAfterFailure() {
+    if (Bootstrap.businessStopped()) RecoveryActivity.open(this);
+    else super.reopenAfterFailure();
+  }
+
+  @Override
   protected AutoCloseable whenPageReady(Runnable ready) {
     return Bootstrap.ready(ready);
   }

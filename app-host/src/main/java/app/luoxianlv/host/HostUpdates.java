@@ -249,17 +249,26 @@ final class HostUpdates {
     blocked = true;
     main.removeCallbacks(coldPulse);
     controller.setActive(ticket, false);
+    Bootstrap.stopBusiness(error);
     worker.execute(
         () -> {
           try {
             controller.revert(ticket, confirmed);
             if (confirmed) state.pendingRestart.clear(ticket.snapshot.manifest.snapshotId);
+            main.post(() -> Bootstrap.recoveryPersisted(true));
+            // 恢复选择已保存后，回报队列故障不应堵住用户重新打开；原始回执仍在日志中。
             OutcomeRecovery.reconcile(state.journal, outbox);
           } catch (Throwable recovery) {
             error.addSuppressed(recovery);
           }
           Log.e("原生宿主", "启动组合未通过，已停止自动激活，等待下一进程恢复", error);
         });
+  }
+
+  void stopScheduling() {
+    blocked = true;
+    active = false;
+    main.removeCallbacksAndMessages(null);
   }
 
   HostUpdates(Application application, HostStartup state) throws Exception {

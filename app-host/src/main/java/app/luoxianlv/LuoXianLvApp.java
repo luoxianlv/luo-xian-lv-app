@@ -9,6 +9,7 @@ public final class LuoXianLvApp extends Application {
   @Override
   public void onCreate() {
     super.onCreate();
+    if (app.luoxianlv.host.RecoveryActivity.isRecoveryProcess(this)) return;
     CrashLog.install(this, Bootstrap::recordCrash);
     Bootstrap.start(this);
   }

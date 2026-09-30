@@ -46,6 +46,28 @@ public final class Bootstrap {
   private static boolean updateBlocked;
   private static HostStartup startup;
   private static HostUpdates updates;
+  private static volatile boolean businessStopped, recoveryAvailable;
+  private static final ArrayList<BusinessActivity> WINDOWS = new ArrayList<>();
+
+  static void windowOpened(BusinessActivity activity) {
+    WINDOWS.add(activity);
+  }
+
+  static void windowClosed(BusinessActivity activity) {
+    WINDOWS.remove(activity);
+  }
+
+  static boolean businessStopped() {
+    return businessStopped;
+  }
+
+  static boolean recoveryAvailable() {
+    return !businessStopped || recoveryAvailable;
+  }
+
+  static boolean startedForRecoveryCheck() {
+    return started;
+  }
 
   static void pageOpened(PageSwapHost page, String route) {
     PAGES.put(page, route);
@@ -109,22 +131,88 @@ public final class Bootstrap {
   }
 
   public static boolean initialCreation(Runnable create) {
+    if (businessStopped) throw new IllegalStateException("故障业务已停用，须重新打开恢复", failure);
     if (updates != null) return updates.initialCreation(create);
     create.run();
     return true;
   }
 
   public static void componentFailed(Throwable error) {
+    if (businessStopped) return;
     if (updates != null && updates.coldPending()) {
       updateBlocked = true;
       updates.failCold(error, HostUpdates.contentFailure(error));
       return;
     }
-    if (activation != null)
+    if (activation != null) {
       activation.stop(
           error,
           activation.phase() == GroupActivation.Phase.OBSERVING
               || activation.phase() == GroupActivation.Phase.FINALIZING);
+      return;
+    }
+    Source selected = source;
+    stopBusiness(error);
+    var recovery =
+        Executors.newSingleThreadExecutor(
+            task -> {
+              Thread thread = new Thread(task, "native-recovery");
+              thread.setDaemon(true);
+              return thread;
+            });
+    recovery.execute(
+        () -> {
+          try {
+            if (startup != null
+                && selected != null
+                && selected.prepared.manifest != null
+                && startup.journal.state().stable.equals(selected.prepared.manifest.snapshotId))
+              startup.journal.stableContentFailed(
+                  selected.prepared.manifest, startup.quarantine, startup.config.hostContract);
+            if (startup != null
+                && startup.journal.state().phase
+                    != app.luoxianlv.hot.ActivationJournal.Phase.STABLE)
+              throw new IllegalStateException("恢复事务尚未完成，不能重启");
+            MAIN.post(() -> recoveryPersisted(true));
+          } catch (Throwable persistence) {
+            Log.e("原生宿主", "故障恢复选择未能保存，不能重启执行旧候选", persistence);
+          } finally {
+            recovery.shutdown();
+          }
+        });
+  }
+
+  /** 先撤掉输入与前台策略，再关闭业务实例；持久恢复确认由调用方后台完成。 */
+  static void stopBusiness(Throwable error) {
+    if (businessStopped) return;
+    businessStopped = true;
+    recoveryAvailable = false;
+    updateBlocked = true;
+    failure = error;
+    if (updates != null) updates.stopScheduling();
+    NativeAccessibilityService service = playback;
+    try {
+      if (service != null) service.stopBusiness();
+    } catch (Throwable closing) {
+      Log.e("原生宿主", "故障播放关闭失败，仍停止其余组件", closing);
+    }
+    app.luoxianlv.service.PlaybackForegroundService.stop();
+    for (BusinessActivity window : new ArrayList<>(WINDOWS)) {
+      try {
+        window.stopBusiness(error);
+      } catch (Throwable closing) {
+        Log.e("原生宿主", "故障页面关闭失败，仍停止其余组件", closing);
+      }
+    }
+    try {
+      if (process != null) process.close();
+    } catch (Throwable closing) {
+      Log.w("原生宿主", "故障业务关闭失败，恢复须使用新进程", closing);
+    }
+  }
+
+  static void recoveryPersisted(boolean saved) {
+    recoveryAvailable = saved;
   }
 
   /** 在线下载器取得当前许可后调用；同一进程只接受一组，恢复或收尾失败须先完成宿主恢复。 */
@@ -200,6 +288,13 @@ public final class Bootstrap {
                     result == GroupActivation.Result.RECOVERY_FAILED
                         || result == GroupActivation.Result.CLEANUP_FAILED;
                 activation = null;
+                if (updateBlocked) {
+                  stopBusiness(error == null ? new IllegalStateException("整组恢复或退出失败") : error);
+                  recoveryPersisted(
+                      startup != null
+                          && startup.journal.state().phase
+                              == app.luoxianlv.hot.ActivationJournal.Phase.STABLE);
+                }
                 listener.finished(result, error);
               }
             });
@@ -464,6 +559,7 @@ public final class Bootstrap {
   }
 
   public static Source source() {
+    if (businessStopped) throw new IllegalStateException("当前业务已停用，等待新进程恢复", failure);
     if (source == null) throw new IllegalStateException("业务尚未准备完成", failure);
     return source;
   }

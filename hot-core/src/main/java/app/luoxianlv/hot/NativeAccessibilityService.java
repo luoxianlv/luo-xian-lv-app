@@ -164,6 +164,13 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     if (ownsForeground) foregroundRequested(false);
   }
 
+  /** 故障版本不再接收系统输入；无障碍系统身份保留，下一进程可重新建立业务会话。 */
+  public final void stopBusiness() {
+    StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "播放停用必须在主线程");
+    closePreparation();
+    closeSession();
+  }
+
   /** 在主线程确认业务任务和系统输入都已结束，不能只看播放开关。 */
   public final boolean playbackCanReplace() {
     Binding current = binding;

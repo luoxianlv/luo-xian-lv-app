@@ -36,6 +36,24 @@ public abstract class NativeHostActivity extends Activity {
   private NativePage.Retained pendingRetained;
   private AutoCloseable preparation;
   private boolean preparationConsumed;
+  private boolean failing;
+
+  protected boolean processRecoveryRequired() {
+    return false;
+  }
+
+  protected boolean recoveryAvailable() {
+    return true;
+  }
+
+  protected void reopenAfterFailure() {
+    recreate();
+  }
+
+  /** 进程协调器关闭所有业务页，同时保留由稳定宿主绘制的恢复入口。 */
+  public final void stopBusiness(Throwable error) {
+    if (!isDestroyed() && !isFinishing()) pageFailed(error);
+  }
 
   protected abstract NativePage createPage() throws Exception;
 
@@ -415,6 +433,8 @@ public abstract class NativeHostActivity extends Activity {
   }
 
   private void pageFailed(Throwable failure) {
+    if (failing) return;
+    failing = true;
     pageSessionFailed(failure);
     pageSessionClosed();
     warning("page_initialization_failed", failure);
@@ -429,18 +449,30 @@ public abstract class NativeHostActivity extends Activity {
     recovery.setOrientation(LinearLayout.VERTICAL);
     recovery.setPadding(40, 80, 40, 40);
     TextView message = new TextView(this);
-    message.setText("页面暂时无法打开，请重新进入应用。");
+    message.setText(processRecoveryRequired() ? "应用遇到了问题，可重新打开恢复。乐谱和设置会保留。" : "页面暂时无法打开，请重新进入应用。");
     message.setTextSize(18);
     recovery.addView(message);
     Button retry = new Button(this);
-    retry.setText("重试");
-    retry.setOnClickListener(view -> recreate());
+    retry.setText(processRecoveryRequired() ? "重新打开" : "重试");
+    retry.setOnClickListener(view -> reopenAfterFailure());
+    retry.setEnabled(recoveryAvailable());
+    if (!retry.isEnabled())
+      retry.postDelayed(
+          new Runnable() {
+            public void run() {
+              if (isDestroyed() || isFinishing() || !retry.isAttachedToWindow()) return;
+              retry.setEnabled(recoveryAvailable());
+              if (!retry.isEnabled()) retry.postDelayed(this, 250);
+            }
+          },
+          250);
     recovery.addView(retry);
     Button exit = new Button(this);
     exit.setText("返回");
     exit.setOnClickListener(view -> finish());
     recovery.addView(exit);
     setContentView(recovery);
+    failing = false;
   }
 
   /** 新系统类型隔离到按版本加载的类，避免旧设备在解析宿主字段时解析不存在的 API。 */

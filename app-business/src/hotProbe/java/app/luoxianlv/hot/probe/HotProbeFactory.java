@@ -108,6 +108,7 @@ public final class HotProbeFactory implements BusinessFactory {
       delegate.newIntent(intent);
       // 仅存在于显式测试候选：普通启动后注入真实业务线程崩溃或无响应，不改系统退出记录。
       String kind = intent.getStringExtra("native.hot.fault");
+      if ("caught".equals(kind)) throw new IllegalStateException("测试：原生业务页面受控错误");
       if (!"crash".equals(kind) && !"anr".equals(kind)) return;
       fault.postDelayed(
           () -> {
