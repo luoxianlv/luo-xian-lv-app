@@ -38,6 +38,8 @@ androidComponents.onVariants { variant ->
                 "copy${variant.name.replaceFirstChar(Char::uppercaseChar)}HotConfig"
             ) {
                 this.config.set(rootProject.layout.projectDirectory.file(configPath))
+                applicationId.set(variant.applicationId)
+                debuggable.set(variant.debuggable)
                 output.set(layout.buildDirectory.dir("generated/hotConfig/${variant.name}"))
             }
         variant.sources.assets!!.addGeneratedSourceDirectory(config) { it.output }
