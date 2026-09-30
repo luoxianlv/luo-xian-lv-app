@@ -18,6 +18,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
   private boolean historyOnly;
   private boolean spaceOnly;
   private boolean cacheOnly;
+  private boolean repairOnly;
 
   @Override
   public void onCreate(Bundle arguments) {
@@ -29,6 +30,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
     historyOnly = arguments != null && "true".equals(arguments.getString("historyOnly"));
     spaceOnly = arguments != null && "true".equals(arguments.getString("spaceOnly"));
     cacheOnly = arguments != null && "true".equals(arguments.getString("cacheOnly"));
+    repairOnly = arguments != null && "true".equals(arguments.getString("repairOnly"));
     start();
   }
 
@@ -36,6 +38,12 @@ public final class HotCoreInstrumentation extends Instrumentation {
   public void onStart() {
     Bundle report = new Bundle();
     try {
+      if (repairOnly) {
+        checkObjectRepair();
+        report.putString("stream", "Android对象修复检查通过：错误副本保留旧字节，正确只读副本原子替换，快照与目录外文件保留。\n");
+        finish(-1, report);
+        return;
+      }
       if (cacheOnly) {
         CacheCleanupChecks.run(getContext());
         report.putString("stream", "Android缓存检查通过：内部原子认领、候选/活跃锁/未知字节/链接保护及真实跨挂载行为。\n");
@@ -188,6 +196,67 @@ public final class HotCoreInstrumentation extends Instrumentation {
       java.nio.file.Files.delete(link);
       check(collector.collect(java.util.Set::of, 0, 0).afterBytes() == 0, "只读对象未清理完整");
       check(java.nio.file.Files.readAllBytes(outside)[0] == 9, "目录外文件改变");
+    }
+    deleteOwnTree(root);
+  }
+
+  private void checkObjectRepair() throws Exception {
+    File root = new File(getContext().getFilesDir(), "hot-repair-" + UUID.randomUUID());
+    check(root.mkdirs(), "无法创建独立修复目录");
+    var publicKey = new HotSignatures.PublicKey(StrictJson.object(asset("root.public.json")));
+    var policy =
+        new HotPackage.Policy(
+            publicKey,
+            "app.luoxianlv.debug",
+            "test",
+            1,
+            1,
+            Instant.parse("2026-09-29T00:00:00Z"),
+            Collections.emptySet(),
+            null,
+            null);
+    var store = new ContentStore(new File(root, "internal"));
+    try (var base = new HotPackage(fixture(root, "base.lxhp"), policy)) {
+      var stable = store.prepare(base);
+      String hash = base.manifest.business.sha256;
+      long size = base.manifest.business.size;
+      File object = store.objectFile(hash);
+      check(object.setWritable(true, true), "无法设置测试损坏对象");
+      byte[] corrupt = java.nio.file.Files.readAllBytes(object.toPath());
+      corrupt[0] ^= 1;
+      java.nio.file.Files.write(object.toPath(), corrupt);
+      check(!store.containsVerified(hash, size), "错误等长对象被缓存检查接受");
+      File wrong = new File(root, "wrong.bin");
+      java.nio.file.Files.write(wrong.toPath(), new byte[(int) size]);
+      boolean rejected = false;
+      try {
+        store.prepare(new DownloadedSnapshot(base.metadata(), java.util.Map.of(hash, wrong)));
+      } catch (IllegalArgumentException expected) {
+        rejected = true;
+      }
+      check(
+          rejected
+              && java.util.Arrays.equals(
+                  corrupt, java.nio.file.Files.readAllBytes(object.toPath())),
+          "无效替换没有保留原字节");
+      File outside = new File(root, "outside.bin");
+      java.nio.file.Files.write(outside.toPath(), new byte[] {42});
+      var repaired = store.prepare(base);
+      check(repaired.directory.equals(stable.directory), "修复改变快照路径");
+      store.verifySnapshotObjects(stable);
+      check(!object.canWrite(), "修复对象没有保持只读");
+      var link = store.objectFile("e".repeat(64)).toPath();
+      java.nio.file.Files.createSymbolicLink(link, outside.toPath());
+      rejected = false;
+      try {
+        store.containsVerified("e".repeat(64), 1);
+      } catch (IllegalArgumentException expected) {
+        rejected = true;
+      }
+      check(
+          rejected && java.nio.file.Files.readAllBytes(outside.toPath())[0] == 42,
+          "链接被当作可修复缓存或目录外文件改变");
+      java.nio.file.Files.delete(link);
     }
     deleteOwnTree(root);
   }
