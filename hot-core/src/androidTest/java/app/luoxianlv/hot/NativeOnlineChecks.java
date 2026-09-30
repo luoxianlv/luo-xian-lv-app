@@ -148,6 +148,7 @@ final class NativeOnlineChecks {
               budget,
               Collections.emptySet(),
               SystemClock::elapsedRealtime);
+      long receivedBefore = downloads.receivedBytes();
       UpdateClient.PreparedUpdate candidate = client.prepare(1, () -> false, () -> false);
       check(
           candidate != null
@@ -157,7 +158,7 @@ final class NativeOnlineChecks {
           !candidate.needsRestart(baseline.manifest.runtime.sha256, baseline.manifest.runtimeAbi),
           "同运行时业务更新不应要求冷启动");
       check(
-          downloads.partial(candidate.snapshot.manifest.business.sha256).isFile(), "新组件没有经过网络对象下载");
+          downloads.receivedBytes() > receivedBefore, "新组件没有经过网络对象下载");
       ActivationController.Ticket ticket =
           client.authorize(candidate, 1, android.os.Process.myPid(), () -> false);
       NativeLoader.Prepared prepared = loader.prepare(candidate.snapshot, journal.state());

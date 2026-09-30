@@ -107,6 +107,8 @@ public final class ContentStore {
   public synchronized Snapshot snapshot(String id) throws Exception {
     StrictJson.require(HotManifest.validHash(id), "快照身份无效");
     File directory = new File(snapshots, id);
+    StrictJson.require(
+        directory.isDirectory() && !Files.isSymbolicLink(directory.toPath()), "内部快照目录缺失或包含链接");
     byte[] raw = readBounded(new File(directory, "manifest.json"));
     StrictJson.require(HotSignatures.hash(raw).equals(id), "内部快照清单损坏");
     return new Snapshot(new HotManifest(raw), directory);

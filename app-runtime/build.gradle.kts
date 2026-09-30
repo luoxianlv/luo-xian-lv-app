@@ -64,3 +64,5 @@ dependencies {
     releaseImplementation(libs.umeng.uyumao)
     releaseImplementation(libs.umeng.apm)
 }
+
+apply(from = rootProject.file("gradle/native-report.gradle.kts"))

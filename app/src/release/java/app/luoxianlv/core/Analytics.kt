@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import app.luoxianlv.hot.contract.ProcessOnce
 import com.umeng.analytics.MobclickAgent
 import com.umeng.commonsdk.UMConfigure
 import com.umeng.umcrash.UMCrash
@@ -22,7 +23,11 @@ object Analytics {
     /** 分发渠道标识，官网直链为 official。 */
     const val CHANNEL = "official"
 
-    @Volatile private var initialized = false
+    private const val PREINITIALIZE = "analytics-preinitialize"
+    private const val INITIALIZE = "analytics-initialize"
+
+    // SDK 状态在稳定层共享；候选预绘制仍不能提前开启本代的统计上报。
+    @Volatile private var reportingEnabled = false
 
     /** 诊断页展示的一条流水（事件/页面/唤起/SDK 状态）。 */
     data class DiagEntry(
@@ -35,8 +40,9 @@ object Analytics {
     val diagEntries = mutableStateListOf<DiagEntry>()
 
     /** UMConfigure.init 完成的时间戳；null 表示 SDK 还没初始化。 */
-    var initAt: Long? by mutableStateOf(null)
-        private set
+    private var observedInitAt: Long? by mutableStateOf(null)
+    val initAt: Long?
+        get() = observedInitAt ?: ProcessOnce.completedAt(INITIALIZE)
 
     private fun record(
         kind: String,
@@ -51,17 +57,18 @@ object Analytics {
     fun recordScheme(dataString: String?) = record("唤起", dataString ?: "(无 data)")
 
     fun preInitialize(context: Context) {
-        UMConfigure.preInit(
-            app.luoxianlv.hot.contract.PlatformApplication.of(context),
-            APP_KEY,
-            CHANNEL,
-        )
+        ProcessOnce.run(PREINITIALIZE) {
+            UMConfigure.preInit(
+                app.luoxianlv.hot.contract.PlatformApplication.of(context),
+                APP_KEY,
+                CHANNEL,
+            )
+        }
     }
 
     fun initialize(context: Context) {
-        if (initialized) return
-        synchronized(this) {
-            if (initialized) return
+        observedInitAt = ProcessOnce.run(INITIALIZE) {
+            preInitialize(context)
             val app = app.luoxianlv.hot.contract.PlatformApplication.of(context)
             record("SDK", "initialize 调用")
             // U-APM 性能监控配置：必须在 UMConfigure.init 之前调用。
@@ -94,10 +101,10 @@ object Analytics {
             // 按路由成对调用 [pageStart]/[pageEnd]；关掉自动采集就不会多出一个没意义的
             // MainActivity 页面。（U-APM 的页面分析是另一套，与此开关无关。）
             MobclickAgent.setPageCollectionMode(MobclickAgent.PageMode.MANUAL)
-            initialized = true
-            initAt = System.currentTimeMillis()
             record("SDK", "UMConfigure.init 完成")
         }
+        // 仍由真正显示且已同意协议的页面调用；共享 SDK 成功记录不自动开启候选上报。
+        reportingEnabled = true
     }
 
     /**
@@ -109,9 +116,9 @@ object Analytics {
         context: Context,
         event: String,
     ) {
-        record("事件", if (initialized) event else "$event（未初始化，丢弃）")
-        if (!initialized) return
-        MobclickAgent.onEvent(context.applicationContext, event)
+        record("事件", if (reportingEnabled) event else "$event（未初始化，丢弃）")
+        if (!reportingEnabled) return
+        MobclickAgent.onEvent(app.luoxianlv.hot.contract.PlatformApplication.of(context), event)
     }
 
     /**
@@ -122,13 +129,13 @@ object Analytics {
      */
     fun pageStart(page: String) {
         record("页面+", page)
-        if (!initialized) return
+        if (!reportingEnabled) return
         MobclickAgent.onPageStart(page)
     }
 
     fun pageEnd(page: String) {
         record("页面-", page)
-        if (!initialized) return
+        if (!reportingEnabled) return
         MobclickAgent.onPageEnd(page)
     }
 }

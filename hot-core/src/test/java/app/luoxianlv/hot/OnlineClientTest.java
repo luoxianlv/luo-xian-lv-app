@@ -68,6 +68,10 @@ public final class OnlineClientTest {
     final UpdateClient client;
 
     Fixture() throws Exception {
+      this(new PreparationSpace());
+    }
+
+    Fixture(PreparationSpace space) throws Exception {
       try (HotPackage target = archive("target.lxhp")) {
         signed = target.metadata();
         for (String hash : target.included) {
@@ -154,7 +158,8 @@ public final class OnlineClientTest {
               downloads,
               budget,
               Collections.emptySet(),
-              clock::get);
+              clock::get,
+              space);
     }
 
     @Override
@@ -175,6 +180,47 @@ public final class OnlineClientTest {
   }
 
   @Test
+  public void insufficientGroupSpaceStopsBeforeOpeningAnyObjectConnection() throws Exception {
+    var space = new PreparationSpace(path -> new PreparationSpace.Volume("same", 16L << 20, 4096));
+    try (Fixture f = new Fixture(space)) {
+      assertThrows(
+          PreparationSpace.Deferred.class, () -> f.client.prepare(1, () -> false, () -> false));
+      assertEquals(0, f.objectRequests.get());
+      assertEquals(0, f.activations.get());
+      assertEquals("", f.journal.state().active);
+      assertThrows(Exception.class, () -> f.store.snapshot(f.signed.manifest.snapshotId));
+    }
+  }
+
+  @Test
+  public void spaceLostAfterDownloadKeepsPartsButNeverCommitsOrExecutesCandidate()
+      throws Exception {
+    var fixture = new java.util.concurrent.atomic.AtomicReference<Fixture>();
+    var space =
+        new PreparationSpace(
+            path ->
+                new PreparationSpace.Volume(
+                    "same",
+                    fixture.get() != null && fixture.get().objectRequests.get() > 0
+                        ? 16L << 20
+                        : 2L << 30,
+                    4096));
+    try (Fixture f = new Fixture(space)) {
+      fixture.set(f);
+      assertThrows(
+          PreparationSpace.Deferred.class, () -> f.client.prepare(1, () -> false, () -> false));
+      assertEquals(2, f.objectRequests.get());
+      assertEquals(0, f.activations.get());
+      for (var entry : f.signed.manifest.objects.entrySet()) {
+        assertEquals((long) entry.getValue(), f.downloads.partial(entry.getKey()).length());
+        assertFalse(f.store.objectFile(entry.getKey()).exists());
+      }
+      assertEquals("", f.journal.state().active);
+      assertThrows(Exception.class, () -> f.store.snapshot(f.signed.manifest.snapshotId));
+    }
+  }
+
+  @Test
   public void actualHttpPreparationReusesObjectsAndPausedCandidateNeverGetsPermit()
       throws Exception {
     try (Fixture f = new Fixture()) {
@@ -186,6 +232,8 @@ public final class OnlineClientTest {
       assertEquals(2, f.objectRequests.get());
       assertNotNull(f.client.prepare(1, () -> false, () -> false));
       assertEquals(2, f.objectRequests.get());
+      for (String hash : prepared.snapshot.manifest.objects.keySet())
+        assertFalse(f.downloads.partial(hash).exists());
       f.paused.set(true);
       assertThrows(
           IllegalArgumentException.class, () -> f.client.authorize(prepared, 1, 123, () -> false));

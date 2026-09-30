@@ -39,7 +39,7 @@ class AppProcess(private val context: Context) : ProcessHooks {
                 }
             )
         // Debug 实现为空；Release 正式统计仍须等用户同意协议后触发。
-        if (ProcessOnce.claim("analytics-preinitialize")) Analytics.preInitialize(context)
+        Analytics.preInitialize(context)
     }
 
     override fun trimMemory(level: Int) {

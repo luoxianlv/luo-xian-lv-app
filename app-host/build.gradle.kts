@@ -81,3 +81,6 @@ androidComponents.onVariants { variant ->
         }
     variant.sources.assets!!.addGeneratedSourceDirectory(baseline) { it.output }
 }
+
+apply(from = rootProject.file("gradle/native-report.gradle.kts"))
+apply(from = rootProject.file("gradle/native-contract.gradle.kts"))

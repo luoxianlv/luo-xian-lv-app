@@ -16,6 +16,8 @@ public final class HotCoreInstrumentation extends Instrumentation {
   private boolean recoveryOnly;
   private boolean collectionOnly;
   private boolean historyOnly;
+  private boolean spaceOnly;
+  private boolean cacheOnly;
 
   @Override
   public void onCreate(Bundle arguments) {
@@ -25,6 +27,8 @@ public final class HotCoreInstrumentation extends Instrumentation {
     recoveryOnly = arguments != null && "true".equals(arguments.getString("recoveryOnly"));
     collectionOnly = arguments != null && "true".equals(arguments.getString("collectionOnly"));
     historyOnly = arguments != null && "true".equals(arguments.getString("historyOnly"));
+    spaceOnly = arguments != null && "true".equals(arguments.getString("spaceOnly"));
+    cacheOnly = arguments != null && "true".equals(arguments.getString("cacheOnly"));
     start();
   }
 
@@ -32,6 +36,18 @@ public final class HotCoreInstrumentation extends Instrumentation {
   public void onStart() {
     Bundle report = new Bundle();
     try {
+      if (cacheOnly) {
+        CacheCleanupChecks.run(getContext());
+        report.putString("stream", "Android缓存检查通过：内部原子认领、候选/活跃锁/未知字节/链接保护及真实跨挂载行为。\n");
+        finish(-1, report);
+        return;
+      }
+      if (spaceOnly) {
+        PreparationSpaceChecks.run(getContext());
+        report.putString("stream", "Android 整组空间检查通过：真实存储卷/FUSE映射、同盘合并、下载前拒绝与用户文件保留。\n");
+        finish(-1, report);
+        return;
+      }
       if (historyOnly) {
         File root = new File(getContext().getFilesDir(), "hot-history-" + UUID.randomUUID());
         check(root.mkdirs(), "无法创建独立历史目录");

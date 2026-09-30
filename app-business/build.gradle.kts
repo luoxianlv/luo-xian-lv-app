@@ -114,21 +114,8 @@ androidComponents.onVariants { variant ->
 
 dependencies {
     implementation(project(":business-ui"))
-    compileOnly(project(":hot-contract"))
-    compileOnly(libs.material)
-    compileOnly(platform(libs.compose.bom))
-    compileOnly(libs.compose.ui)
-    compileOnly(libs.compose.ui.tooling.preview)
-    compileOnly(libs.compose.material3)
-    compileOnly(libs.compose.material.icons.extended)
-    compileOnly(libs.activity.compose)
-    compileOnly(libs.lifecycle.viewmodel.compose)
-    compileOnly(libs.lifecycle.runtime.compose)
-    compileOnly(libs.navigation.compose)
-    compileOnly(libs.fastkv)
-    compileOnly(libs.kotlin.stdlib)
-    "releaseCompileOnly"(libs.umeng.common)
-    "releaseCompileOnly"(libs.umeng.asms)
-    "releaseCompileOnly"(libs.umeng.uyumao)
-    "releaseCompileOnly"(libs.umeng.apm)
 }
+
+// 当前变体真实 SDK JAR 通过 compileOnly 消费；资源链接仍使用运行时 APK / 符号。
+apply(from = rootProject.file("gradle/native-report.gradle.kts"))
+apply(from = rootProject.file("gradle/native-contract.gradle.kts"))

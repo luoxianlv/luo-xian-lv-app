@@ -295,10 +295,10 @@ final class HostUpdates {
     outbox = new HealthOutbox(new File(root, "health"));
     compactHistory();
     var budget = new DownloadBudget(new File(root, "budget"));
-    // 可执行内容始终复制回内部只读对象库；外部仅保留可观察的有界下载暂存。
-    File visible = application.getExternalFilesDir("hot-update");
+    // 热更断点使用内部目录，便于原子隔离后安全回收；用户壁纸/日志继续使用各自外部目录。
     var downloads =
-        new ObjectDownloader(new File(visible == null ? root : visible, "downloads"), budget);
+        new ObjectDownloader(new File(root, "downloads"), budget,
+            new File(root, "download-records-private-v1"));
     client =
         new UpdateClient(
             api,
@@ -311,7 +311,8 @@ final class HostUpdates {
             downloads,
             budget,
             state.config.mounts,
-            SystemClock::elapsedRealtime);
+            SystemClock::elapsedRealtime,
+            new PreparationSpace(application));
   }
 
   void usageChanged() {
@@ -603,7 +604,8 @@ final class HostUpdates {
           if (failure instanceof HttpObjectSource.Failure sourceFailure)
             retry = Math.max(retry, sourceFailure.retryAfterMillis);
           if (failure instanceof DownloadBudget.Deferred
-              || failure instanceof ContentCollector.Deferred) retry = INTERVAL;
+              || failure instanceof ContentCollector.Deferred
+              || failure instanceof PreparationSpace.Deferred) retry = INTERVAL;
           nextCheck = SystemClock.elapsedRealtime() + retry;
           Log.w("原生宿主", "自动热更暂缓，当前版本继续使用：" + failure.getClass().getSimpleName());
           usageChanged();

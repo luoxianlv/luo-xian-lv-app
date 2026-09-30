@@ -154,6 +154,7 @@ final class NativeFullOnlineChecks {
             budget,
             Collections.emptySet(),
             SystemClock::elapsedRealtime);
+    long receivedBefore = downloader.receivedBytes();
     var candidate = client.prepare(1, () -> false, () -> false);
     check(
         candidate != null
@@ -163,7 +164,7 @@ final class NativeFullOnlineChecks {
     check(
         !candidate.needsRestart(baseline.manifest.runtime.sha256, baseline.manifest.runtimeAbi),
         "实际共享运行时不一致");
-    check(downloader.partial(candidate.snapshot.manifest.business.sha256).isFile(), "候选没有经过实际网络下载");
+    check(downloader.receivedBytes() > receivedBefore, "候选没有经过实际网络下载");
     var ticket = client.authorize(candidate, 1, android.os.Process.myPid(), () -> false);
     var next =
         new NativeLoader(context, store, quarantine, 1)

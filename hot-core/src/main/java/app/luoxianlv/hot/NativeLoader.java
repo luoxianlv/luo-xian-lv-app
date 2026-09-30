@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.res.AssetManager;
 import android.content.res.Resources;
-import android.os.Build;
 import android.os.Looper;
 import android.view.LayoutInflater;
 import app.luoxianlv.hot.contract.BusinessFactory;
@@ -272,6 +271,8 @@ public final class NativeLoader {
     HotManifest manifest = snapshot.manifest;
     quarantine.requireAllowed(manifest, hostContract);
     store.verifySnapshotObjects(snapshot);
+    CompiledContract.require(application, store.objectFile(manifest.business.sha256));
+    new PreparationSpace(application).beforeLoad(store, snapshot, residentRuntimeHash());
     File mounted = null;
     if (manifest.artifacts.stream().anyMatch(artifact -> !artifact.mount.isEmpty()))
       mounted = new ResourceMounts(store).prepare(snapshot, supportedMounts);
@@ -301,10 +302,15 @@ public final class NativeLoader {
         shared.abi);
   }
 
+  public static synchronized String residentRuntimeHash() {
+    return runtime == null ? "" : runtime.hash;
+  }
+
   /** APK 签名保护的内置恢复组合；文件与哈希必须先由 BundledBaseline 校验，不能用于下载候选。 */
   public Prepared prepareBaseline(BundledBaseline baseline) throws Exception {
     StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "禁止在主线程准备内置业务");
     baseline.verify();
+    CompiledContract.require(application, baseline.business);
     RuntimeSlot shared;
     synchronized (NativeLoader.class) {
       if (runtime == null) {
@@ -455,60 +461,12 @@ public final class NativeLoader {
   }
 
   private static String extractLibraries(File apk, File directory) throws Exception {
-    try (ZipFile zip = new ZipFile(apk)) {
-      Set<String> supported = new HashSet<>();
-      Enumeration<? extends ZipEntry> scan = zip.entries();
-      while (scan.hasMoreElements()) {
-        String name = scan.nextElement().getName();
-        if (name.startsWith("lib/") && name.endsWith(".so")) {
-          String[] parts = name.split("/");
-          StrictJson.require(parts.length == 3, "原生库路径无效");
-          supported.add(parts[1]);
-        }
-      }
-      if (supported.isEmpty()) return null;
-      String chosen = null;
-      for (String abi : Build.SUPPORTED_ABIS)
-        if (supported.contains(abi)) {
-          chosen = abi;
-          break;
-        }
-      StrictJson.require(chosen != null, "运行时不支持当前设备 CPU 架构");
-      StrictJson.require(directory.isDirectory() || directory.mkdirs(), "无法创建原生库目录");
-      long total = 0;
-      Enumeration<? extends ZipEntry> entries = zip.entries();
-      while (entries.hasMoreElements()) {
-        ZipEntry entry = entries.nextElement();
-        if (!entry.getName().startsWith("lib/" + chosen + "/") || !entry.getName().endsWith(".so"))
-          continue;
-        String name = entry.getName().substring(entry.getName().lastIndexOf('/') + 1);
-        StrictJson.require(
-            name.matches("[A-Za-z0-9_.-]+\\.so")
-                && entry.getSize() > 0
-                && entry.getSize() <= HotManifest.MAX_EXPANDED,
-            "原生库名称或大小无效");
-        total += entry.getSize();
-        StrictJson.require(total <= HotManifest.MAX_EXPANDED, "原生库展开总量超限");
-        File target = new File(directory, name);
-        if (target.exists()) Files.delete(target.toPath());
-        try (InputStream input = zip.getInputStream(entry);
-            FileOutputStream output = new FileOutputStream(target)) {
-          StrictJson.require(target.setReadOnly(), "无法将原生库设为只读");
-          byte[] buffer = new byte[32768];
-          long copied = 0;
-          int n;
-          while ((n = input.read(buffer)) != -1) {
-            copied += n;
-            StrictJson.require(copied <= entry.getSize(), "原生库展开超限");
-            output.write(buffer, 0, n);
-          }
-          StrictJson.require(copied == entry.getSize(), "原生库展开不完整");
-          output.getFD().sync();
-        }
-      }
-      ContentStore.syncDirectory(directory);
-      return directory.getAbsolutePath();
-    }
+    var plan = NativeLibraries.inspect(apk, directory, NativeLibraries.systemAbis());
+    new PreparationSpace()
+        .admit(
+            java.util.List.of(
+                new PreparationSpace.Demand(directory.getParentFile(), plan.bytes, plan.paths)));
+    return plan.materialize();
   }
 
   static final class PageContext extends android.view.ContextThemeWrapper {

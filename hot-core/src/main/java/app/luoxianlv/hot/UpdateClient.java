@@ -43,6 +43,7 @@ public final class UpdateClient {
   private final DownloadBudget budget;
   private final Set<String> mounts;
   private final LongSupplier elapsed;
+  private final PreparationSpace space;
 
   public UpdateClient(
       HotApiClient api,
@@ -56,6 +57,34 @@ public final class UpdateClient {
       DownloadBudget budget,
       Set<String> mounts,
       LongSupplier elapsed) {
+    this(
+        api,
+        root,
+        store,
+        trust,
+        journal,
+        controller,
+        quarantine,
+        downloads,
+        budget,
+        mounts,
+        elapsed,
+        new PreparationSpace());
+  }
+
+  public UpdateClient(
+      HotApiClient api,
+      HotSignatures.PublicKey root,
+      ContentStore store,
+      TrustStore trust,
+      ActivationJournal journal,
+      ActivationController controller,
+      ContentQuarantine quarantine,
+      ObjectDownloader downloads,
+      DownloadBudget budget,
+      Set<String> mounts,
+      LongSupplier elapsed,
+      PreparationSpace space) {
     this.api = api;
     this.root = root;
     this.store = store;
@@ -67,6 +96,7 @@ public final class UpdateClient {
     this.budget = budget;
     this.mounts = Collections.unmodifiableSet(new HashSet<>(mounts));
     this.elapsed = elapsed;
+    this.space = java.util.Objects.requireNonNull(space);
   }
 
   /** 返回 null 表示当前无需准备；计费网络超限、取消和网络失败均保留原稳定版本。 */
@@ -88,6 +118,8 @@ public final class UpdateClient {
       else missing.put(object.getKey(), object.getValue());
     }
     LongSupplier remaining = () -> missingBytes(missing);
+    downloads.collect(candidate.manifest.objects.keySet(), 256L << 20);
+    space.beforeDownload(store, downloads, candidate.manifest, NativeLoader.residentRuntimeHash());
     // 连接第一个对象前检查整组；对象下载器在切网和预留预算时继续检查。
     budget.admit(candidate.manifest.contentId, remaining.getAsLong(), metered.getAsBoolean());
     Map<String, File> obtained = new HashMap<>();
@@ -105,7 +137,9 @@ public final class UpdateClient {
               remaining));
     }
     cancellation(cancelled);
+    space.beforeCommit(store, candidate.manifest, obtained, NativeLoader.residentRuntimeHash());
     ContentStore.Snapshot snapshot = store.prepare(new DownloadedSnapshot(candidate, obtained));
+    downloads.committed(store, snapshot);
     return new PreparedUpdate(snapshot, decision.kind.equals("recover"));
   }
 

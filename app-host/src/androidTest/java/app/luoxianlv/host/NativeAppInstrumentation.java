@@ -36,6 +36,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String prepareStable;
   private String controlledRecovery;
   private boolean collectionOnly;
+  private String continuousPlan;
+  private boolean compiledContractOnly;
   private app.luoxianlv.hot.contract.ProcessHooks heldProcess;
   private final java.util.concurrent.CountDownLatch workRelease =
       new java.util.concurrent.CountDownLatch(1);
@@ -80,6 +82,9 @@ public final class NativeAppInstrumentation extends Instrumentation {
     prepareStable = arguments == null ? null : arguments.getString("prepareStable");
     controlledRecovery = arguments == null ? null : arguments.getString("controlledRecovery");
     collectionOnly = arguments != null && "true".equals(arguments.getString("collectionOnly"));
+    continuousPlan = arguments == null ? null : arguments.getString("continuousPlan");
+    compiledContractOnly =
+        arguments != null && "true".equals(arguments.getString("compiledContractOnly"));
     start();
   }
 
@@ -298,6 +303,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
       automation.setServiceInfo(info);
       previousServices = shell("settings get secure enabled_accessibility_services");
       previousEnabled = shell("settings get secure accessibility_enabled");
+      if (continuousPlan != null) NativeContinuousChecks.pauseBeforeActivity(this);
       if (holdWork) {
         await(
             "持有工作前业务未就绪",
@@ -358,7 +364,15 @@ public final class NativeAppInstrumentation extends Instrumentation {
         require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
         workRelease.countDown();
       }
-      if (collectionOnly) {
+      if (compiledContractOnly) {
+        NativeCompiledContractChecks.run(this);
+        report.putString("stream", "通过：签名有效但编译 SDK 错误的候选在加载前拒绝，当前业务与运行时保持。\n");
+        success = true;
+      } else if (continuousPlan != null) {
+        NativeContinuousChecks.run(this, main, continuousPlan, this::click, previousServices);
+        report.putString("stream", "通过：同一 PID 连续不同业务候选、真实健康观察、整组回退与宿主持有上界。\n");
+        success = true;
+      } else if (collectionOnly) {
         NativeContentCollectionChecks.run(this);
         report.putString("stream", "通过：真实宿主后台更新线程回收无引用对象，保留运行和恢复组合，页面继续可用。\n");
         success = true;

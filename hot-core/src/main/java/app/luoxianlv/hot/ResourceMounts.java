@@ -12,16 +12,38 @@ import java.util.Set;
 
 /** 资源只展开到候选自己的不可变目录；失败时不覆盖当前资源，也不执行包内文件。 */
 public final class ResourceMounts {
+  record Expansion(long bytes, long paths) {}
+
+  static Expansion expansion(HotManifest.Artifact artifact, File source) throws Exception {
+    if (artifact.role.equals("config")) return new Expansion(artifact.size, 2);
+    long bytes = 0, paths = 1;
+    try (ZipContainer zip =
+        new ZipContainer(source, HotManifest.MAX_OBJECTS, HotManifest.MAX_EXPANDED, true)) {
+      validateNames(zip);
+      for (ZipContainer.Entry entry : zip.entries.values()) {
+        bytes = Math.addExact(bytes, entry.size);
+        paths = Math.addExact(paths, entry.name.split("/", -1).length);
+      }
+    }
+    return new Expansion(bytes, paths);
+  }
+
   private final ContentStore store;
+  private final PreparationSpace space;
 
   public ResourceMounts(ContentStore store) {
+    this(store, new PreparationSpace());
+  }
+
+  ResourceMounts(ContentStore store, PreparationSpace space) {
     this.store = store;
+    this.space = space;
   }
 
   public File prepare(ContentStore.Snapshot snapshot, Set<String> allowedMounts) throws Exception {
     File destination = new File(snapshot.directory, "resources");
     // 不把已有目录名当作验证证据；新启动重新校验对象与资源归档边界。
-    long total = 0;
+    long total = 0, resourceBytes = 0, resourcePaths = 0;
     for (HotManifest.Artifact artifact : snapshot.manifest.artifacts) {
       if (artifact.mount.isEmpty()) {
         total += artifact.size;
@@ -30,13 +52,10 @@ public final class ResourceMounts {
       StrictJson.require(allowedMounts.contains(artifact.mount), "宿主不支持资源挂载点");
       File source = store.objectFile(artifact.sha256);
       ContentStore.verifyFile(source, artifact.sha256, artifact.size);
-      if (artifact.role.equals("resources"))
-        try (ZipContainer zip =
-            new ZipContainer(source, HotManifest.MAX_OBJECTS, HotManifest.MAX_EXPANDED, true)) {
-          validateNames(zip);
-          for (ZipContainer.Entry entry : zip.entries.values()) total += entry.size;
-        }
-      else total += artifact.size;
+      var expanded = expansion(artifact, source);
+      resourceBytes = Math.addExact(resourceBytes, expanded.bytes);
+      resourcePaths = Math.addExact(resourcePaths, expanded.paths);
+      total = Math.addExact(total, expanded.bytes);
       StrictJson.require(total <= HotManifest.MAX_EXPANDED, "整个资源候选展开大小超限");
     }
     StrictJson.require(total <= HotManifest.MAX_EXPANDED, "整个候选大小超限");
@@ -46,8 +65,8 @@ public final class ResourceMounts {
       verifyExisting(snapshot, destination);
       return destination;
     }
-    StrictJson.require(
-        snapshot.directory.getUsableSpace() >= total + 16L * StrictJson.MAX_BYTES, "没有足够空间准备资源");
+    space.admit(java.util.List.of(
+        new PreparationSpace.Demand(snapshot.directory, resourceBytes, resourcePaths)));
     Path staging = Files.createTempDirectory(snapshot.directory.toPath(), "resources-");
     try {
       for (HotManifest.Artifact artifact : snapshot.manifest.artifacts) {

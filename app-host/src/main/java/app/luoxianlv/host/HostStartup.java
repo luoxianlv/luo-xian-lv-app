@@ -46,6 +46,11 @@ final class HostStartup {
         snapshot = store.snapshot(id);
         return loader.prepareStable(snapshot, journal.state(), trust, config.environment);
       } catch (Exception | LinkageError unavailable) {
+        if (unavailable instanceof PreparationSpace.Deferred) {
+          // 磁盘暂时不足不证明稳定内容失效；本进程采用安装包组合，下次仍尝试原稳定选择。
+          Log.w("原生宿主", "稳定组合因空间暂缓，保留稳定选择并暂用安装包恢复组合");
+          return null;
+        }
         // 尚未执行业务时可以放弃失败加载器；不能拿残留的新运行时混装旧恢复组合。
         if (snapshot != null
             && !loader.discardUninitializedRuntime(snapshot.manifest.runtime.sha256))
