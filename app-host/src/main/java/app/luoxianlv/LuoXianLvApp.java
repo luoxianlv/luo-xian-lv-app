@@ -9,7 +9,7 @@ public final class LuoXianLvApp extends Application {
   @Override
   public void onCreate() {
     super.onCreate();
-    CrashLog.install(this);
+    CrashLog.install(this, Bootstrap::recordCrash);
     Bootstrap.start(this);
   }
 

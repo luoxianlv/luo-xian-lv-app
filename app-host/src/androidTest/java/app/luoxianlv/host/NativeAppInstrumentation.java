@@ -32,6 +32,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String coldRuntime;
   private String offlineRestart;
   private boolean holdWork;
+  private String crashStable, recoveredSnapshot, recoveredFrom;
+  private String prepareStable;
   private app.luoxianlv.hot.contract.ProcessHooks heldProcess;
   private final java.util.concurrent.CountDownLatch workRelease =
       new java.util.concurrent.CountDownLatch(1);
@@ -70,6 +72,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
     coldRuntime = arguments == null ? null : arguments.getString("coldRuntime");
     offlineRestart = arguments == null ? null : arguments.getString("offlineRestart");
     holdWork = arguments != null && "true".equals(arguments.getString("holdWork"));
+    crashStable = arguments == null ? null : arguments.getString("crashStable");
+    recoveredSnapshot = arguments == null ? null : arguments.getString("recoveredSnapshot");
+    recoveredFrom = arguments == null ? null : arguments.getString("recoveredFrom");
+    prepareStable = arguments == null ? null : arguments.getString("prepareStable");
     start();
   }
 
@@ -348,7 +354,17 @@ public final class NativeAppInstrumentation extends Instrumentation {
         require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
         workRelease.countDown();
       }
-      if (offlineRestart != null) {
+      if (prepareStable != null) {
+        NativeStableRecoveryChecks.prepare(this, main, prepareStable);
+        report.putString("stream", "通过：真实进程故障前的稳定组合与用户文件资料准备完成。\n");
+        success = true;
+      } else if (crashStable != null) {
+        NativeStableRecoveryChecks.crash(this, main, crashStable);
+      } else if (recoveredSnapshot != null) {
+        NativeStableRecoveryChecks.recovered(this, main, recoveredSnapshot, recoveredFrom);
+        report.putString("stream", "通过：稳定组合真实进程崩溃后，在业务加载前恢复旧版、隔离内容并保留用户文件和版本下限。\n");
+        success = true;
+      } else if (offlineRestart != null) {
         require(app.luoxianlv.hot.HotManifest.validHash(offlineRestart), "离线目标身份无效");
         var startup = Bootstrap.startupState();
         require(

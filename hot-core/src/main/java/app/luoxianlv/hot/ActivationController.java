@@ -159,10 +159,20 @@ public final class ActivationController {
 
   /** 仅真实使用时间达标后稳定；返回 false 表示还需保留可恢复的旧页面。 */
   public boolean healthy(Ticket ticket) throws Exception {
+    return healthy(ticket, () -> {});
+  }
+
+  public interface BeforeHealthy {
+    void save() throws Exception;
+  }
+
+  /** 先保存继续运行的身份，再确认稳定；两个落盘之间退出仍由原试运行事务恢复。 */
+  public boolean healthy(Ticket ticket, BeforeHealthy beforeHealthy) throws Exception {
     transaction.lock();
     try {
       requireCurrent(ticket);
       if (!ticket.exposed || ticket.health.observedMillis() < 60000) return false;
+      beforeHealthy.save();
       journal.healthy(ticket.attemptId, ticket.health.observedMillis());
       ticket.finished = true;
       current = null;

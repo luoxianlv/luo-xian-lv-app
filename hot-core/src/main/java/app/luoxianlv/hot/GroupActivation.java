@@ -24,6 +24,8 @@ public final class GroupActivation implements GroupHandover.Listener {
 
     NativeLoader.Prepared recoverySource();
 
+    default void beforeHealthy(NativeLoader.Prepared source, String attempt) throws Exception {}
+
     BusinessFactory recoveryFactory();
   }
 
@@ -228,7 +230,9 @@ public final class GroupActivation implements GroupHandover.Listener {
       execute(
           () -> {
             try {
-              boolean healthy = controller.healthy(ticket);
+              boolean healthy =
+                  controller.healthy(
+                      ticket, () -> environment.beforeHealthy(prepared, ticket.attemptId));
               main.post(
                   () -> {
                     checking = false;

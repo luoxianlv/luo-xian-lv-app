@@ -48,7 +48,16 @@ public final class HotProbeFactory implements BusinessFactory {
     }
   }
 
-  private record Main(NativePage delegate) implements NativePage {
+  private static final class Main implements NativePage {
+    private final NativePage delegate;
+    private final android.os.Handler fault =
+        new android.os.Handler(android.os.Looper.getMainLooper());
+    private Context context;
+
+    Main(NativePage delegate) {
+      this.delegate = delegate;
+    }
+
     @Override
     public void attachHost(HostActions host) {
       delegate.attachHost(host);
@@ -56,6 +65,7 @@ public final class HotProbeFactory implements BusinessFactory {
 
     @Override
     public View create(Context context, Bundle saved, Bundle state, Events events, Ready ready) {
+      this.context = context;
       FrameLayout root = new FrameLayout(context);
       root.addView(
           delegate.create(context, saved, state, events, ready),
@@ -88,12 +98,35 @@ public final class HotProbeFactory implements BusinessFactory {
 
     @Override
     public void close() {
+      fault.removeCallbacksAndMessages(null);
+      context = null;
       delegate.close();
     }
 
     @Override
     public void newIntent(Intent intent) {
       delegate.newIntent(intent);
+      // 仅存在于显式测试候选：普通启动后注入真实业务线程崩溃或无响应，不改系统退出记录。
+      String kind = intent.getStringExtra("native.hot.fault");
+      if (!"crash".equals(kind) && !"anr".equals(kind)) return;
+      fault.postDelayed(
+          () -> {
+            if (context == null) return;
+            try {
+              var file = new java.io.File(context.getFilesDir(), "native-stable-crash-before.json");
+              var report = new org.json.JSONObject(java.nio.file.Files.readString(file.toPath()));
+              report
+                  .put("pid", android.os.Process.myPid())
+                  .put("kind", kind)
+                  .put("injectedAt", System.currentTimeMillis());
+              java.nio.file.Files.writeString(file.toPath(), report.toString(2));
+            } catch (Exception failure) {
+              throw new IllegalStateException("测试故障资料未保存", failure);
+            }
+            if (kind.equals("crash")) throw new IllegalStateException("测试：原生业务模块未捕获异常");
+            new android.os.ConditionVariable().block();
+          },
+          3000);
     }
 
     @Override

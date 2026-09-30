@@ -97,12 +97,50 @@ public final class OutcomeRecoveryTest {
   }
 
   @Test
+  public void versionThreeHealthyReceiptRetainsItsKnownAttemptWhenUpgraded() throws Exception {
+    File root = temporary.newFolder();
+    String target = id("legacy-stable"), attempt = UUID.randomUUID().toString();
+    var bytes = new java.io.ByteArrayOutputStream();
+    try (var out = new java.io.DataOutputStream(bytes)) {
+      out.writeInt(0x4c58484a);
+      out.writeInt(3);
+      out.writeUTF(target);
+      out.writeUTF(target);
+      out.writeUTF("");
+      out.writeUTF("");
+      out.writeLong(7);
+      out.writeLong(3);
+      out.writeLong(0);
+      out.writeInt(0);
+      out.writeUTF("STABLE");
+      out.writeInt(0);
+      out.writeUTF("");
+      out.writeInt(1);
+      out.writeUTF(attempt);
+      out.writeUTF(target);
+      out.writeUTF("healthy");
+      out.writeUTF("foreground_observed");
+    }
+    byte[] body = bytes.toByteArray();
+    bytes.write(MessageDigest.getInstance("SHA-256").digest(body));
+    Files.write(new File(root, "activation.bin").toPath(), bytes.toByteArray());
+    var journal = new ActivationJournal(root);
+    assertEquals(attempt, journal.state().stableAttempt);
+    OutcomeRecovery.reconcile(journal, new HealthOutbox(temporary.newFolder()));
+    var reopened = new ActivationJournal(root);
+    assertEquals(attempt, reopened.state().stableAttempt);
+    assertTrue(reopened.state().outcomes.isEmpty());
+    assertEquals(7, reopened.state().revision);
+    assertEquals(3, reopened.state().trustVersion);
+  }
+
+  @Test
   public void oldJournalAndOutboxFormatsUpgradeWithoutResettingFloorsOrSequence() throws Exception {
     File root = temporary.newFolder(), queueRoot = temporary.newFolder();
     var journal = new ActivationJournal(root);
     journal.observeVersions(7, 3);
     byte[] current = Files.readAllBytes(new File(root, "activation.bin").toPath());
-    byte[] body = java.util.Arrays.copyOf(current, current.length - 36);
+    byte[] body = java.util.Arrays.copyOf(current, current.length - 40);
     java.nio.ByteBuffer.wrap(body).putInt(4, 2);
     var old = new java.io.ByteArrayOutputStream();
     old.write(body);

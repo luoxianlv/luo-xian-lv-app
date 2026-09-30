@@ -177,6 +177,12 @@ public final class Bootstrap {
               }
 
               @Override
+              public void beforeHealthy(NativeLoader.Prepared prepared, String attempt)
+                  throws Exception {
+                if (startup != null) startup.recordExecution(prepared.manifest, attempt);
+              }
+
+              @Override
               public BusinessFactory recoveryFactory() {
                 return previous.factory;
               }
@@ -343,6 +349,12 @@ public final class Bootstrap {
                     : stable != null
                         ? stable
                         : loader.prepareBaseline(BundledBaseline.prepare(application));
+            if (startup != null && prepared.manifest != null)
+              startup.recordExecution(
+                  prepared.manifest,
+                  cold != null
+                      ? startup.journal.state().attempt
+                      : startup.journal.state().stableAttempt);
             MAIN.post(() -> initializePrepared(prepared, worker));
           } catch (Throwable error) {
             MAIN.post(
@@ -458,6 +470,21 @@ public final class Bootstrap {
 
   static HostStartup startupState() {
     return startup;
+  }
+
+  /** 未捕获异常路径只保存宿主拥有的运行身份；不调用故障业务的诊断或持久化代码。 */
+  public static String recordCrash(Thread thread, Throwable error) throws Exception {
+    HostStartup state = startup;
+    if (state == null) return "";
+    Source selected = source;
+    if (selected != null && selected.prepared.manifest != null)
+      state.ensureExecution(selected.prepared.manifest);
+    if (state.running != null) {
+      state.execution.crashed(
+          state.running, android.os.Process.myPid(), System.currentTimeMillis());
+      return "；热更组合=" + state.running.snapshot;
+    }
+    return "";
   }
 
   public static void trim(int level) {

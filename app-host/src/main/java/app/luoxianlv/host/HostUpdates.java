@@ -175,7 +175,10 @@ final class HostUpdates {
       worker.execute(
           () -> {
             try {
-              boolean healthy = controller.healthy(ticket);
+              boolean healthy =
+                  controller.healthy(
+                      ticket,
+                      () -> state.recordExecution(ticket.snapshot.manifest, ticket.attemptId));
               if (healthy) {
                 state.pendingRestart.clear(ticket.snapshot.manifest.snapshotId);
                 OutcomeRecovery.reconcile(state.journal, outbox);

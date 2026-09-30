@@ -47,7 +47,11 @@ public final class ActivationJournal {
       new HealthEvent(attemptId, 1, kind, code);
       StrictJson.require(
           HotManifest.validHash(snapshotId)
-              && (kind.equals("healthy") || kind.equals("recovered") || kind.equals("load_failed")),
+              && (kind.equals("healthy")
+                  || kind.equals("recovered")
+                  || kind.equals("load_failed")
+                  || kind.equals("crash")
+                  || kind.equals("anr")),
           "激活结果回执无效");
       this.attemptId = attemptId;
       this.snapshotId = snapshotId;
@@ -59,6 +63,7 @@ public final class ActivationJournal {
   public static final class State {
     public final String stable, active, candidate, attempt;
     public final String previousStable;
+    public final String stableAttempt, previousStableAttempt;
     public final long revision, trustVersion, startedAt;
     public final int processId;
     public final Phase phase;
@@ -114,7 +119,9 @@ public final class ActivationJournal {
           phase,
           quarantine,
           previousStable,
-          Collections.emptyList());
+          Collections.emptyList(),
+          "",
+          "");
     }
 
     private State(
@@ -129,7 +136,9 @@ public final class ActivationJournal {
         Phase phase,
         Set<String> quarantine,
         String previousStable,
-        List<Outcome> outcomes) {
+        List<Outcome> outcomes,
+        String stableAttempt,
+        String previousStableAttempt) {
       this.stable = stable;
       this.active = active;
       this.candidate = candidate;
@@ -141,6 +150,8 @@ public final class ActivationJournal {
       this.phase = phase;
       this.quarantine = Collections.unmodifiableSet(new LinkedHashSet<>(quarantine));
       this.previousStable = previousStable;
+      this.stableAttempt = stableAttempt;
+      this.previousStableAttempt = previousStableAttempt;
       this.outcomes = Collections.unmodifiableList(new ArrayList<>(outcomes));
     }
 
@@ -157,7 +168,9 @@ public final class ActivationJournal {
           phase,
           quarantine,
           previous,
-          outcomes);
+          outcomes,
+          stableAttempt,
+          previous.isEmpty() ? "" : previousStableAttempt);
     }
 
     State withOutcomes(List<Outcome> receipts) {
@@ -173,7 +186,27 @@ public final class ActivationJournal {
           phase,
           quarantine,
           previousStable,
-          receipts);
+          receipts,
+          stableAttempt,
+          previousStableAttempt);
+    }
+
+    State withStableAttempts(String current, String previous) {
+      return new State(
+          stable,
+          active,
+          candidate,
+          attempt,
+          revision,
+          trustVersion,
+          startedAt,
+          processId,
+          phase,
+          quarantine,
+          previousStable,
+          outcomes,
+          current,
+          previous);
     }
   }
 
@@ -265,6 +298,7 @@ public final class ActivationJournal {
                 Phase.STABLE,
                 state.quarantine)
             .withPrevious(state.stable)
+            .withStableAttempts(state.attempt, state.stableAttempt)
             .withOutcomes(addedOutcome("healthy", "foreground_observed")));
   }
 
@@ -340,6 +374,9 @@ public final class ActivationJournal {
                 Phase.STABLE,
                 quarantine)
             .withPrevious(quarantine.contains(state.previousStable) ? "" : state.previousStable)
+            .withStableAttempts(
+                state.stableAttempt,
+                quarantine.contains(state.previousStable) ? "" : state.previousStableAttempt)
             .withOutcomes(outcomes));
   }
 
@@ -354,14 +391,34 @@ public final class ActivationJournal {
     revertStable(manifest, contentQuarantine, hostContract, true);
   }
 
+  /** 系统退出证据必须由宿主先匹配当前内容、进程与执行时间，不能仅凭上次有崩溃回退。 */
+  public synchronized void stableProcessFailed(
+      HotManifest manifest,
+      ContentQuarantine contentQuarantine,
+      long hostContract,
+      ExitReason reason)
+      throws Exception {
+    StrictJson.require(reason == ExitReason.CRASH || reason == ExitReason.ANR, "不是内容进程故障");
+    requireStable(manifest);
+    contentQuarantine.isolate(manifest, hostContract);
+    Set<String> quarantined = new LinkedHashSet<>(state.quarantine);
+    quarantined.add(state.stable);
+    restoreStable(
+        quarantined, reason == ExitReason.CRASH ? "crash" : "anr", "stable_process_failed");
+  }
+
+  private void requireStable(HotManifest manifest) {
+    StrictJson.require(
+        state.phase == Phase.STABLE && state.stable.equals(manifest.snapshotId), "故障报告不属于当前稳定内容");
+  }
+
   synchronized void revertStable(
       HotManifest manifest,
       ContentQuarantine contentQuarantine,
       long hostContract,
       boolean confirmed)
       throws Exception {
-    StrictJson.require(
-        state.phase == Phase.STABLE && state.stable.equals(manifest.snapshotId), "故障报告不属于当前稳定内容");
+    requireStable(manifest);
     if (confirmed) contentQuarantine.isolate(manifest, hostContract);
     Set<String> quarantined = new LinkedHashSet<>(state.quarantine);
     if (confirmed) quarantined.add(state.stable);
@@ -379,17 +436,26 @@ public final class ActivationJournal {
   }
 
   private void restoreStable(Set<String> quarantined) throws Exception {
+    restoreStable(
+        quarantined,
+        quarantined.contains(state.stable) ? "load_failed" : "recovered",
+        quarantined.contains(state.stable) ? "business_failed" : "whole_group_restored");
+  }
+
+  private void restoreStable(Set<String> quarantined, String kind, String code) throws Exception {
     String fallback = quarantined.contains(state.previousStable) ? "" : state.previousStable;
     List<Outcome> outcomes = new ArrayList<>();
     for (var outcome : state.outcomes)
       outcomes.add(
           outcome.snapshotId.equals(state.stable)
-              ? new Outcome(
-                  outcome.attemptId,
-                  outcome.snapshotId,
-                  quarantined.contains(state.stable) ? "load_failed" : "recovered",
-                  quarantined.contains(state.stable) ? "business_failed" : "whole_group_restored")
+              ? new Outcome(outcome.attemptId, outcome.snapshotId, kind, code)
               : outcome);
+    // 健康回执即使早已送达，后来真实发生的故障仍沿用原许可尝试，不能凭空生成服务端未知编号。
+    if (!state.stableAttempt.isEmpty()
+        && outcomes.stream().noneMatch(value -> value.attemptId.equals(state.stableAttempt))) {
+      StrictJson.require(outcomes.size() < 128, "待保存的激活结果过多，保留未确认记录");
+      outcomes.add(new Outcome(state.stableAttempt, state.stable, kind, code));
+    }
     save(
         new State(
                 fallback,
@@ -402,6 +468,7 @@ public final class ActivationJournal {
                 0,
                 Phase.STABLE,
                 quarantined)
+            .withStableAttempts(fallback.isEmpty() ? "" : state.previousStableAttempt, "")
             .withOutcomes(outcomes));
   }
 
@@ -430,6 +497,9 @@ public final class ActivationJournal {
     save(
         next.withPrevious(
                 next.quarantine.contains(state.previousStable) ? "" : state.previousStable)
+            .withStableAttempts(
+                state.stableAttempt,
+                next.quarantine.contains(state.previousStable) ? "" : state.previousStableAttempt)
             .withOutcomes(state.outcomes));
   }
 
@@ -472,7 +542,7 @@ public final class ActivationJournal {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(buffer)) {
       out.writeInt(MAGIC);
-      out.writeInt(3);
+      out.writeInt(4);
       out.writeUTF(state.stable);
       out.writeUTF(state.active);
       out.writeUTF(state.candidate);
@@ -492,6 +562,8 @@ public final class ActivationJournal {
         out.writeUTF(outcome.kind);
         out.writeUTF(outcome.code);
       }
+      out.writeUTF(state.stableAttempt);
+      out.writeUTF(state.previousStableAttempt);
     }
     byte[] body = buffer.toByteArray();
     buffer.write(MessageDigest.getInstance("SHA-256").digest(body));
@@ -509,7 +581,7 @@ public final class ActivationJournal {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
       StrictJson.require(input.readInt() == MAGIC, "激活日志格式不支持");
       int format = input.readInt();
-      StrictJson.require(format == 2 || format == 3, "激活日志格式不支持");
+      StrictJson.require(format == 2 || format == 3 || format == 4, "激活日志格式不支持");
       String stable = input.readUTF(),
           active = input.readUTF(),
           candidate = input.readUTF(),
@@ -538,6 +610,22 @@ public final class ActivationJournal {
           outcomes.add(outcome);
         }
       }
+      String stableAttempt = format >= 4 ? input.readUTF() : "";
+      String previousAttempt = format >= 4 ? input.readUTF() : "";
+      if (format < 4) {
+        for (var outcome : outcomes) {
+          if (outcome.kind.equals("healthy") && outcome.snapshotId.equals(stable))
+            stableAttempt = outcome.attemptId;
+          if (outcome.kind.equals("healthy") && outcome.snapshotId.equals(previousStable))
+            previousAttempt = outcome.attemptId;
+        }
+      }
+      for (String id : new String[] {stableAttempt, previousAttempt})
+        StrictJson.require(id.isEmpty() || UUID.fromString(id).toString().equals(id), "稳定尝试编号无效");
+      StrictJson.require(
+          (!stable.isEmpty() || stableAttempt.isEmpty())
+              && (!previousStable.isEmpty() || previousAttempt.isEmpty()),
+          "稳定尝试与快照不一致");
       StrictJson.require(
           (previousStable.isEmpty() || HotManifest.validHash(previousStable))
               && !quarantine.contains(previousStable),
@@ -579,6 +667,7 @@ public final class ActivationJournal {
               phase,
               quarantine,
               previousStable)
+          .withStableAttempts(stableAttempt, previousAttempt)
           .withOutcomes(outcomes);
     }
   }

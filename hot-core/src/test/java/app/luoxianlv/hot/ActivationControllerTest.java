@@ -45,6 +45,39 @@ public final class ActivationControllerTest {
   }
 
   @Test
+  public void continuingExecutionMustPersistBeforeHealthyAndFailureKeepsTrial() throws Exception {
+    Fixture f = new Fixture();
+    var ticket = f.begin();
+    f.controller.firstFrame(ticket);
+    assertTrue(f.controller.expose(ticket, () -> {}));
+    f.controller.setActive(ticket, true);
+    var calls = new AtomicInteger();
+    assertFalse(f.controller.healthy(ticket, calls::incrementAndGet));
+    assertEquals(0, calls.get());
+    f.clock.addAndGet(60000);
+    assertThrows(
+        java.io.IOException.class,
+        () ->
+            f.controller.healthy(
+                ticket,
+                () -> {
+                  assertEquals(ActivationJournal.Phase.TRIAL, f.journal.state().phase);
+                  throw new java.io.IOException("测试：运行身份无法落盘");
+                }));
+    assertEquals(ActivationJournal.Phase.TRIAL, f.journal.state().phase);
+    assertTrue(f.controller.valid(ticket));
+    assertTrue(
+        f.controller.healthy(
+            ticket,
+            () -> {
+              assertEquals(ActivationJournal.Phase.TRIAL, f.journal.state().phase);
+              calls.incrementAndGet();
+            }));
+    assertEquals(1, calls.get());
+    assertEquals(ticket.attemptId, f.journal.state().stableAttempt);
+  }
+
+  @Test
   public void serverAttemptSurvivesDiskAndOnlyActualExposedTimeCounts() throws Exception {
     Fixture f = new Fixture();
     ActivationController.Ticket ticket = f.begin();

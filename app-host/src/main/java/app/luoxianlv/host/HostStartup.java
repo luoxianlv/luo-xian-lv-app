@@ -17,6 +17,8 @@ final class HostStartup {
   final ContentQuarantine quarantine;
   final NativeLoader loader;
   final PendingRestart pendingRestart;
+  final ExecutionJournal execution;
+  volatile ExecutionJournal.Run running;
 
   private HostStartup(Application application, HostUpdateConfig config) throws Exception {
     this.config = config;
@@ -27,6 +29,7 @@ final class HostStartup {
     quarantine = new ContentQuarantine(new File(root, "quarantine"));
     loader = new NativeLoader(application, store, quarantine, config.hostContract, config.mounts);
     pendingRestart = new PendingRestart(new File(root, "restart"));
+    execution = new ExecutionJournal(new File(root, "execution"));
     recoverPending(application);
   }
 
@@ -38,45 +41,122 @@ final class HostStartup {
   NativeLoader.Prepared prepareStable() throws Exception {
     while (!journal.state().stable.isEmpty()) {
       String id = journal.state().stable;
+      ContentStore.Snapshot snapshot = null;
       try {
-        return loader.prepareStable(store.snapshot(id), journal.state(), trust, config.environment);
-      } catch (Exception unavailable) {
+        snapshot = store.snapshot(id);
+        return loader.prepareStable(snapshot, journal.state(), trust, config.environment);
+      } catch (Exception | LinkageError unavailable) {
+        // 尚未执行业务时可以放弃失败加载器；不能拿残留的新运行时混装旧恢复组合。
+        if (snapshot != null
+            && !loader.discardUninitializedRuntime(snapshot.manifest.runtime.sha256))
+          throw new IllegalStateException("稳定运行时已开始执行，不能在本进程混合恢复", unavailable);
         Log.w("原生宿主", "稳定组合不可用，恢复上一版本：" + unavailable.getClass().getSimpleName());
-        journal.unavailableStable(id);
+        if (snapshot != null
+            && (unavailable instanceof ReflectiveOperationException
+                || unavailable instanceof LinkageError))
+          journal.stableContentFailed(snapshot.manifest, quarantine, config.hostContract);
+        else journal.unavailableStable(id);
       }
     }
     return null;
   }
 
   private void recoverPending(Application application) throws Exception {
+    var previous = execution.current();
     var state = journal.state();
-    if (state.phase == ActivationJournal.Phase.STABLE) return;
-    if (Build.VERSION.SDK_INT >= 30) {
-      try {
-        ActivityManager manager = application.getSystemService(ActivityManager.class);
-        for (var exit :
-            manager.getHistoricalProcessExitReasons(
-                application.getPackageName(), state.processId, 16)) {
-          if (exit.getPid() != state.processId
-              || exit.getTimestamp() < state.startedAt
-              || !application.getPackageName().equals(exit.getProcessName())) continue;
-          ActivationJournal.ExitReason reason =
-              switch (exit.getReason()) {
-                case ApplicationExitInfo.REASON_CRASH, ApplicationExitInfo.REASON_CRASH_NATIVE ->
-                    ActivationJournal.ExitReason.CRASH;
-                case ApplicationExitInfo.REASON_ANR -> ActivationJournal.ExitReason.ANR;
-                case ApplicationExitInfo.REASON_USER_REQUESTED,
-                        ApplicationExitInfo.REASON_USER_STOPPED ->
-                    ActivationJournal.ExitReason.USER;
-                default -> ActivationJournal.ExitReason.SYSTEM;
-              };
-          journal.recover(reason, exit.getPid(), exit.getTimestamp());
-          return;
-        }
-      } catch (RuntimeException unavailable) {
-        Log.w("原生宿主", "系统退出记录不可用，保守恢复已稳定组合");
+    if (state.phase != ActivationJournal.Phase.STABLE) {
+      Exit exit = recentExit(application, state.processId, state.startedAt);
+      if (previous != null
+          && previous.pid == state.processId
+          && previous.crashedAt >= state.startedAt) {
+        exit =
+            new Exit(
+                previous.snapshot.equals(state.candidate)
+                    ? ActivationJournal.ExitReason.CRASH
+                    : ActivationJournal.ExitReason.SYSTEM,
+                previous.pid,
+                previous.crashedAt);
+      }
+      if (exit.reason == ActivationJournal.ExitReason.CRASH
+          || exit.reason == ActivationJournal.ExitReason.ANR)
+        quarantine.isolate(store.snapshot(state.candidate).manifest, config.hostContract);
+      journal.recover(exit.reason, exit.pid, exit.at);
+    }
+    state = journal.state();
+    if (previous != null && previous.belongsTo(state.stable, config.fingerprint)) {
+      Exit exit =
+          previous.crashedAt != 0
+              ? new Exit(ActivationJournal.ExitReason.CRASH, previous.pid, previous.crashedAt)
+              : recentExit(application, previous.pid, previous.startedAt);
+      if (previous.matches(exit.reason, exit.pid, exit.at)) {
+        journal.stableProcessFailed(
+            store.snapshot(state.stable).manifest, quarantine, config.hostContract, exit.reason);
+        Log.w("原生宿主", "运行组合发生崩溃或未响应，在业务加载前恢复上一版本");
       }
     }
-    journal.recover(ActivationJournal.ExitReason.UNKNOWN, 0, 0);
+    if (previous != null) execution.clear(previous);
+  }
+
+  void recordExecution(HotManifest manifest, String attempt) throws Exception {
+    running =
+        execution.start(
+            manifest.snapshotId,
+            attempt,
+            config.fingerprint,
+            android.os.Process.myPid(),
+            System.currentTimeMillis());
+  }
+
+  void ensureExecution(HotManifest manifest) throws Exception {
+    var current = running;
+    if (current != null
+        && current.snapshot.equals(manifest.snapshotId)
+        && current.pid == android.os.Process.myPid()) return;
+    var state = journal.state();
+    recordExecution(
+        manifest,
+        state.stable.equals(manifest.snapshotId)
+            ? state.stableAttempt
+            : state.candidate.equals(manifest.snapshotId) ? state.attempt : "");
+  }
+
+  private record Exit(ActivationJournal.ExitReason reason, int pid, long at) {}
+
+  private static Exit recentExit(Application application, int pid, long startedAt) {
+    if (Build.VERSION.SDK_INT >= 30) {
+      try {
+        return Api30.recentExit(application, pid, startedAt);
+      } catch (RuntimeException unavailable) {
+        Log.w("原生宿主", "系统退出记录不可用，不把未知退出计为坏包");
+      }
+    }
+    return new Exit(ActivationJournal.ExitReason.UNKNOWN, 0, 0);
+  }
+
+  /** Android 8–10 不解析新平台的退出记录类型。 */
+  private static final class Api30 {
+    static Exit recentExit(Application application, int pid, long startedAt) {
+      ActivityManager manager = application.getSystemService(ActivityManager.class);
+      Exit newest = new Exit(ActivationJournal.ExitReason.UNKNOWN, 0, 0);
+      for (var exit :
+          manager.getHistoricalProcessExitReasons(application.getPackageName(), pid, 16)) {
+        if (exit.getPid() != pid
+            || exit.getTimestamp() < startedAt
+            || !application.getPackageName().equals(exit.getProcessName())
+            || exit.getTimestamp() <= newest.at) continue;
+        var reason =
+            switch (exit.getReason()) {
+              case ApplicationExitInfo.REASON_CRASH, ApplicationExitInfo.REASON_CRASH_NATIVE ->
+                  ActivationJournal.ExitReason.CRASH;
+              case ApplicationExitInfo.REASON_ANR -> ActivationJournal.ExitReason.ANR;
+              case ApplicationExitInfo.REASON_USER_REQUESTED,
+                      ApplicationExitInfo.REASON_USER_STOPPED ->
+                  ActivationJournal.ExitReason.USER;
+              default -> ActivationJournal.ExitReason.SYSTEM;
+            };
+        newest = new Exit(reason, exit.getPid(), exit.getTimestamp());
+      }
+      return newest;
+    }
   }
 }

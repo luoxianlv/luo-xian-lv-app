@@ -16,7 +16,15 @@ import java.util.Date;
 public final class CrashLog {
   private CrashLog() {}
 
+  public interface Observer {
+    String beforeSave(Thread thread, Throwable error) throws Exception;
+  }
+
   public static synchronized void install(Context context) {
+    install(context, (thread, error) -> "");
+  }
+
+  public static synchronized void install(Context context, Observer observer) {
     Thread.UncaughtExceptionHandler previous = Thread.getDefaultUncaughtExceptionHandler();
     if (previous instanceof FatalErrorHandler) return;
     File directory = new File(AppDirectories.visibleRoot(context), "logs");
@@ -43,7 +51,14 @@ public final class CrashLog {
             + "）";
     Thread.setDefaultUncaughtExceptionHandler(
         new FatalErrorHandler(
-            (thread, error) -> write(directory, header, thread, error),
+            (thread, error) -> {
+              String detail = "";
+              try {
+                detail = observer.beforeSave(thread, error);
+              } catch (Throwable ignored) {
+              }
+              write(directory, header + detail, thread, error);
+            },
             previous != null
                 ? previous
                 : (thread, error) -> {

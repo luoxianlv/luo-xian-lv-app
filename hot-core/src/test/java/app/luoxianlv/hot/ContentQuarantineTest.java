@@ -25,6 +25,47 @@ public final class ContentQuarantineTest {
   }
 
   @Test
+  public void stableProcessFailureAfterHealthyUploadKeepsOriginalAttemptAndFallback()
+      throws Exception {
+    HotManifest base = manifest("base.lxhp"), target = manifest("target.lxhp");
+    for (var reason :
+        new ActivationJournal.ExitReason[] {
+          ActivationJournal.ExitReason.CRASH, ActivationJournal.ExitReason.ANR
+        }) {
+      File root = directory.newFolder();
+      var journal = new ActivationJournal(root);
+      var quarantine = new ContentQuarantine(directory.newFolder());
+      var queue = new HealthOutbox(directory.newFolder());
+      String first = journal.begin(base.snapshotId, 10, 4, 100, 1000);
+      journal.firstFrame(first);
+      journal.healthy(first, 60000);
+      String second = journal.begin(target.snapshotId, 11, 4, 101, 2000);
+      journal.firstFrame(second);
+      journal.healthy(second, 60000);
+      OutcomeRecovery.reconcile(journal, queue);
+      assertTrue(queue.acknowledge(queue.batch(100)));
+      assertTrue(journal.state().outcomes.isEmpty());
+      journal = new ActivationJournal(root);
+      assertEquals(second, journal.state().stableAttempt);
+      assertEquals(first, journal.state().previousStableAttempt);
+      journal.stableProcessFailed(target, quarantine, 1, reason);
+      assertEquals(base.snapshotId, journal.state().stable);
+      assertEquals(first, journal.state().stableAttempt);
+      assertEquals(11, journal.state().revision);
+      assertEquals(4, journal.state().trustVersion);
+      OutcomeRecovery.reconcile(journal, queue);
+      var events = queue.batch(100);
+      assertEquals(1, events.size());
+      assertEquals(second, events.get(0).attemptId);
+      assertEquals(
+          reason == ActivationJournal.ExitReason.CRASH ? "crash" : "anr", events.get(0).kind);
+      assertEquals(2, events.get(0).sequence);
+      assertThrows(IllegalArgumentException.class, () -> quarantine.requireAllowed(target, 1));
+      quarantine.requireAllowed(base, 1);
+    }
+  }
+
+  @Test
   public void renamingCannotBypassContentIsolationAndLateFailureKeepsFallback() throws Exception {
     HotManifest base = manifest("base.lxhp"), target = manifest("target.lxhp");
     File stateDir = directory.newFolder();
