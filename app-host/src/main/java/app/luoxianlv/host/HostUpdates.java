@@ -173,7 +173,7 @@ final class HostUpdates {
           boolean contentFailure =
               failure instanceof ReflectiveOperationException || failure instanceof LinkageError;
           controller.abort(ticket, contentFailure);
-          if (contentFailure) outbox.append(ticket.attemptId, "load_failed", "module_entry_failed");
+          OutcomeRecovery.reconcile(state.journal, outbox);
         } catch (Throwable restoring) {
           failure.addSuppressed(restoring);
           blocked = true;
@@ -225,14 +225,8 @@ final class HostUpdates {
 
                 @Override
                 public void finished(GroupActivation.Result result, Throwable failure) {
-                  boolean contentFailure = group != null && group.contentFailure();
-                  if (contentFailure) enqueue(ticket.attemptId, "load_failed", "business_failed");
-                  if (result == GroupActivation.Result.STABLE)
-                    enqueue(ticket.attemptId, "healthy", "foreground_observed");
-                  else if (result == GroupActivation.Result.ROLLED_BACK
-                      || result == GroupActivation.Result.CANCELLED)
-                    enqueue(ticket.attemptId, "recovered", "whole_group_restored");
-                  else blocked = true;
+                  if (result == GroupActivation.Result.RECOVERY_FAILED
+                      || result == GroupActivation.Result.CLEANUP_FAILED) blocked = true;
                   group = null;
                   attempt = null;
                   busy = false;
@@ -278,6 +272,7 @@ final class HostUpdates {
   }
 
   private void flush() throws Exception {
+    OutcomeRecovery.reconcile(state.journal, outbox);
     if (!active || !(state.config.testHealthReports || Bootstrap.diagnosticsAllowed())) return;
     var batch = outbox.batch(100);
     if (batch.isEmpty()) return;

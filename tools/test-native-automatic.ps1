@@ -3,7 +3,8 @@ param(
     [string]$Serial = 'emulator-5554',
     [Parameter(Mandatory)][string]$Fixture,
     [Parameter(Mandatory)][string]$Target,
-    [switch]$Fresh
+    [switch]$Fresh,
+    [switch]$ReceiptFault
 )
 
 # 仅操作独立热更模拟器，Fresh 只清理本测试建立的内部热更状态，不删除谱子或设置。
@@ -31,13 +32,25 @@ try {
     Invoke-Adb install -r (Join-Path $repo 'app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')
     Invoke-Adb reverse tcp:18472 tcp:18472
     $lines = [Collections.Generic.List[string]]::new()
-    & $Adb -s $Serial shell am instrument -w -e automaticSnapshot $Target "$package.test/app.luoxianlv.host.NativeAppInstrumentation" |
+    $options = @('-e','automaticSnapshot',$Target)
+    if ($ReceiptFault) { $options += @('-e','receiptFault','true') }
+    & $Adb -s $Serial shell am instrument -w @options "$package.test/app.luoxianlv.host.NativeAppInstrumentation" |
         ForEach-Object { $lines.Add($_); $_ }
     $exitCode = $LASTEXITCODE
     $result = $lines -join "`n"
     [IO.File]::WriteAllText($report, $result, [Text.UTF8Encoding]::new($false))
     if ($exitCode -ne 0 -or $result -notmatch '通过：普通入口自动更新验收' -or $result -match 'AssertionError|Process crashed|INSTRUMENTATION_FAILED') {
         throw "普通入口自动更新验收失败：$report"
+    }
+    if ($ReceiptFault) {
+        if ($result -notmatch '通过：真实健康确认后队列写入受阻') { throw '未完成真实结果回执的故障注入' }
+        Invoke-Adb shell am force-stop $package
+        $recovered = (Invoke-Adb shell am instrument -w -e startupSnapshot $Target -e receiptRecovered true "$package.test/app.luoxianlv.host.NativeAppInstrumentation") -join "`n"
+        [IO.File]::WriteAllText("$report.recovered.txt", $recovered, [Text.UTF8Encoding]::new($false))
+        Write-Output $recovered
+        if ($recovered -notmatch '通过：真实健康结果跨进程补发' -or $recovered -match 'AssertionError|Process crashed|INSTRUMENTATION_FAILED') {
+            throw "跨进程结果回执补发失败：$report.recovered.txt"
+        }
     }
 } finally {
     Invoke-Adb reverse --remove tcp:18472

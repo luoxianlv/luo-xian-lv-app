@@ -26,6 +26,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private boolean onlinePersist;
   private String startupSnapshot;
   private String automaticSnapshot;
+  private boolean receiptFault;
+  private boolean receiptRecovered;
 
   private void onMain(Runnable action) {
     var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -55,6 +57,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
     onlinePersist = arguments != null && "true".equals(arguments.getString("onlinePersist"));
     startupSnapshot = arguments == null ? null : arguments.getString("startupSnapshot");
     automaticSnapshot = arguments == null ? null : arguments.getString("automaticSnapshot");
+    receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
+    receiptRecovered = arguments != null && "true".equals(arguments.getString("receiptRecovered"));
     start();
   }
 
@@ -290,7 +294,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
           });
       Bootstrap.Source source = Bootstrap.source();
       if (automaticSnapshot != null) {
-        NativeAutomaticChecks.run(this, main, automaticSnapshot);
+        NativeAutomaticChecks.run(this, main, automaticSnapshot, receiptFault);
         report.putString("stream", "通过：普通入口自动更新验收。\n");
         success = true;
       } else if (startupSnapshot != null) {
@@ -311,7 +315,37 @@ public final class NativeAppInstrumentation extends Instrumentation {
                             "app.luoxianlv.hot.probe.HotProbeFactory$NewNativeBadge")
                         != null
                     && restored.hasWindowFocus());
-        report.putString("stream", "通过：普通冷启动离线读取稳定签名版本并显示新增原生组件。\n");
+        if (receiptRecovered) {
+          var queue =
+              new app.luoxianlv.hot.HealthOutbox(
+                  new java.io.File(
+                      getTargetContext().getNoBackupFilesDir(), "native-update/health"));
+          await(
+              "普通冷启动未补发结果并完成确认",
+              () -> {
+                try {
+                  return Bootstrap.startupState().journal.state().outcomes.isEmpty()
+                      && queue.batch(100).isEmpty();
+                } catch (Exception error) {
+                  throw new AssertionError(error);
+                }
+              });
+          var receipt =
+              new org.json.JSONObject()
+                  .put("passed", true)
+                  .put("productionTouched", false)
+                  .put("target", startupSnapshot)
+                  .put("processRestarted", true)
+                  .put("outcomeReplayed", true)
+                  .put("serverAcknowledged", true)
+                  .put("journalReceiptCleared", true);
+          java.nio.file.Files.write(
+              new java.io.File(
+                      getTargetContext().getFilesDir(), "native-receipt-recovered-report.json")
+                  .toPath(),
+              receipt.toString(2).getBytes(StandardCharsets.UTF_8));
+          report.putString("stream", "通过：真实健康结果跨进程补发，接口确认后队列与日志回执均完成交接。\n");
+        } else report.putString("stream", "通过：普通冷启动离线读取稳定签名版本并显示新增原生组件。\n");
         success = true;
       } else {
         ClassLoader business = source.factory.getClass().getClassLoader();

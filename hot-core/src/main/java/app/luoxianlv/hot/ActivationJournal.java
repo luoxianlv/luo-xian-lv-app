@@ -10,8 +10,10 @@ import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -35,6 +37,24 @@ public final class ActivationJournal {
   private static final int MAX_QUARANTINE = 512;
   private final File file;
   private State state;
+  private byte[] expectedBytes;
+
+  /** 与稳定选择一起提交；直到持久队列确认接收才移除。 */
+  public static final class Outcome {
+    public final String attemptId, snapshotId, kind, code;
+
+    Outcome(String attemptId, String snapshotId, String kind, String code) {
+      new HealthEvent(attemptId, 1, kind, code);
+      StrictJson.require(
+          HotManifest.validHash(snapshotId)
+              && (kind.equals("healthy") || kind.equals("recovered") || kind.equals("load_failed")),
+          "激活结果回执无效");
+      this.attemptId = attemptId;
+      this.snapshotId = snapshotId;
+      this.kind = kind;
+      this.code = code;
+    }
+  }
 
   public static final class State {
     public final String stable, active, candidate, attempt;
@@ -43,6 +63,7 @@ public final class ActivationJournal {
     public final int processId;
     public final Phase phase;
     public final Set<String> quarantine;
+    public final List<Outcome> outcomes;
 
     State(
         String stable,
@@ -81,6 +102,34 @@ public final class ActivationJournal {
         Phase phase,
         Set<String> quarantine,
         String previousStable) {
+      this(
+          stable,
+          active,
+          candidate,
+          attempt,
+          revision,
+          trustVersion,
+          startedAt,
+          processId,
+          phase,
+          quarantine,
+          previousStable,
+          Collections.emptyList());
+    }
+
+    private State(
+        String stable,
+        String active,
+        String candidate,
+        String attempt,
+        long revision,
+        long trustVersion,
+        long startedAt,
+        int processId,
+        Phase phase,
+        Set<String> quarantine,
+        String previousStable,
+        List<Outcome> outcomes) {
       this.stable = stable;
       this.active = active;
       this.candidate = candidate;
@@ -92,6 +141,7 @@ public final class ActivationJournal {
       this.phase = phase;
       this.quarantine = Collections.unmodifiableSet(new LinkedHashSet<>(quarantine));
       this.previousStable = previousStable;
+      this.outcomes = Collections.unmodifiableList(new ArrayList<>(outcomes));
     }
 
     State withPrevious(String previous) {
@@ -106,7 +156,24 @@ public final class ActivationJournal {
           processId,
           phase,
           quarantine,
-          previous);
+          previous,
+          outcomes);
+    }
+
+    State withOutcomes(List<Outcome> receipts) {
+      return new State(
+          stable,
+          active,
+          candidate,
+          attempt,
+          revision,
+          trustVersion,
+          startedAt,
+          processId,
+          phase,
+          quarantine,
+          previousStable,
+          receipts);
     }
   }
 
@@ -114,10 +181,12 @@ public final class ActivationJournal {
     StrictJson.require(
         internalStateDirectory.isDirectory() || internalStateDirectory.mkdirs(), "无法创建内部激活日志目录");
     file = new File(internalStateDirectory, "activation.bin");
+    expectedBytes =
+        Files.exists(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) ? readState() : null;
     state =
-        file.exists()
-            ? decode(readState())
-            : new State("", "", "", "", 0, 0, 0, 0, Phase.STABLE, Collections.emptySet());
+        expectedBytes == null
+            ? new State("", "", "", "", 0, 0, 0, 0, Phase.STABLE, Collections.emptySet())
+            : decode(expectedBytes);
   }
 
   public synchronized State state() {
@@ -195,7 +264,8 @@ public final class ActivationJournal {
                 0,
                 Phase.STABLE,
                 state.quarantine)
-            .withPrevious(state.stable));
+            .withPrevious(state.stable)
+            .withOutcomes(addedOutcome("healthy", "foreground_observed")));
   }
 
   public synchronized void fail(String attempt, boolean confirmedContentFailure) throws Exception {
@@ -253,18 +323,24 @@ public final class ActivationJournal {
   private void recoverCandidate(boolean confirmed) throws Exception {
     Set<String> quarantine = new LinkedHashSet<>(state.quarantine);
     if (confirmed) quarantine.add(state.candidate);
-    saveKeepingPrevious(
+    List<Outcome> outcomes =
+        addedOutcome(
+            confirmed ? "load_failed" : "recovered",
+            confirmed ? "recorded_candidate_failed" : "whole_group_restored");
+    save(
         new State(
-            state.stable,
-            state.stable,
-            "",
-            "",
-            state.revision,
-            state.trustVersion,
-            0,
-            0,
-            Phase.STABLE,
-            quarantine));
+                state.stable,
+                state.stable,
+                "",
+                "",
+                state.revision,
+                state.trustVersion,
+                0,
+                0,
+                Phase.STABLE,
+                quarantine)
+            .withPrevious(quarantine.contains(state.previousStable) ? "" : state.previousStable)
+            .withOutcomes(outcomes));
   }
 
   private void requireAttempt(String attempt, Phase phase) {
@@ -304,24 +380,57 @@ public final class ActivationJournal {
 
   private void restoreStable(Set<String> quarantined) throws Exception {
     String fallback = quarantined.contains(state.previousStable) ? "" : state.previousStable;
+    List<Outcome> outcomes = new ArrayList<>();
+    for (var outcome : state.outcomes)
+      outcomes.add(
+          outcome.snapshotId.equals(state.stable)
+              ? new Outcome(
+                  outcome.attemptId,
+                  outcome.snapshotId,
+                  quarantined.contains(state.stable) ? "load_failed" : "recovered",
+                  quarantined.contains(state.stable) ? "business_failed" : "whole_group_restored")
+              : outcome);
     save(
         new State(
-            fallback,
-            fallback,
-            "",
-            "",
-            state.revision,
-            state.trustVersion,
-            0,
-            0,
-            Phase.STABLE,
-            quarantined));
+                fallback,
+                fallback,
+                "",
+                "",
+                state.revision,
+                state.trustVersion,
+                0,
+                0,
+                Phase.STABLE,
+                quarantined)
+            .withOutcomes(outcomes));
+  }
+
+  private List<Outcome> addedOutcome(String kind, String code) {
+    StrictJson.require(state.outcomes.size() < 128, "待保存的激活结果过多，保留未确认记录");
+    var outcomes = new ArrayList<>(state.outcomes);
+    outcomes.add(new Outcome(state.attempt, state.candidate, kind, code));
+    return outcomes;
+  }
+
+  /** 队列先完成原子保存；精确删除相同回执，迟到确认不能清除随后改写的故障结果。 */
+  public synchronized boolean outcomeQueued(Outcome sent) throws Exception {
+    var outcomes = new ArrayList<>(state.outcomes);
+    boolean removed =
+        outcomes.removeIf(
+            value ->
+                value.attemptId.equals(sent.attemptId)
+                    && value.snapshotId.equals(sent.snapshotId)
+                    && value.kind.equals(sent.kind)
+                    && value.code.equals(sent.code));
+    if (removed) save(state.withOutcomes(outcomes));
+    return removed;
   }
 
   private void saveKeepingPrevious(State next) throws Exception {
     save(
         next.withPrevious(
-            next.quarantine.contains(state.previousStable) ? "" : state.previousStable));
+                next.quarantine.contains(state.previousStable) ? "" : state.previousStable)
+            .withOutcomes(state.outcomes));
   }
 
   private void save(State next) throws Exception {
@@ -333,14 +442,17 @@ public final class ActivationJournal {
                 StandardOpenOption.WRITE);
         FileLock lock = channel.tryLock()) {
       StrictJson.require(lock != null, "另一个控制器正在修改激活日志");
-      if (file.exists())
+      if (Files.exists(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
         StrictJson.require(
-            java.util.Arrays.equals(readState(), encode(state)), "激活日志已被其他控制器更新，拒绝覆盖");
+            expectedBytes != null && java.util.Arrays.equals(readState(), expectedBytes),
+            "激活日志已被其他控制器更新，拒绝覆盖");
+      else StrictJson.require(expectedBytes == null, "激活日志已丢失，拒绝覆盖版本下限");
       File temporary = File.createTempFile("activation-", ".part", file.getParentFile());
       try {
         ContentStore.writeSynced(temporary.toPath(), bytes);
         ContentStore.replaceSynced(temporary, file);
         state = next;
+        expectedBytes = bytes;
       } finally {
         Files.deleteIfExists(temporary.toPath());
       }
@@ -360,7 +472,7 @@ public final class ActivationJournal {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(buffer)) {
       out.writeInt(MAGIC);
-      out.writeInt(2);
+      out.writeInt(3);
       out.writeUTF(state.stable);
       out.writeUTF(state.active);
       out.writeUTF(state.candidate);
@@ -373,6 +485,13 @@ public final class ActivationJournal {
       out.writeInt(state.quarantine.size());
       for (String id : state.quarantine) out.writeUTF(id);
       out.writeUTF(state.previousStable);
+      out.writeInt(state.outcomes.size());
+      for (var outcome : state.outcomes) {
+        out.writeUTF(outcome.attemptId);
+        out.writeUTF(outcome.snapshotId);
+        out.writeUTF(outcome.kind);
+        out.writeUTF(outcome.code);
+      }
     }
     byte[] body = buffer.toByteArray();
     buffer.write(MessageDigest.getInstance("SHA-256").digest(body));
@@ -388,7 +507,9 @@ public final class ActivationJournal {
         MessageDigest.isEqual(MessageDigest.getInstance("SHA-256").digest(body), digest),
         "激活日志损坏，不能重置防回退版本");
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
-      StrictJson.require(input.readInt() == MAGIC && input.readInt() == 2, "激活日志格式不支持");
+      StrictJson.require(input.readInt() == MAGIC, "激活日志格式不支持");
+      int format = input.readInt();
+      StrictJson.require(format == 2 || format == 3, "激活日志格式不支持");
       String stable = input.readUTF(),
           active = input.readUTF(),
           candidate = input.readUTF(),
@@ -405,6 +526,18 @@ public final class ActivationJournal {
         StrictJson.require(HotManifest.validHash(id) && quarantine.add(id), "隔离内容身份无效");
       }
       String previousStable = input.readUTF();
+      List<Outcome> outcomes = new ArrayList<>();
+      if (format >= 3) {
+        int count = input.readInt();
+        StrictJson.require(count >= 0 && count <= 128, "激活结果数量无效");
+        Set<String> attempts = new LinkedHashSet<>();
+        for (int i = 0; i < count; i++) {
+          Outcome outcome =
+              new Outcome(input.readUTF(), input.readUTF(), input.readUTF(), input.readUTF());
+          StrictJson.require(attempts.add(outcome.attemptId), "激活结果重复");
+          outcomes.add(outcome);
+        }
+      }
       StrictJson.require(
           (previousStable.isEmpty() || HotManifest.validHash(previousStable))
               && !quarantine.contains(previousStable),
@@ -435,17 +568,18 @@ public final class ActivationJournal {
             "候选指针状态不一致");
       }
       return new State(
-          stable,
-          active,
-          candidate,
-          attempt,
-          revision,
-          trust,
-          started,
-          pid,
-          phase,
-          quarantine,
-          previousStable);
+              stable,
+              active,
+              candidate,
+              attempt,
+              revision,
+              trust,
+              started,
+              pid,
+              phase,
+              quarantine,
+              previousStable)
+          .withOutcomes(outcomes);
     }
   }
 }
