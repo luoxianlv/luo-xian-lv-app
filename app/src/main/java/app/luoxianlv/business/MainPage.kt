@@ -7,7 +7,6 @@ import android.provider.Settings
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -20,6 +19,7 @@ import androidx.lifecycle.ViewModelProvider
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.business.ui.ComposePage
+import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AppearanceStore
 import app.luoxianlv.data.DisclaimerStore

@@ -14,6 +14,8 @@ public final class PlaybackHandover {
     void ready(PlaybackHandover change);
 
     void failed(PlaybackHandover change, Throwable failure, boolean contentFailure);
+
+    default void closed(PlaybackHandover change) {}
   }
 
   private final NativeAccessibilityService owner;
@@ -25,12 +27,38 @@ public final class PlaybackHandover {
   private boolean rejectedContent;
   private Runnable timeout;
   private NativePage.Ready recovery;
+  private Context recoveryContext;
+  private Supplier<NativePlaybackSession> recoveryFactory;
 
   PlaybackHandover(NativeAccessibilityService owner, Listener listener) {
     this.owner = owner;
     this.previous = owner.binding;
     this.revision = previous.session.revision();
     this.listener = listener;
+  }
+
+  PlaybackHandover(
+      NativeAccessibilityService owner,
+      Context recoveryContext,
+      Supplier<NativePlaybackSession> recoveryFactory,
+      Listener listener) {
+    this.owner = owner;
+    this.previous = owner.new Binding();
+    this.next = owner.binding;
+    this.revision = 0;
+    this.listener = listener;
+    this.recoveryContext = recoveryContext;
+    this.recoveryFactory = recoveryFactory;
+    committed = ready = true;
+  }
+
+  boolean observing() {
+    return current()
+        && committed
+        && !reported
+        && !restoring
+        && owner.binding == next
+        && next.enabled;
   }
 
   void prepare(Context context, Supplier<NativePlaybackSession> factory) {
@@ -138,10 +166,9 @@ public final class PlaybackHandover {
     owner.disablePlayback();
     try {
       if (next != null && next.session != null) next.session.deactivate();
-      previous.session.deactivate();
+      if (previous.session != null) previous.session.deactivate();
       owner.retire(next);
-      previous.session.restore(
-          state,
+      NativePage.Ready prepared =
           new NativePage.Ready() {
             @Override
             public void ready() {
@@ -152,7 +179,13 @@ public final class PlaybackHandover {
             public void failed(Throwable failure) {
               owner.main.post(() -> recoveryFailed(failure, result));
             }
-          });
+          };
+      if (recoveryFactory != null) {
+        previous.session = recoveryFactory.get();
+        StrictJson.require(
+            previous.session != null && previous.session.supportsHandover(), "旧播放工厂不支持恢复");
+        previous.session.prepareRecovery(recoveryContext, previous, state, prepared);
+      } else previous.session.restore(state, prepared);
     } catch (Throwable failure) {
       recoveryFailed(failure, result);
     }
@@ -183,6 +216,8 @@ public final class PlaybackHandover {
     ended = true;
     restoring = false;
     owner.handover = null;
+    recoveryContext = null;
+    recoveryFactory = null;
   }
 
   private void recoveryFailed(Throwable failure, NativePage.Ready completion) {
@@ -227,6 +262,9 @@ public final class PlaybackHandover {
       recovery.ready();
       recovery = null;
     }
+    recoveryContext = null;
+    recoveryFactory = null;
+    listener.closed(this);
   }
 
   boolean failed(NativeAccessibilityService.Binding binding, Throwable failure) {

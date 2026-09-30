@@ -182,6 +182,25 @@ public final class NativeLoader {
         activation.phase == ActivationJournal.Phase.PREPARING
             && activation.candidate.equals(manifest.snapshotId),
         "执行新代码前必须先保存本次激活记录");
+    return prepareVerified(snapshot);
+  }
+
+  /** 普通冷启动仅允许稳定日志指向的已签名组合，不使用过期许可启动新候选。 */
+  public Prepared prepareStable(
+      ContentStore.Snapshot snapshot,
+      ActivationJournal.State state,
+      TrustStore trust,
+      String environment)
+      throws Exception {
+    StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "稳定版本必须在后台准备");
+    snapshot.manifest.compatible(
+        application.getPackageName(), environment, hostContract, supportedMounts);
+    trust.verifyStable(snapshot, state);
+    return prepareVerified(snapshot);
+  }
+
+  private Prepared prepareVerified(ContentStore.Snapshot snapshot) throws Exception {
+    HotManifest manifest = snapshot.manifest;
     quarantine.requireAllowed(manifest, hostContract);
     store.verifySnapshotObjects(snapshot);
     File mounted = null;

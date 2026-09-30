@@ -16,9 +16,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.business.ui.PageDialog as Dialog
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.update.AppUpdateState
 

@@ -67,13 +67,19 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   public final class Change {
     private final Slot slot;
     private final Slot original;
+    private final PageTarget recoveryTarget;
     private final ChangeListener callback;
     private boolean reported, ended, committed;
     private Bundle restoreState;
 
     private Change(Slot slot, ChangeListener callback) {
+      this(slot, active, active == null ? null : active.target, callback);
+    }
+
+    private Change(Slot slot, Slot original, PageTarget recoveryTarget, ChangeListener callback) {
       this.slot = slot;
-      this.original = active;
+      this.original = original;
+      this.recoveryTarget = recoveryTarget;
       this.callback = callback;
     }
 
@@ -84,6 +90,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
           && pending(slot)
           && slot.frameObserved
           && (restoreState != null || unchanged(slot));
+    }
+
+    boolean observing() {
+      requireMain();
+      return !ended && !reported && committed && active == slot && slot.ready && slot.frameObserved;
     }
 
     public boolean commit() {
@@ -126,6 +137,15 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
       } catch (Throwable failure) {
         exportFailure = failure;
       }
+      if (original == null) {
+        // 试运行中新开的窗口没有旧实例，只能用旧工厂重建当前状态。
+        if (latest == null) {
+          completion.failed(exportFailure);
+          return;
+        }
+        restorePage(slot, recoveryTarget, latest, completion);
+        return;
+      }
       active = original;
       previous = null;
       candidate = null;
@@ -138,53 +158,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
         else completion.failed(exportFailure);
         return;
       }
-      original.container.input(false);
-      Slot restored = new Slot();
-      restored.target = original.target;
-      restored.identity = original.identity;
-      restored.change =
-          new Change(
-              restored,
-              new ChangeListener() {
-                @Override
-                public void ready(Change change) {
-                  boolean activated = false;
-                  try {
-                    if (!change.commit()) throw new IllegalStateException("旧页面恢复已失效");
-                    activated = true;
-                    change.finish();
-                    completion.ready();
-                  } catch (Throwable failure) {
-                    // 恢复页已接管后，收尾失败不能再次使用已经关闭的原始页面。
-                    if (activated) completion.failed(failure);
-                    else failed(change, "restore_failed", failure, false);
-                  }
-                }
-
-                @Override
-                public void failed(
-                    Change change, String code, Throwable failure, boolean confirmed) {
-                  change.ended = true;
-                  candidate = null;
-                  active = original;
-                  previous = null;
-                  dispose(restored);
-                  original.container.input(true);
-                  if (original.container.getParent() == null && !closed)
-                    addView(original.container);
-                  try {
-                    if (!closed) original.page.lifecycle(lifecycle);
-                  } catch (Throwable fallback) {
-                    if (failure != null) failure.addSuppressed(fallback);
-                    else failure = fallback;
-                  }
-                  completion.failed(
-                      failure == null ? new IllegalStateException("页面恢复中断：" + code) : failure);
-                }
-              });
-      restored.change.restoreState = latest;
-      candidate = restored;
-      main.post(() -> prepare(restored));
+      restorePage(original, original.target, latest, completion);
     }
 
     public void finish() {
@@ -201,6 +175,77 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
       reported = true;
       callback.failed(this, code, failure, contentFailure);
     }
+  }
+
+  private void restorePage(
+      Slot fallback, PageTarget target, Bundle latest, NativePage.Ready completion) {
+    fallback.container.input(false);
+    Slot restored = new Slot();
+    restored.target = target;
+    restored.identity = target.identity();
+    restored.change =
+        new Change(
+            restored,
+            new ChangeListener() {
+              @Override
+              public void ready(Change change) {
+                boolean activated = false;
+                try {
+                  if (!change.commit()) throw new IllegalStateException("旧页面恢复已失效");
+                  activated = true;
+                  change.finish();
+                  completion.ready();
+                } catch (Throwable failure) {
+                  // 恢复页已接管后，收尾失败不能再次使用已经关闭的原始页面。
+                  if (activated) completion.failed(failure);
+                  else failed(change, "restore_failed", failure, false);
+                }
+              }
+
+              @Override
+              public void failed(Change change, String code, Throwable failure, boolean confirmed) {
+                change.ended = true;
+                if (closed) {
+                  completion.ready();
+                  return;
+                }
+                candidate = null;
+                active = fallback;
+                previous = null;
+                dispose(restored);
+                fallback.container.input(groupInput);
+                if (fallback.container.getParent() == null) addView(fallback.container);
+                try {
+                  fallback.page.lifecycle(lifecycle);
+                } catch (Throwable resuming) {
+                  if (failure != null) failure.addSuppressed(resuming);
+                  else failure = resuming;
+                }
+                completion.failed(
+                    failure == null ? new IllegalStateException("页面恢复中断：" + code) : failure);
+              }
+            });
+    restored.change.restoreState = latest;
+    candidate = restored;
+    main.post(() -> prepare(restored));
+  }
+
+  /** 将试运行中新建的页面纳入同一事务；失败时从旧工厂重建，而不是保留孤立的新版本。 */
+  public Change watchCurrent(String identity, PageTarget recovery, ChangeListener callback) {
+    requireMain();
+    StrictJson.require(
+        !closed
+            && active != null
+            && active.change == null
+            && candidate == null
+            && previous == null
+            && active.identity.equals(identity)
+            && recovery != null,
+        "新窗口不属于当前试运行或已经被其他事务接管");
+    Change change = new Change(active, null, recovery, callback);
+    change.committed = true;
+    active.change = change;
+    return change;
   }
 
   public void initialTarget(PageTarget target) {
@@ -247,6 +292,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   void groupInput(boolean allowed) {
     requireMain();
     groupInput = allowed;
+  }
+
+  public boolean inUse() {
+    requireMain();
+    return !closed && lifecycle == NativePage.RESUMED && isShown();
   }
 
   public PageSwapHost(
@@ -476,7 +526,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
       action.run();
       return true;
     } catch (RuntimeException | Error failure) {
-      if (active.change != null && previous != null) {
+      if (active.change != null) {
         active.change.fail("candidate_callback_failed", failure, true);
         return false;
       }
@@ -583,7 +633,10 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
         main.post(
             () -> {
               if (pending(slot)) PageSwapHost.this.ready(slot);
-              else if (!closed && active == slot && initial != null) initial.ready();
+              else if (!closed && active == slot && initial != null) {
+                initial.ready();
+                PageSwapHost.this.ready(slot);
+              }
             });
       }
 
@@ -713,7 +766,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   }
 
   private void ready(Slot slot) {
-    if (!pending(slot) || slot.ready) return;
+    if ((!pending(slot) && (closed || active != slot)) || slot.ready) return;
     slot.ready = true;
     // 不可见窗口没有 Surface 提交帧；只确认布局与业务准备，显示中的窗口仍必须等待真实提交。
     if (slot.change != null && lifecycle < NativePage.RESUMED) {
@@ -751,9 +804,11 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   }
 
   private void frame(Slot slot) {
-    if (!pending(slot) || slot.frameObserved) return;
+    boolean initial = !closed && active == slot && !pending(slot);
+    if ((!pending(slot) && !initial) || slot.frameObserved) return;
     slot.frameObserved = true;
     if (slot.timeout != null) main.removeCallbacks(slot.timeout);
+    if (initial) return;
     if ((slot.change == null || slot.change.restoreState == null) && !unchanged(slot)) {
       abort(slot, "candidate_input_changed", null, false);
       return;

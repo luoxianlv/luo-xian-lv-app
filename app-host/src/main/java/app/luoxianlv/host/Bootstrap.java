@@ -4,10 +4,13 @@ import android.app.Application;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import app.luoxianlv.hot.ActivationController;
 import app.luoxianlv.hot.BundledBaseline;
 import app.luoxianlv.hot.ContentQuarantine;
 import app.luoxianlv.hot.ContentStore;
+import app.luoxianlv.hot.GroupActivation;
 import app.luoxianlv.hot.GroupHandover;
+import app.luoxianlv.hot.NativeAccessibilityService;
 import app.luoxianlv.hot.NativeLoader;
 import app.luoxianlv.hot.PageSwapHost;
 import app.luoxianlv.hot.contract.BusinessFactory;
@@ -38,13 +41,109 @@ public final class Bootstrap {
   private static boolean started, finished;
   private static Application application;
   private static final LinkedHashMap<PageSwapHost, String> PAGES = new LinkedHashMap<>();
+  private static NativeAccessibilityService playback;
+  private static GroupActivation activation;
+  private static boolean updateBlocked;
+  private static HostStartup startup;
 
   static void pageOpened(PageSwapHost page, String route) {
     PAGES.put(page, route);
+    if (activation != null) activation.pageOpened(new GroupHandover.Page(page, route));
   }
 
   static void pageClosed(PageSwapHost page) {
     PAGES.remove(page);
+    if (activation != null) activation.pageClosed();
+  }
+
+  public static void playbackOpened(NativeAccessibilityService service) {
+    playback = service;
+    if (activation != null) activation.playbackOpened(service);
+  }
+
+  public static void playbackClosed(NativeAccessibilityService service) {
+    if (playback == service) playback = null;
+    usageChanged();
+  }
+
+  public static void usageChanged() {
+    if (activation != null) activation.usageChanged();
+  }
+
+  public static void componentFailed(Throwable error) {
+    if (activation != null)
+      activation.stop(
+          error,
+          activation.phase() == GroupActivation.Phase.OBSERVING
+              || activation.phase() == GroupActivation.Phase.FINALIZING);
+  }
+
+  /** 在线下载器取得当前许可后调用；同一进程只接受一组，恢复或收尾失败须先完成宿主恢复。 */
+  public static GroupActivation activate(
+      ActivationController controller,
+      ActivationController.Ticket ticket,
+      NativeLoader.Prepared prepared,
+      java.util.concurrent.Executor worker,
+      GroupActivation.Listener listener) {
+    if (Looper.myLooper() != Looper.getMainLooper() || activation != null || updateBlocked)
+      throw new IllegalStateException("当前进程不能开始新的整组更新");
+    Source previous = source();
+    activation =
+        new GroupActivation(
+            controller,
+            ticket,
+            prepared,
+            new GroupActivation.Environment() {
+              @Override
+              public List<GroupHandover.Page> pages() {
+                return Bootstrap.pages();
+              }
+
+              @Override
+              public NativeAccessibilityService playback() {
+                return playback;
+              }
+
+              @Override
+              public boolean inUse() {
+                return PAGES.keySet().stream().anyMatch(PageSwapHost::inUse)
+                    || (playback != null && playback.playbackInUse());
+              }
+
+              @Override
+              public GroupHandover.Publication publication(
+                  NativeLoader.Prepared value, BusinessFactory factory) {
+                if (source != previous) throw new IllegalStateException("准备期间业务来源已改变");
+                return Bootstrap.publication(value, factory);
+              }
+
+              @Override
+              public NativeLoader.Prepared recoverySource() {
+                return previous.prepared;
+              }
+
+              @Override
+              public BusinessFactory recoveryFactory() {
+                return previous.factory;
+              }
+            },
+            worker,
+            new GroupActivation.Listener() {
+              @Override
+              public void exposed() {
+                listener.exposed();
+              }
+
+              @Override
+              public void finished(GroupActivation.Result result, Throwable error) {
+                updateBlocked =
+                    result == GroupActivation.Result.RECOVERY_FAILED
+                        || result == GroupActivation.Result.CLEANUP_FAILED;
+                activation = null;
+                listener.finished(result, error);
+              }
+            });
+    return activation;
   }
 
   public static List<GroupHandover.Page> pages() {
@@ -116,14 +215,25 @@ public final class Bootstrap {
         () -> {
           try {
             File root = new File(application.getNoBackupFilesDir(), "native-update");
+            try {
+              startup = HostStartup.open(application);
+            } catch (Exception invalidState) {
+              updateBlocked = true;
+              Log.e("原生宿主", "热更状态不可用，保留信任下限并使用安装包恢复组合", invalidState);
+            }
             NativeLoader loader =
-                new NativeLoader(
-                    application,
-                    new ContentStore(root),
-                    new ContentQuarantine(new File(root, "quarantine")),
-                    1);
+                startup == null
+                    ? new NativeLoader(
+                        application,
+                        new ContentStore(root),
+                        new ContentQuarantine(new File(root, "quarantine")),
+                        1)
+                    : startup.loader;
+            NativeLoader.Prepared stable = startup == null ? null : startup.prepareStable();
             NativeLoader.Prepared prepared =
-                loader.prepareBaseline(BundledBaseline.prepare(application));
+                stable != null
+                    ? stable
+                    : loader.prepareBaseline(BundledBaseline.prepare(application));
             MAIN.post(
                 () -> {
                   try {
@@ -141,17 +251,35 @@ public final class Bootstrap {
                       }
                       process = null;
                     }
+                    if (startup != null && prepared.manifest != null) {
+                      worker.execute(
+                          () -> {
+                            try {
+                              startup.journal.stableContentFailed(
+                                  prepared.manifest,
+                                  startup.quarantine,
+                                  startup.config.hostContract);
+                            } catch (Throwable recoveryFailure) {
+                              error.addSuppressed(recoveryFailure);
+                              updateBlocked = true;
+                            } finally {
+                              MAIN.post(Bootstrap::complete);
+                              worker.shutdown();
+                            }
+                          });
+                      return;
+                    }
                   }
                   complete();
+                  worker.shutdown();
                 });
           } catch (Throwable error) {
             MAIN.post(
                 () -> {
                   failure = error;
                   complete();
+                  worker.shutdown();
                 });
-          } finally {
-            worker.shutdown();
           }
         });
   }
@@ -202,6 +330,10 @@ public final class Bootstrap {
   public static Source source() {
     if (source == null) throw new IllegalStateException("业务尚未准备完成", failure);
     return source;
+  }
+
+  static HostStartup startupState() {
+    return startup;
   }
 
   public static void trim(int level) {

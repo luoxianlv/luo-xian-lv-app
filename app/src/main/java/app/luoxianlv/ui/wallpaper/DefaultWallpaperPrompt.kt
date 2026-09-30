@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
 import app.luoxianlv.business.ui.PageReplacementGuard
 import app.luoxianlv.wallpaper.data.DefaultWallpaper
 import app.luoxianlv.wallpaper.render.PreparedWallpaper

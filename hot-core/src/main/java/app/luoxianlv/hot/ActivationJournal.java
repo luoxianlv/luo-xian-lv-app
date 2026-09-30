@@ -275,12 +275,35 @@ public final class ActivationJournal {
   public synchronized void stableContentFailed(
       HotManifest manifest, ContentQuarantine contentQuarantine, long hostContract)
       throws Exception {
+    revertStable(manifest, contentQuarantine, hostContract, true);
+  }
+
+  synchronized void revertStable(
+      HotManifest manifest,
+      ContentQuarantine contentQuarantine,
+      long hostContract,
+      boolean confirmed)
+      throws Exception {
     StrictJson.require(
         state.phase == Phase.STABLE && state.stable.equals(manifest.snapshotId), "故障报告不属于当前稳定内容");
-    contentQuarantine.isolate(manifest, hostContract);
+    if (confirmed) contentQuarantine.isolate(manifest, hostContract);
     Set<String> quarantined = new LinkedHashSet<>(state.quarantine);
-    quarantined.add(state.stable);
-    String fallback = state.previousStable;
+    if (confirmed) quarantined.add(state.stable);
+    restoreStable(quarantined);
+  }
+
+  /** 缓存缺失、验签失败或 APK 契约变化只改变选择，不把原内容判成坏代码。 */
+  public synchronized void unavailableStable(String expected) throws Exception {
+    StrictJson.require(
+        state.phase == Phase.STABLE
+            && state.stable.equals(expected)
+            && HotManifest.validHash(expected),
+        "恢复请求不属于当前稳定版本");
+    restoreStable(state.quarantine);
+  }
+
+  private void restoreStable(Set<String> quarantined) throws Exception {
+    String fallback = quarantined.contains(state.previousStable) ? "" : state.previousStable;
     save(
         new State(
             fallback,

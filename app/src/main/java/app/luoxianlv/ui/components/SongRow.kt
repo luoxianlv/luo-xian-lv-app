@@ -32,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.business.ui.LocalPageVisible
+import app.luoxianlv.business.ui.PageReplacementGuard
 import app.luoxianlv.core.score.ScoreWork
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.timeLabel
@@ -128,7 +130,9 @@ fun SongRow(
             IconButton(onClick = { menu = true }) {
                 Icon(Icons.Filled.MoreVert, contentDescription = "${song.title} 选项")
             }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            val visible = LocalPageVisible.current
+            PageReplacementGuard { !menu }
+            DropdownMenu(expanded = menu && visible, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(
                     text = { Text("编辑谱面") },
                     onClick = {

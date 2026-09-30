@@ -35,6 +35,13 @@ public interface NativePlaybackSession extends PlaybackPort, AutoCloseable {
     throw new UnsupportedOperationException("播放业务不支持状态恢复");
   }
 
+  /** 试运行中新建的连接没有旧实例；从旧工厂静默重建，null 表示读取当前持久化选曲。 */
+  default void prepareRecovery(
+      Context context, AccessibilityBinding binding, Bundle state, NativePage.Ready ready) {
+    if (state == null) throw new UnsupportedOperationException("播放业务不支持无快照重建");
+    prepare(context, binding, state, ready);
+  }
+
   default void activate() {
     throw new UnsupportedOperationException("播放业务不支持激活");
   }

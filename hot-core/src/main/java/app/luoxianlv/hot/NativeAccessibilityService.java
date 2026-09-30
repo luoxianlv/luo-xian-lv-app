@@ -37,6 +37,18 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     return this;
   }
 
+  protected void playbackOpened() {}
+
+  protected void playbackClosed() {}
+
+  protected void playbackFailed(Throwable failure) {}
+
+  protected void playbackUsageChanged() {}
+
+  public final boolean playbackInUse() {
+    return binding != null && binding.current() && binding.used;
+  }
+
   protected AutoCloseable whenPlaybackReady(Runnable ready) {
     ready.run();
     return () -> {};
@@ -63,6 +75,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       candidate.session = createPlaybackSession();
       candidate.session.connect(playbackContext(), candidate);
       if (binding == candidate) registration = PlaybackBridge.connect(candidate);
+      if (binding == candidate) playbackOpened();
     } catch (Throwable failure) {
       failed(candidate, failure);
     }
@@ -109,6 +122,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
   private void failed(Binding owner, Throwable failure) {
     HostDiagnostics.log(Log.ERROR, "无障碍宿主", "播放业务失败，已关闭当前会话", failure);
     if (handover != null && handover.failed(owner, failure)) return;
+    playbackFailed(failure);
     if (binding == owner) closeSession();
   }
 
@@ -130,6 +144,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     }
     retire(previous);
     if (change != null) change.disconnect();
+    if (previous != null) playbackClosed();
     if (ownsForeground) foregroundRequested(false);
   }
 
@@ -174,6 +189,22 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     return !retired.isEmpty();
   }
 
+  /** 试运行时刚建立的系统连接直接使用候选；只有回退才构造旧业务会话。 */
+  public final PlaybackHandover watchPlayback(
+      NativeLoader.Prepared recovery,
+      java.util.function.Supplier<NativePlaybackSession> factory,
+      PlaybackHandover.Listener listener) {
+    StrictJson.require(
+        Looper.myLooper() == Looper.getMainLooper()
+            && connected
+            && binding != null
+            && binding.session != null
+            && handover == null,
+        "播放连接不能加入当前试运行");
+    handover = new PlaybackHandover(this, recovery.context(this), factory, listener);
+    return handover;
+  }
+
   boolean retiredInputIdle() {
     return retired.stream().allMatch(value -> value.gestures == 0 && value.captures == 0);
   }
@@ -191,6 +222,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       binding.enabled = false;
       binding.activationEpoch++;
     }
+    playbackUsageChanged();
     if (registration != null) {
       try {
         registration.close();
@@ -241,7 +273,7 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
   final class Binding implements AccessibilityBinding, PlaybackPort {
     NativePlaybackSession session;
     NativePlaybackSession retiredSession;
-    boolean enabled, closeFailed;
+    boolean enabled, closeFailed, used;
     volatile long activationEpoch;
     private int gestures;
     private int captures;
@@ -357,6 +389,19 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       if (Looper.myLooper() == Looper.getMainLooper())
         invoke(epoch, () -> foregroundRequested(enabled));
       else main.post(() -> invoke(epoch, () -> foregroundRequested(enabled)));
+    }
+
+    @Override
+    public void usage(boolean playing) {
+      long epoch = activationEpoch;
+      Runnable report =
+          () -> {
+            if (!current(epoch) || used == playing) return;
+            used = playing;
+            playbackUsageChanged();
+          };
+      if (Looper.myLooper() == Looper.getMainLooper()) report.run();
+      else main.post(report);
     }
   }
 

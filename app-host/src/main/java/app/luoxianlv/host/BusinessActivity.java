@@ -51,4 +51,27 @@ public abstract class BusinessActivity extends NativeHostActivity {
     if (session != null) Bootstrap.pageClosed(session);
     session = null;
   }
+
+  @Override
+  protected void pageSessionFailed(Throwable failure) {
+    Bootstrap.componentFailed(failure);
+  }
+
+  @Override
+  protected void onResume() {
+    super.onResume();
+    Bootstrap.usageChanged();
+  }
+
+  @Override
+  protected void onPause() {
+    super.onPause();
+    Bootstrap.usageChanged();
+  }
+
+  @Override
+  protected void onStop() {
+    super.onStop();
+    Bootstrap.usageChanged();
+  }
 }

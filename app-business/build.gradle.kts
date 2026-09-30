@@ -52,6 +52,9 @@ android {
         .kotlin
         .directories
         .add(rootProject.file("app/src/release/java").path)
+    if (providers.gradleProperty("nativeBusinessProbe").orNull == "true") {
+        sourceSets.getByName("debug").java.srcDir("src/hotProbe/java")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

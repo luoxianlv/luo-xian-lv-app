@@ -27,6 +27,26 @@ public final class MusicAccessibilityService extends NativeAccessibilityService 
   }
 
   @Override
+  protected void playbackOpened() {
+    Bootstrap.playbackOpened(this);
+  }
+
+  @Override
+  protected void playbackClosed() {
+    Bootstrap.playbackClosed(this);
+  }
+
+  @Override
+  protected void playbackFailed(Throwable failure) {
+    Bootstrap.componentFailed(failure);
+  }
+
+  @Override
+  protected void playbackUsageChanged() {
+    Bootstrap.usageChanged();
+  }
+
+  @Override
   protected void foregroundRequested(boolean enabled) {
     if (enabled) PlaybackForegroundService.start(this);
     else PlaybackForegroundService.stop();

@@ -47,6 +47,8 @@ public abstract class NativeHostActivity extends Activity {
 
   protected void pageSessionClosed() {}
 
+  protected void pageSessionFailed(Throwable failure) {}
+
   protected Context initialPageContext() {
     return this;
   }
@@ -398,6 +400,7 @@ public abstract class NativeHostActivity extends Activity {
   }
 
   private void pageFailed(Throwable failure) {
+    pageSessionFailed(failure);
     pageSessionClosed();
     warning("page_initialization_failed", failure);
     if (page != null) {

@@ -87,7 +87,10 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         get() = songLoad.playWhenReady
 
     var playing = false
-        private set
+        private set(value) {
+            field = value
+            if (::binding.isInitialized) binding.usage(value && active && !closed)
+        }
 
     /** 播放前的截图识别尚未完成时为 true。 */
     var preparing = false
@@ -338,6 +341,17 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     override fun restore(state: Bundle?, ready: NativePage.Ready) =
         restoreState(state, ready, background = false)
+
+    override fun prepareRecovery(
+        context: Context,
+        binding: AccessibilityBinding,
+        state: Bundle?,
+        ready: NativePage.Ready,
+    ) {
+        check(!binding.current()) { "恢复准备期间不能获得系统输入" }
+        initialize(context, binding)
+        restoreState(state, ready, background = false)
+    }
 
     private fun restoreState(state: Bundle?, ready: NativePage.Ready, background: Boolean) {
         check(!closed && !active) { "必须先停用播放会话再恢复状态" }

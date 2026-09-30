@@ -128,6 +128,7 @@ abstract class ComposePage :
             root.setContent {
                 CompositionLocalProvider(
                     LocalNativePage provides this,
+                    LocalPageVisible provides isActive,
                     LocalOnBackPressedDispatcherOwner provides this,
                 ) {
                     Content()

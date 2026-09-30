@@ -108,6 +108,41 @@ public final class TrustStore {
     }
   }
 
+  /** 已稳定的版本可离线继续运行，但不能绕过验签、已见撤销或损坏的信任下限。 */
+  public synchronized void verifyStable(
+      ContentStore.Snapshot snapshot, ActivationJournal.State state) throws Exception {
+    StrictJson.require(
+        state.phase == ActivationJournal.Phase.STABLE
+            && state.stable.equals(snapshot.manifest.snapshotId)
+            && state.active.equals(state.stable)
+            && !state.quarantine.contains(state.stable),
+        "快照不是已确认的稳定版本");
+    Record latest = current();
+    StrictJson.require(
+        latest != null && latest.authority.version >= state.trustVersion, "稳定版本缺少对应信任记录");
+    byte[] authority = ContentStore.readBounded(new File(snapshot.directory, "trust.json"));
+    HotTrust accepted =
+        new HotTrust(
+            root,
+            authority,
+            ContentStore.readBounded(new File(snapshot.directory, "trust.sig.json")));
+    StrictJson.require(accepted.version <= latest.authority.version, "稳定快照授权高于已保存的信任版本");
+    if (accepted.version == latest.authority.version)
+      StrictJson.require(Arrays.equals(authority, latest.document), "同版本根授权内容冲突");
+    HotManifest manifest = snapshot.manifest;
+    StrictJson.require(
+        manifest.applicationId.equals(accepted.applicationId)
+            && manifest.environment.equals(accepted.environment)
+            && manifest.applicationId.equals(latest.authority.applicationId)
+            && manifest.environment.equals(latest.authority.environment),
+        "稳定快照超出根授权范围");
+    byte[] raw = ContentStore.readBounded(new File(snapshot.directory, "manifest.json"));
+    StrictJson.require(HotSignatures.hash(raw).equals(manifest.snapshotId), "稳定快照清单已改变");
+    byte[] signature = ContentStore.readBounded(new File(snapshot.directory, "manifest.sig.json"));
+    latest.authority.requireNotRevoked(signature);
+    accepted.verifyAccepted(raw, signature);
+  }
+
   private static byte[] part(DataInputStream input) throws Exception {
     int size = input.readInt();
     StrictJson.require(size > 0 && size <= StrictJson.MAX_BYTES, "信任记录字段大小无效");

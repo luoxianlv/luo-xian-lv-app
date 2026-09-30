@@ -21,6 +21,10 @@ import java.util.function.BooleanSupplier;
 public final class NativeAppInstrumentation extends Instrumentation {
   private UiAutomation automation;
   private boolean groupChecks;
+  private String online;
+  private boolean onlineRollback;
+  private boolean onlinePersist;
+  private String startupSnapshot;
 
   private void onMain(Runnable action) {
     var failure = new java.util.concurrent.atomic.AtomicReference<Throwable>();
@@ -45,6 +49,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
   public void onCreate(Bundle arguments) {
     super.onCreate(arguments);
     groupChecks = arguments != null && "true".equals(arguments.getString("group"));
+    online = arguments == null ? null : arguments.getString("online");
+    onlineRollback = arguments != null && "true".equals(arguments.getString("onlineRollback"));
+    onlinePersist = arguments != null && "true".equals(arguments.getString("onlinePersist"));
+    startupSnapshot = arguments == null ? null : arguments.getString("startupSnapshot");
     start();
   }
 
@@ -87,6 +95,16 @@ public final class NativeAppInstrumentation extends Instrumentation {
     while (!node.isClickable() && node.getParent() != null) node = node.getParent();
     require(node.performAction(AccessibilityNodeInfo.ACTION_CLICK), "不能点击：" + text);
     SystemClock.sleep(500);
+  }
+
+  private void dismissFullscreenHint() {
+    var title = find("Viewing full screen");
+    var button = find("Got it");
+    if (title != null
+        && button != null
+        && "com.android.systemui".contentEquals(title.getPackageName())
+        && "com.android.systemui".contentEquals(button.getPackageName()))
+      require(button.performAction(AccessibilityNodeInfo.ACTION_CLICK), "系统全屏首次提示无法关闭");
   }
 
   private String shell(String command) throws Exception {
@@ -269,130 +287,216 @@ public final class NativeAppInstrumentation extends Instrumentation {
             }
           });
       Bootstrap.Source source = Bootstrap.source();
-      ClassLoader business = source.factory.getClass().getClassLoader();
-      ClassLoader runtime = Class.forName("kotlin.Unit", false, business).getClassLoader();
-      require(business != runtime && runtime == business.getParent(), "业务没有复用独立共享运行时");
-      require(
-          Class.forName("app.luoxianlv.business.MainPage", false, business).getClassLoader()
-              == business,
-          "主页不是业务模块提供");
-      for (String name :
-          new String[] {
-            "kotlin.Unit",
-            "androidx.compose.ui.platform.ComposeView",
-            "app.luoxianlv.business.MainPage"
-          }) {
-        boolean missing = false;
-        try {
-          Class.forName(name, false, getTargetContext().getClassLoader());
-        } catch (ClassNotFoundException expected) {
-          missing = true;
-        }
-        require(missing, "宿主混入动态代码：" + name);
-      }
-      boolean noAnalytics = false;
-      try {
-        Class.forName("com.umeng.commonsdk.UMConfigure", false, runtime);
-      } catch (ClassNotFoundException expected) {
-        noAnalytics = true;
-      }
-      require(noAnalytics, "Debug 运行时混入统计 SDK");
-      Context[] contexts = new Context[1];
-      Activity home = main;
-      onMain(() -> contexts[0] = source.prepared.context(home));
-      Context app = contexts[0].getApplicationContext();
-      require(
-          app instanceof Application && app != main.getApplication(), "业务 Application 没有保留本代资源边界");
-      try (var input = app.getAssets().open("builtin-scores/rain-love.txt")) {
-        require(input.read() >= 0, "ViewModel 无法读取业务内置谱面");
-      }
-      checkTheme(contexts[0], business, runtime);
-      onMain(() -> checkConfigurations(contexts[0]));
-      checkBaselineRepair();
-      require(
-          main.getResources().getIdentifier("AppTheme", "style", "app.luoxianlv.business") == 0,
-          "模块资源污染宿主窗口");
-      step("通过：类加载边界、Material 跨包主题、独立窗口配置、损坏内置模块恢复");
-      await("动态首页没有显示", () -> find("演练场") != null);
-      click("设置");
-      await("动态设置页没有显示", () -> find("网站账号") != null);
-      click("曲库");
-      await("动态曲库没有显示", () -> find("导入谱子") != null);
-      step("通过：首页、设置和曲库");
-
-      String component =
-          getTargetContext().getPackageName() + "/app.luoxianlv.service.MusicAccessibilityService";
-      String enabled =
-          previousServices.equals("null") || previousServices.isEmpty()
-              ? component
-              : previousServices.contains(component)
-                  ? previousServices
-                  : previousServices + ":" + component;
-      shell("settings put secure enabled_accessibility_services " + enabled);
-      shell("settings put secure accessibility_enabled 1");
-      await("独立业务播放服务未连接", () -> PlaybackBridge.current() != null);
-      previousFloating = PlaybackBridge.current().query("state").getBoolean("floatingEnabled");
-      onMain(
-          () -> {
-            Bundle value = new Bundle();
-            value.putBoolean("enabled", true);
-            PlaybackBridge.current().command("showFloating", value);
-          });
-      await("动态 Material 浮窗没有显示", () -> find("展开播放器") != null);
-      click("展开播放器");
-      await("动态 Material 面板没有显示", () -> find("选歌") != null);
-      step("通过：无障碍服务与真实 Material 浮窗面板");
-      if (groupChecks) {
-        GroupHandoverChecks.run(this, main, this::click);
-        step("通过：真实页面与播放整组交接、部分提交故障、最新状态回退及后台窗口准备");
-      } else {
-        PlaybackHandoverChecks.run(this, main);
-        step("通过：两个业务加载器间的播放交接、过期快照拒绝、准备/激活故障与最新状态回退");
-      }
-      onMain(
-          () -> {
-            Bundle value = new Bundle();
-            value.putBoolean("enabled", false);
-            PlaybackBridge.current().command("showFloating", value);
-          });
-
-      stage =
-          startActivitySync(
-              new Intent()
-                  .setClassName(getTargetContext(), "app.luoxianlv.ui.practice.PracticeActivity")
-                  .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-      Activity playing = stage;
-      await("独立业务演练场未准备好", () -> PracticeBridge.ready() && playing.hasWindowFocus());
-      onMain(
-          () -> {
-            View keyboard =
+      if (startupSnapshot != null) {
+        require(
+            getTargetContext().getPackageName().equals("app.luoxianlv.debug")
+                && app.luoxianlv.hot.HotManifest.validHash(startupSnapshot),
+            "冷启动验收仅允许 Debug 和明确快照");
+        require(
+            source.prepared.manifest != null
+                && startupSnapshot.equals(source.prepared.manifest.snapshotId),
+            "普通 Application 启动未选择稳定热更");
+        Activity restored = main;
+        await(
+            "重启后新增原生组件未显示",
+            () ->
                 view(
-                    playing.getWindow().getDecorView(),
-                    "app.luoxianlv.ui.practice.PracticeKeyboard");
-            require(
-                keyboard != null
-                    && keyboard.getClass().getClassLoader()
-                        == Bootstrap.source().prepared.classLoader()
-                    && keyboard.getAlpha() > .99f,
-                "口琴没有由业务包真实呈现");
-            require(
-                keyboard.getResources().getConfiguration().orientation
-                    == android.content.res.Configuration.ORIENTATION_LANDSCAPE,
-                "业务窗口未跟随横屏配置");
-            require(
-                playing.getResources().getIdentifier("AppTheme", "style", "app.luoxianlv.business")
-                    == 0,
-                "模块资源污染演奏宿主");
-            playing.onBackPressed();
-          });
-      await("演练场退出未释放入口", () -> !PracticeBridge.active() && playing.isDestroyed());
-      report.putString(
-          "stream",
-          "通过：宿主无 Kotlin/Compose/业务类，完整业务使用独立加载器并复用运行时；Debug 无统计 SDK；本代 Application"
-              + " 资源、首页/设置/曲库、真实无障碍 Material 浮窗及演练场进入/退出。\n");
-      success = true;
+                            restored.getWindow().getDecorView(),
+                            "app.luoxianlv.hot.probe.HotProbeFactory$NewNativeBadge")
+                        != null
+                    && restored.hasWindowFocus());
+        report.putString("stream", "通过：普通冷启动离线读取稳定签名版本并显示新增原生组件。\n");
+        success = true;
+      } else {
+        ClassLoader business = source.factory.getClass().getClassLoader();
+        ClassLoader runtime = Class.forName("kotlin.Unit", false, business).getClassLoader();
+        require(business != runtime && runtime == business.getParent(), "业务没有复用独立共享运行时");
+        require(
+            Class.forName("app.luoxianlv.business.MainPage", false, business).getClassLoader()
+                == business,
+            "主页不是业务模块提供");
+        for (String name :
+            new String[] {
+              "kotlin.Unit",
+              "androidx.compose.ui.platform.ComposeView",
+              "app.luoxianlv.business.MainPage"
+            }) {
+          boolean missing = false;
+          try {
+            Class.forName(name, false, getTargetContext().getClassLoader());
+          } catch (ClassNotFoundException expected) {
+            missing = true;
+          }
+          require(missing, "宿主混入动态代码：" + name);
+        }
+        boolean noAnalytics = false;
+        try {
+          Class.forName("com.umeng.commonsdk.UMConfigure", false, runtime);
+        } catch (ClassNotFoundException expected) {
+          noAnalytics = true;
+        }
+        require(noAnalytics, "Debug 运行时混入统计 SDK");
+        Context[] contexts = new Context[1];
+        Activity home = main;
+        onMain(() -> contexts[0] = source.prepared.context(home));
+        Context app = contexts[0].getApplicationContext();
+        require(
+            app instanceof Application && app != main.getApplication(),
+            "业务 Application 没有保留本代资源边界");
+        try (var input = app.getAssets().open("builtin-scores/rain-love.txt")) {
+          require(input.read() >= 0, "ViewModel 无法读取业务内置谱面");
+        }
+        checkTheme(contexts[0], business, runtime);
+        onMain(() -> checkConfigurations(contexts[0]));
+        checkBaselineRepair();
+        require(
+            main.getResources().getIdentifier("AppTheme", "style", "app.luoxianlv.business") == 0,
+            "模块资源污染宿主窗口");
+        step("通过：类加载边界、Material 跨包主题、独立窗口配置、损坏内置模块恢复");
+        await("动态首页没有显示", () -> find("演练场") != null);
+        click("设置");
+        await("动态设置页没有显示", () -> find("网站账号") != null);
+        click("曲库");
+        await("动态曲库没有显示", () -> find("导入谱子") != null);
+        step("通过：首页、设置和曲库");
+
+        String component =
+            getTargetContext().getPackageName()
+                + "/app.luoxianlv.service.MusicAccessibilityService";
+        String enabled =
+            previousServices.equals("null") || previousServices.isEmpty()
+                ? component
+                : previousServices.contains(component)
+                    ? previousServices
+                    : previousServices + ":" + component;
+        shell("settings put secure enabled_accessibility_services " + enabled);
+        shell("settings put secure accessibility_enabled 1");
+        await("独立业务播放服务未连接", () -> PlaybackBridge.current() != null);
+        previousFloating = PlaybackBridge.current().query("state").getBoolean("floatingEnabled");
+        onMain(
+            () -> {
+              Bundle value = new Bundle();
+              value.putBoolean("enabled", true);
+              PlaybackBridge.current().command("showFloating", value);
+            });
+        await("动态 Material 浮窗没有显示", () -> find("展开播放器") != null);
+        click("展开播放器");
+        await("动态 Material 面板没有显示", () -> find("选歌") != null);
+        step("通过：无障碍服务与真实 Material 浮窗面板");
+        if (online != null) {
+          NativeFullOnlineChecks.run(this, main, online, onlineRollback, onlinePersist);
+        } else if (groupChecks) {
+          GroupHandoverChecks.run(this, main, this::click);
+          step("通过：真实页面与播放整组交接、部分提交故障、最新状态回退及后台窗口准备");
+        } else {
+          PlaybackHandoverChecks.run(this, main);
+          step("通过：两个业务加载器间的播放交接、过期快照拒绝、准备/激活故障与最新状态回退");
+        }
+        onMain(
+            () -> {
+              Bundle value = new Bundle();
+              value.putBoolean("enabled", false);
+              PlaybackBridge.current().command("showFloating", value);
+            });
+
+        stage =
+            startActivitySync(
+                new Intent()
+                    .setClassName(getTargetContext(), "app.luoxianlv.ui.practice.PracticeActivity")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        Activity playing = stage;
+        await(
+            "独立业务演练场未准备好",
+            () -> {
+              dismissFullscreenHint();
+              return PracticeBridge.ready() && playing.hasWindowFocus();
+            });
+        onMain(
+            () -> {
+              View keyboard =
+                  view(
+                      playing.getWindow().getDecorView(),
+                      "app.luoxianlv.ui.practice.PracticeKeyboard");
+              require(
+                  keyboard != null
+                      && keyboard.getClass().getClassLoader()
+                          == Bootstrap.source().prepared.classLoader()
+                      && keyboard.getAlpha() > .99f,
+                  "口琴没有由业务包真实呈现");
+              require(
+                  keyboard.getResources().getConfiguration().orientation
+                      == android.content.res.Configuration.ORIENTATION_LANDSCAPE,
+                  "业务窗口未跟随横屏配置");
+              require(
+                  playing
+                          .getResources()
+                          .getIdentifier("AppTheme", "style", "app.luoxianlv.business")
+                      == 0,
+                  "模块资源污染演奏宿主");
+              playing.onBackPressed();
+            });
+        await("演练场退出未释放入口", () -> !PracticeBridge.active() && playing.isDestroyed());
+        report.putString(
+            "stream",
+            "通过：宿主无 Kotlin/Compose/业务类，完整业务使用独立加载器并复用运行时；Debug 无统计 SDK；本代 Application"
+                + " 资源、首页/设置/曲库、真实无障碍 Material 浮窗及演练场进入/退出。\n");
+        success = true;
+      }
     } catch (Throwable failure) {
       report.putString("stream", android.util.Log.getStackTraceString(failure));
+      var diagnostic = new java.util.concurrent.atomic.AtomicReference<String>("主线程未及时返回");
+      var collected = new java.util.concurrent.CountDownLatch(1);
+      new android.os.Handler(android.os.Looper.getMainLooper())
+          .post(
+              () -> {
+                try {
+                  var port = PlaybackBridge.current();
+                  if (port == null) diagnostic.set("播放连接已关闭");
+                  else {
+                    var field = port.getClass().getDeclaredField("session");
+                    field.setAccessible(true);
+                    var session =
+                        (app.luoxianlv.hot.contract.NativePlaybackSession) field.get(port);
+                    var state = session.snapshot();
+                    var floating = state.getBundle("floatingState");
+                    diagnostic.set(
+                        "请求显示="
+                            + state.getBoolean("floating")
+                            + "，展开="
+                            + (floating != null && floating.getBoolean("expanded"))
+                            + "，停靠="
+                            + (floating == null ? "未知" : floating.getString("dock")));
+                  }
+                } catch (Throwable unavailable) {
+                  diagnostic.set("读取失败：" + unavailable.getClass().getSimpleName());
+                } finally {
+                  collected.countDown();
+                }
+              });
+      try {
+        collected.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+      }
+      report.putString("stream", report.getString("stream") + "\n浮窗诊断：" + diagnostic.get() + "\n");
+      try {
+        var screen = automation.takeScreenshot();
+        if (screen != null)
+          try (var output =
+              new java.io.FileOutputStream(
+                  new java.io.File(getTargetContext().getFilesDir(), "native-host-failure.png"))) {
+            screen.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
+          } finally {
+            if (screen != null) screen.recycle();
+          }
+      } catch (Throwable unavailable) {
+        report.putString(
+            "stream",
+            report.getString("stream")
+                + "失败画面未保存："
+                + unavailable.getClass().getSimpleName()
+                + "\n");
+      }
     } finally {
       try {
         if (previousFloating != null && PlaybackBridge.current() != null) {

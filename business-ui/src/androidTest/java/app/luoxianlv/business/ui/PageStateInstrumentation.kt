@@ -22,6 +22,7 @@ class PageStateInstrumentation : Instrumentation() {
             primitiveArrays()
             composeState()
             viewState()
+            DialogVisibilityChecks.run(this)
             rejects {
                 PageSavedState.encode(Bundle().apply { putString("large", "中".repeat(30001)) })
             }
@@ -39,7 +40,7 @@ class PageStateInstrumentation : Instrumentation() {
             }
             report.putString(
                 "stream",
-                "页面状态通过：基础数组类型、空值与中文、Compose 与原生控件基础状态、深度/数量/体积限制、非法对象与版本拒绝。\n",
+                "页面状态通过：基础数组类型、空值与中文、Compose 与原生控件基础状态、深度/数量/体积限制、非法对象与版本拒绝；候选预热与后台分页不显示弹窗，未完成输入仍阻止替换。\n",
             )
             finish(-1, report)
         } catch (error: Throwable) {

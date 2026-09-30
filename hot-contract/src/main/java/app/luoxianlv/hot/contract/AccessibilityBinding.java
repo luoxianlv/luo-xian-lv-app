@@ -15,6 +15,9 @@ public interface AccessibilityBinding {
 
   void foreground(boolean enabled);
 
+  /** 健康观察只累计实际演奏；保持前台服务或显示浮窗不代表正在使用模块。 */
+  default void usage(boolean playing) {}
+
   interface GestureCallback {
     void completed(boolean success);
   }

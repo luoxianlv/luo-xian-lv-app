@@ -79,11 +79,24 @@ public final class HotTrust {
   }
 
   public void verify(String domain, byte[] raw, byte[] signature, Instant now) throws Exception {
-    String keyId = StrictJson.object(signature).string("keyId");
-    StrictJson.require(!revoked.contains(keyId), "签名密钥已撤销");
-    Grant grant = keys.get(keyId);
-    StrictJson.require(grant != null, "签名密钥未授权");
+    Grant grant = signer(signature);
     StrictJson.require(!now.isBefore(grant.start) && now.isBefore(grant.end), "签名密钥未生效或已过期");
     HotSignatures.verify(grant.key, domain, raw, signature);
+  }
+
+  /** 仅供已稳定快照的离线复验；新候选仍必须检查授权和密钥有效期。 */
+  void verifyAccepted(byte[] raw, byte[] signature) throws Exception {
+    HotSignatures.verify(signer(signature).key, HotSignatures.MANIFEST, raw, signature);
+  }
+
+  void requireNotRevoked(byte[] signature) throws Exception {
+    StrictJson.require(!revoked.contains(StrictJson.object(signature).string("keyId")), "签名密钥已撤销");
+  }
+
+  private Grant signer(byte[] signature) throws Exception {
+    requireNotRevoked(signature);
+    Grant grant = keys.get(StrictJson.object(signature).string("keyId"));
+    StrictJson.require(grant != null, "签名密钥未授权");
+    return grant;
   }
 }

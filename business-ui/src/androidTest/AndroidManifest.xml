@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name="app.luoxianlv.business.ui.DialogHarnessActivity" android:exported="false" />
+    </application>
+</manifest>

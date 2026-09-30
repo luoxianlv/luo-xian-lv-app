@@ -1,4 +1,5 @@
 import app.luoxianlv.buildlogic.BundleBaseline
+import app.luoxianlv.buildlogic.CopyHotConfig
 
 plugins { id("com.android.application") }
 
@@ -31,6 +32,16 @@ android {
 dependencies { implementation(project(":hot-core")) }
 
 androidComponents.onVariants { variant ->
+    providers.gradleProperty("hotUpdateConfig").orNull?.let { configPath ->
+        val config =
+            tasks.register<CopyHotConfig>(
+                "copy${variant.name.replaceFirstChar(Char::uppercaseChar)}HotConfig"
+            ) {
+                this.config.set(rootProject.layout.projectDirectory.file(configPath))
+                output.set(layout.buildDirectory.dir("generated/hotConfig/${variant.name}"))
+            }
+        variant.sources.assets!!.addGeneratedSourceDirectory(config) { it.output }
+    }
     val runtime =
         configurations.create("${variant.name}BaselineRuntime") {
             isCanBeConsumed = false
@@ -60,6 +71,9 @@ androidComponents.onVariants { variant ->
             runtimeApk.set(layout.file(provider { runtime.singleFile }))
             businessApk.set(layout.file(provider { business.singleFile }))
             output.set(layout.buildDirectory.dir("generated/baseline/${variant.name}"))
+            if (providers.gradleProperty("nativeBusinessProbe").orNull == "true") {
+                doFirst { error("在线验收用的新组件不能内置到宿主恢复基线") }
+            }
             dependsOn(runtime, business)
         }
     variant.sources.assets!!.addGeneratedSourceDirectory(baseline) { it.output }

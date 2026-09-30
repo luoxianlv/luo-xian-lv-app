@@ -140,4 +140,21 @@ public final class ActivationControllerTest {
     assertEquals("", f.journal.state().stable);
     assertTrue(f.journal.state().quarantine.contains(f.snapshot.manifest.snapshotId));
   }
+
+  @Test
+  public void groupRollbackAfterHealthyWriteRestoresDiskWithoutQuarantiningCancellation()
+      throws Exception {
+    Fixture f = new Fixture();
+    ActivationController.Ticket ticket = f.begin();
+    f.controller.firstFrame(ticket);
+    assertTrue(f.controller.expose(ticket, () -> {}));
+    f.controller.setActive(ticket, true);
+    f.clock.addAndGet(60000);
+    assertTrue(f.controller.healthy(ticket));
+    f.controller.revert(ticket, false);
+    assertEquals("", f.journal.state().stable);
+    assertEquals("", f.journal.state().active);
+    assertTrue(f.journal.state().quarantine.isEmpty());
+    f.quarantine.requireAllowed(f.snapshot.manifest, 1);
+  }
 }

@@ -200,6 +200,22 @@ public final class ActivationController {
     return ticket != null && ticket == current && !ticket.finished;
   }
 
+  /** 整组已经恢复旧实现时，磁盘也必须恢复；覆盖健康落盘与主线程确认之间的撤回竞态。 */
+  public void revert(Ticket ticket, boolean confirmedContentFailure) throws Exception {
+    transaction.lock();
+    try {
+      if (ticket != null
+          && ticket.finished
+          && journal.state().phase == ActivationJournal.Phase.STABLE
+          && journal.state().stable.equals(ticket.snapshot.manifest.snapshotId)) {
+        journal.revertStable(
+            ticket.snapshot.manifest, quarantine, hostContract, confirmedContentFailure);
+      } else abort(ticket, confirmedContentFailure);
+    } finally {
+      transaction.unlock();
+    }
+  }
+
   private void requireCurrent(Ticket ticket) {
     StrictJson.require(
         valid(ticket) && journal.state().attempt.equals(ticket.attemptId), "激活回调已被新决定或恢复操作取代");
