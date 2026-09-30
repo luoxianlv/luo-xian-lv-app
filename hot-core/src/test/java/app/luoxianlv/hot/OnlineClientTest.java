@@ -72,6 +72,10 @@ public final class OnlineClientTest {
     }
 
     Fixture(PreparationSpace space) throws Exception {
+      this(space, (hash, size) -> null);
+    }
+
+    Fixture(PreparationSpace space, UpdateClient.LocalObjects local) throws Exception {
       try (HotPackage target = archive("target.lxhp")) {
         signed = target.metadata();
         for (String hash : target.included) {
@@ -130,6 +134,34 @@ public final class OnlineClientTest {
                   }
                   return json(reply);
                 }
+                if (request.path.endsWith("/grant")) {
+                  String hash =
+                      request.path.substring(request.path.indexOf("/objects/") + 9).split("/")[0];
+                  assertEquals(
+                      signed.manifest.snapshotId,
+                      StrictJson.object(request.body).string("snapshotId"));
+                  byte[] bytes = objects.get(hash);
+                  assertNotNull(bytes);
+                  return json(
+                      JsonWire.fields(
+                          "transport",
+                          "local-test",
+                          "method",
+                          "GET",
+                          "url",
+                          "/api/hot/v2/objects/"
+                              + hash
+                              + "?snapshotId="
+                              + signed.manifest.snapshotId,
+                          "headers",
+                          Collections.emptyMap(),
+                          "sha256",
+                          hash,
+                          "size",
+                          (long) bytes.length,
+                          "expiresAt",
+                          Instant.parse("2026-09-29T00:00:00Z").getEpochSecond() + 120));
+                }
                 if (request.path.contains("/objects/")) {
                   objectRequests.incrementAndGet();
                   String hash =
@@ -159,7 +191,8 @@ public final class OnlineClientTest {
               budget,
               Collections.emptySet(),
               clock::get,
-              space);
+              space,
+              local);
     }
 
     @Override
@@ -177,6 +210,64 @@ public final class OnlineClientTest {
 
   private static String text(byte[] raw) {
     return new String(raw, StandardCharsets.UTF_8);
+  }
+
+  @Test
+  public void installedMatchingObjectsSkipNetworkAndStillBecomeVerifiedStoreObjects()
+      throws Exception {
+    Map<String, File> installed = new HashMap<>();
+    try (HotPackage target = archive("target.lxhp")) {
+      for (String hash : target.included) {
+        File file = directory.newFile();
+        try (var output = Files.newOutputStream(file.toPath())) {
+          target.copyObject(hash, output);
+        }
+        installed.put(hash, file);
+      }
+    }
+    try (Fixture f = new Fixture(new PreparationSpace(), (hash, size) -> installed.get(hash))) {
+      for (int used = 0; used < DownloadBudget.LIMIT; used += DownloadBudget.RESERVATION)
+        f.budget.reserve(f.signed.manifest.contentId, DownloadBudget.RESERVATION);
+      var prepared = f.client.prepare(1, () -> true, () -> false);
+      assertNotNull(prepared);
+      assertEquals(0, f.objectRequests.get());
+      assertEquals(DownloadBudget.LIMIT, f.budget.used(f.signed.manifest.contentId));
+      f.store.verifySnapshotObjects(prepared.snapshot);
+      assertEquals("", f.journal.state().active);
+    }
+  }
+
+  @Test
+  public void damagedStoreObjectDownloadsOnlyThatObjectAndRepairsExistingSnapshot()
+      throws Exception {
+    try (Fixture f = new Fixture()) {
+      var first = f.client.prepare(1, () -> false, () -> false);
+      int originalRequests = f.objectRequests.get();
+      File object = f.store.objectFile(first.snapshot.manifest.business.sha256);
+      object.setWritable(true, true);
+      byte[] corrupt = Files.readAllBytes(object.toPath());
+      corrupt[0] ^= 1;
+      Files.write(object.toPath(), corrupt);
+      var repaired = f.client.prepare(1, () -> false, () -> false);
+      assertEquals(first.snapshot.directory, repaired.snapshot.directory);
+      assertEquals(originalRequests + 1, f.objectRequests.get());
+      f.store.verifySnapshotObjects(repaired.snapshot);
+      assertEquals("", f.journal.state().active);
+    }
+  }
+
+  @Test
+  public void mismatchedInstalledObjectCannotSuppressDownloadByClaimingCorrectHash()
+      throws Exception {
+    File wrong = directory.newFile();
+    Files.write(wrong.toPath(), new byte[] {1, 2, 3});
+    try (Fixture f = new Fixture(new PreparationSpace(), (hash, size) -> wrong)) {
+      assertThrows(
+          IllegalArgumentException.class, () -> f.client.prepare(1, () -> true, () -> false));
+      assertEquals(0, f.objectRequests.get());
+      assertEquals("", f.journal.state().active);
+      assertThrows(Exception.class, () -> f.store.snapshot(f.signed.manifest.snapshotId));
+    }
   }
 
   @Test

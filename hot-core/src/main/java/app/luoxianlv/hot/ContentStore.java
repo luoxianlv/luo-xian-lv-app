@@ -64,7 +64,7 @@ public final class ContentStore {
       }
       long missing = 0;
       for (Map.Entry<String, Long> object : candidate.manifest.objects.entrySet()) {
-        if (!objectFile(object.getKey()).isFile()) missing += object.getValue();
+        if (!containsVerified(object.getKey(), object.getValue())) missing += object.getValue();
         if (!source.included().contains(object.getKey()) && !source.baseline().isEmpty()) {
           StrictJson.require(
               baseline != null
@@ -76,8 +76,7 @@ public final class ContentStore {
           root.getUsableSpace() >= missing + 16L * StrictJson.MAX_BYTES, "空间不足，保留原稳定版本");
       for (Map.Entry<String, Long> object : candidate.manifest.objects.entrySet()) {
         File destination = objectFile(object.getKey());
-        if (destination.exists()) verifyFile(destination, object.getKey(), object.getValue());
-        else {
+        if (!containsVerified(object.getKey(), object.getValue())) {
           StrictJson.require(source.included().contains(object.getKey()), "缓存对象已丢失，需重新下载缺失对象");
           commitObject(source, object.getKey(), destination);
         }
@@ -122,6 +121,19 @@ public final class ContentStore {
   public File objectFile(String hash) {
     StrictJson.require(HotManifest.validHash(hash), "对象身份无效");
     return new File(objects, hash);
+  }
+
+  /** 损坏的普通缓存可补下载；链接、异常类型、读取失败和取消不能当作缺失。 */
+  public boolean containsVerified(String hash, long size) throws Exception {
+    File file = objectFile(hash);
+    if (!Files.exists(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) return false;
+    StrictJson.require(!Files.isSymbolicLink(file.toPath()) && file.isFile(), "对象缓存类型异常");
+    try {
+      verifyFile(file, hash, size);
+      return true;
+    } catch (IllegalArgumentException corrupted) {
+      return false;
+    }
   }
 
   File rootDirectory() {
@@ -174,7 +186,19 @@ public final class ContentStore {
         source.copyObject(hash, output);
         output.getFD().sync();
       }
-      moveAtomic(temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
+      // 完整校验新副本后才替换损坏对象；失败时保留原字节，快照和租约仍指向同一身份。
+      verifyFile(temporary, hash, source.metadata().manifest.objects.get(hash));
+      StrictJson.require(
+          !Files.isSymbolicLink(destination.toPath())
+              && (!destination.exists() || destination.isFile()),
+          "对象提交目标类型异常");
+      if (System.getProperty("os.name", "").startsWith("Windows") && destination.exists())
+        destination.setWritable(true, true);
+      moveAtomic(
+          temporary.toPath(),
+          destination.toPath(),
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING);
       syncDirectory(objects);
     } finally {
       if (temporary.exists()) {

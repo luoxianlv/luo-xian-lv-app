@@ -2,7 +2,6 @@ package app.luoxianlv.hot;
 
 import java.io.File;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.util.*;
 
 /** 按卷合并整组空间需求；预算只做准入，不占用文件系统或删除正在运行的版本。 */
@@ -81,14 +80,31 @@ public final class PreparationSpace {
   public void beforeDownload(
       ContentStore store, ObjectDownloader downloads, HotManifest manifest, String residentRuntime)
       throws Exception {
+    beforeDownload(store, downloads, manifest, residentRuntime, Map.of());
+  }
+
+  /** 安装包借用对象仍预算内部提交副本，但不预留网络断点或计算计费流量。 */
+  public void beforeDownload(
+      ContentStore store,
+      ObjectDownloader downloads,
+      HotManifest manifest,
+      String residentRuntime,
+      Map<String, File> local)
+      throws Exception {
     Map<String, File> sources = new HashMap<>();
     List<Demand> needs = new ArrayList<>();
     for (var entry : manifest.objects.entrySet()) {
       File object = store.objectFile(entry.getKey());
-      if (Files.exists(object.toPath(), LinkOption.NOFOLLOW_LINKS))
+      if (store.containsVerified(entry.getKey(), entry.getValue()))
         sources.put(entry.getKey(), object);
       else {
         needs.add(new Demand(store.rootDirectory(), entry.getValue()));
+        File installed = local.get(entry.getKey());
+        if (installed != null) {
+          ContentStore.verifyFile(installed, entry.getKey(), entry.getValue());
+          sources.put(entry.getKey(), installed);
+          continue;
+        }
         File partial = downloads.partial(entry.getKey());
         StrictJson.require(
             !Files.isSymbolicLink(partial.toPath()) && (!partial.exists() || partial.isFile()),
@@ -117,7 +133,8 @@ public final class PreparationSpace {
     List<Demand> needs = new ArrayList<>();
     for (var entry : manifest.objects.entrySet()) {
       File object = store.objectFile(entry.getKey());
-      if (object.isFile()) sources.put(entry.getKey(), object);
+      if (store.containsVerified(entry.getKey(), entry.getValue()))
+        sources.put(entry.getKey(), object);
       else {
         File source = downloaded.get(entry.getKey());
         StrictJson.require(source != null, "缺少完整空间预算的归档来源");

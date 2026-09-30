@@ -15,6 +15,11 @@ import java.util.function.LongSupplier;
 
 /** 后台在线链路：发现与准备不执行新代码，激活前再次取当前决定和一次性许可。 */
 public final class UpdateClient {
+  /** 只由宿主提供已安装 APK 的恢复对象；返回 null 表示本地没有准确匹配的内容。 */
+  public interface LocalObjects {
+    File find(String hash, long size) throws Exception;
+  }
+
   public static final class PreparedUpdate {
     public final ContentStore.Snapshot snapshot;
     public final boolean recovery;
@@ -44,6 +49,7 @@ public final class UpdateClient {
   private final Set<String> mounts;
   private final LongSupplier elapsed;
   private final PreparationSpace space;
+  private final LocalObjects local;
 
   public UpdateClient(
       HotApiClient api,
@@ -85,6 +91,36 @@ public final class UpdateClient {
       Set<String> mounts,
       LongSupplier elapsed,
       PreparationSpace space) {
+    this(
+        api,
+        root,
+        store,
+        trust,
+        journal,
+        controller,
+        quarantine,
+        downloads,
+        budget,
+        mounts,
+        elapsed,
+        space,
+        (hash, size) -> null);
+  }
+
+  public UpdateClient(
+      HotApiClient api,
+      HotSignatures.PublicKey root,
+      ContentStore store,
+      TrustStore trust,
+      ActivationJournal journal,
+      ActivationController controller,
+      ContentQuarantine quarantine,
+      ObjectDownloader downloads,
+      DownloadBudget budget,
+      Set<String> mounts,
+      LongSupplier elapsed,
+      PreparationSpace space,
+      LocalObjects local) {
     this.api = api;
     this.root = root;
     this.store = store;
@@ -97,6 +133,7 @@ public final class UpdateClient {
     this.mounts = Collections.unmodifiableSet(new HashSet<>(mounts));
     this.elapsed = elapsed;
     this.space = java.util.Objects.requireNonNull(space);
+    this.local = java.util.Objects.requireNonNull(local);
   }
 
   /** 返回 null 表示当前无需准备；计费网络超限、取消和网络失败均保留原稳定版本。 */
@@ -110,19 +147,23 @@ public final class UpdateClient {
     requireReadable(candidate.manifest, stateSchema);
     quarantine.requireAllowed(candidate.manifest, api.hostContract);
     Map<String, Long> missing = new LinkedHashMap<>();
+    Map<String, File> obtained = new HashMap<>();
     for (Map.Entry<String, Long> object : candidate.manifest.objects.entrySet()) {
       cancellation(cancelled);
-      File existing = store.objectFile(object.getKey());
-      if (Files.exists(existing.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
-        ContentStore.verifyFile(existing, object.getKey(), object.getValue());
-      else missing.put(object.getKey(), object.getValue());
+      if (store.containsVerified(object.getKey(), object.getValue())) continue;
+      File installed = local.find(object.getKey(), object.getValue());
+      if (installed == null) missing.put(object.getKey(), object.getValue());
+      else {
+        ContentStore.verifyFile(installed, object.getKey(), object.getValue());
+        obtained.put(object.getKey(), installed);
+      }
     }
     LongSupplier remaining = () -> missingBytes(missing);
     downloads.collect(candidate.manifest.objects.keySet(), 256L << 20);
-    space.beforeDownload(store, downloads, candidate.manifest, NativeLoader.residentRuntimeHash());
+    space.beforeDownload(
+        store, downloads, candidate.manifest, NativeLoader.residentRuntimeHash(), obtained);
     // 连接第一个对象前检查整组；对象下载器在切网和预留预算时继续检查。
     budget.admit(candidate.manifest.contentId, remaining.getAsLong(), metered.getAsBoolean());
-    Map<String, File> obtained = new HashMap<>();
     for (Map.Entry<String, Long> object : missing.entrySet()) {
       cancellation(cancelled);
       obtained.put(

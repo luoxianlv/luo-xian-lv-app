@@ -82,4 +82,42 @@ public final class ContentStoreTest {
       assertTrue("候选失败必须保留稳定快照元数据", stable.directory.isDirectory());
     }
   }
+
+  @Test
+  public void validFullSourceRepairsCorruptionWithoutChangingSnapshotSelection() throws Exception {
+    ContentStore store = new ContentStore(directory.newFolder());
+    try (HotPackage base = open("base.lxhp")) {
+      ContentStore.Snapshot stable = store.prepare(base);
+      File object = store.objectFile(base.manifest.runtime.sha256);
+      object.setWritable(true, true);
+      Files.write(object.toPath(), new byte[] {1, 2, 3});
+      assertFalse(store.containsVerified(base.manifest.runtime.sha256, base.manifest.runtime.size));
+      assertEquals(stable.directory, store.prepare(base).directory);
+      store.verifySnapshotObjects(stable);
+      assertTrue(store.containsVerified(base.manifest.runtime.sha256, base.manifest.runtime.size));
+    }
+  }
+
+  @Test
+  public void invalidReplacementKeepsCorruptBytesAndSnapshotMetadata() throws Exception {
+    ContentStore store = new ContentStore(directory.newFolder());
+    try (HotPackage base = open("base.lxhp")) {
+      ContentStore.Snapshot stable = store.prepare(base);
+      File object = store.objectFile(base.manifest.runtime.sha256);
+      object.setWritable(true, true);
+      byte[] corrupt = {1, 2, 3};
+      Files.write(object.toPath(), corrupt);
+      File replacement = directory.newFile();
+      Files.write(replacement.toPath(), new byte[(int) base.manifest.runtime.size]);
+      assertThrows(
+          Exception.class,
+          () ->
+              store.prepare(
+                  new DownloadedSnapshot(
+                      base.metadata(),
+                      java.util.Map.of(base.manifest.runtime.sha256, replacement))));
+      assertArrayEquals(corrupt, Files.readAllBytes(object.toPath()));
+      assertTrue(stable.directory.isDirectory());
+    }
+  }
 }
