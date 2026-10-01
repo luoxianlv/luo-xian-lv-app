@@ -69,6 +69,8 @@ android {
 
 dependencies { implementation(project(":hot-core")) }
 
+if (providers.gradleProperty("nativeReleaseProbe").orNull == "true") apply(from = rootProject.file("gradle/native-release-probe.gradle.kts"))
+
 androidComponents.onVariants { variant ->
     providers.gradleProperty("hotUpdateConfig").orNull?.let { configPath ->
         val config =
