@@ -17,7 +17,7 @@
 - `test-native-normal-release-policy.ps1`：20 个独立检查通过，包括正确输入、固定正常包名、禁止 Debug/probe/脏来源/非 R8/资源收缩/热更配置、改变 manifest/DEX/资源/内置模块、额外条目、重复条目与越界名称。
 - 三个 PowerShell 文件的 parser 检查通过。
 - runner 使用本机 `javac --release 17` 和 Android 37 公共 jar 实际编译通过；SDK 36.0.0 D8 `--release --min-api 26` 与 aapt2 独立 manifest link 通过。只编译工具代码，不调用 Gradle。
-- 本文作者没有签名生产证书、执行 prepare 签名、ADB、API 或设备。prepare/设备由 root 串行执行，实际状态必须由相应回执另记，不能从离线编译提前记设备 PASS。
+- 首版离线检查阶段本文作者没有执行 prepare 签名、ADB、API 或设备，首版 prepare/设备由 root 串行完成。随后普通空闲 FGS 扩展仅由作者执行外部 fake 签名 prepare（见追加章节），设备仍由 root 运行；没有生产证书操作，不能从离线编译提前记设备 PASS。
 
 在 APP 根目录准备当前 pinned APK：
 
@@ -75,9 +75,27 @@ runner 强制目标/测试包、原 Host manifest flags、两 APK 同一公开 A
 
 隐私选择只读：当前 DisclaimerStore hash 与已同意值不相等，真实 `analytics-preinitialize` 已发生，至少 10 秒持续检查正式 initialize 的 ProcessOnce 完成状态、业务 initAt 和固定 initialize 调用诊断均未出现。没有点击同意、写同意状态或调用初始化。首次隐私页挡住业务首页/壁纸按钮时，结果明确为 `blocked-by-unconsented-home`，不能把可见免责声明算作普通业务首页全功能通过。
 
-壁纸检查正常 Activity manifest/Host 定义，记录 `wallpaperScreenRendered=false`；不启动隐藏 Activity 绕过正常入口门禁，也不下载/导入壁纸。服务检查正常无障碍 binding permission、FGS specialUse 非导出声明、Host 服务定义、Host-owned PlaybackPort/NativePlaybackSession 及 Bundle/基础值接口。已有真实 port 时只读 query；没有连接就记录未启用，不启用系统服务，不发 command/手势。`foregroundServiceLifecycleVerified=false`、`gesturePlaybackVerified=false` 始终保留。
+壁纸检查正常 Activity manifest/Host 定义，记录 `wallpaperScreenRendered=false`；不启动隐藏 Activity 绕过正常入口门禁，也不下载/导入壁纸。服务先检查正常无障碍 binding permission、FGS specialUse 非导出声明、Host 服务定义、Host-owned PlaybackPort/NativePlaybackSession 及 Bundle/基础值接口。首版只有该边界检查，`foregroundServiceLifecycleVerified=false`；后续新增一次普通空闲 FGS 入口（下节），只有其实际通过才记录对应狭窄生命周期范围为 true。没有启用无障碍设置，不发 command/手势；`gesturePlaybackVerified=false` 始终保留。
 
 正常 Release 没有 test 热更配置，`hotUpdateHealth=not-verified`、`hotUpdateRollback=not-verified`、`activationCalled=false`。同生产宿主代码的 Debug 已验证健康/回退可作为独立辅助证据，但不得称此 signed 正常 Release APK 实际通过这些行为。
+
+## 后续普通空闲 FGS 的最小扩展
+
+实际正常 `PlaybackForegroundService` 源码相对构建来源 `620ad35` 没有变化。已有固定 `播放服务` tag：进入日志只在 `promoteToForeground()` 成功之后产生，停止日志只在当前 startId 的 `stopSelfResult()` 成功并撤销通知后产生。因此可以只用公开 Android API 与固定日志验证原 R8 内容，不依赖私有字段/混淆名，也不用启用无障碍或播放。
+
+新增测试适配器 `NormalForegroundIdleEvidence` 复用既有 `NativeForegroundLogEvents` 的真实 parser，prepare 将两者一起外部编译进独立测试 APK；没有复制另一套弱日志门禁，没有修改原 parser/生产 APK。开始前要求正常首页有焦点、无既有正常 FGS、无正常无障碍启用/PlaybackBridge 连接、隐私未同意且全部 Internet 不可用。只调用一次普通 `Context.startForegroundService`，Intent 指向正常组件、不含 STOP action。
+
+等待本 PID、严格晚于实际启动 epoch、同一 startId 的新进入(false)→停止 pair；旧 cursor/同毫秒旧事件、不同 PID/tag/startId、显式 stopRequested 和 businessUnavailable 都拒绝。配对之后还要求 ActivityManager 的正常服务消失，稳定 1 秒并在余下至少 10 秒隐私窗口继续观察日志/服务/未初始化状态，不能由首个瞬态掩盖稍后错误。即时 FGS 太短而未被 live sample 捕捉不算失败，固定日志 pair 提供前台承诺/正常自停的证据，live sample 单独记录真假。
+
+失败时才清理本仪器自己发起且仍存在的服务；外部 stopService 清理不能被记为正常自停。成功回执新增 `foregroundStartCalls=1`、同一 `foregroundStartId`、进入/停止 epoch、最终服务 absent，`foregroundServiceLifecycleScope=one-foreground-promise-then-idle-self-stop`。历史 `serviceEnabledByTest=false` 仅指未修改系统服务启用设置；实际普通 FGS 启动由上述新字段明确记录。该范围不证明无障碍绑定、实际播放/手势或复杂 cold/重入生命周期。
+
+扩展离线检查：22 个 policy 检查、实际共享 parser 的 9 个 JUnit 反例、完整 runner/adapter/parser 的 javac17 和 D8(min26) 均通过。作者已实际执行外部 prepare，新公开 fixture：`app-host/build/native-normal-device-fixtures/c2d0050f1c9446bd9960927f61dec932`：
+
+- 原 Host 仍 `fce65730...`，原 13 项 payload fingerprint 仍 `d9dd4c7b8a2470dba7f315b6e89581139e9fce5de9a82845310e63e23599598d`，全部原字节保持。
+- 新 signed Host `a36175beb7caeab09b5b8cf977958d06c8802716aa6a99bd0eaf7aaa40750b82`；新 test APK `af71005b94b8fc173563fa1d45227283957e2fc8136c548af61a04379cb4f120`。
+- 新公开 fake 证书 `7d46b9268d1e2a34b938679774e8f5d77983246f20980f8ffcf89d0a26e927b1`，prepare finally 清理其临时私钥。`prepared.json` 仍 `deviceExecuted=false`/`deviceHealth=not-verified`/`rollback=not-verified`/`releaseReady=false`。
+
+root 用新 fixture 独立 fresh install 并按前文 `-w -r` 原命令读取新 metadata。此处只记录实际 prepare 和离线测试；新 FGS 设备 run 的结果须另由完整 raw 回执追加，不能挪用上一版本只验证 SDK 边界的设备 PASS。
 
 KISS/DRY：小工具复用既有严格 Release verifier 和一个共用 payload policy；YAGNI：无需改变 Host flags/构建，也不做新的发布/联网路径；SOLID：prepare 负责字节与证书绑定，runner 负责实际只读设备观察，root 负责设备生命周期。后续报告仅追加实际设备回执及限制，生产签名/联网/业务隐私授权不在此任务范围。
 

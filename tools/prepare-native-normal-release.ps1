@@ -50,8 +50,10 @@ try {
     & (Join-Path $PSScriptRoot 'verify-native-release.ps1') -AppRoot $root -HostApk $source -ExpectOptimized -CompileOnly -ApkSigner $signer -ReportOutput (Join-Path $scratch 'compiled-audit.json') | Out-Null
     $classes = Join-Path $scratch 'classes'; [void][IO.Directory]::CreateDirectory($classes)
     $runner = Join-Path $PSScriptRoot 'test-support/NativeNormalReleaseInstrumentation.java'
+    $foregroundAdapter = Join-Path $PSScriptRoot 'test-support/NormalForegroundIdleEvidence.java'
+    $foregroundParser = Join-Path $root 'app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java'
     $manifest = Join-Path $PSScriptRoot 'test-support/normal-release-instrumentation.xml'
-    [void](Invoke-NormalTool 'javac' @('-encoding','UTF-8','--release','17','-proc:none','-classpath',$android,'-d',$classes,$runner))
+    [void](Invoke-NormalTool 'javac' @('-encoding','UTF-8','--release','17','-proc:none','-classpath',$android,'-d',$classes,$runner,$foregroundAdapter,$foregroundParser))
     $jar = Join-Path $scratch 'runner.jar'
     [void](Invoke-NormalTool 'jar' @('--create','--file',$jar,'-C',$classes,'.'))
     $dex = Join-Path $scratch 'dex'; [void][IO.Directory]::CreateDirectory($dex)

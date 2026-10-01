@@ -7,6 +7,7 @@ import android.net.*;
 import android.os.*;
 import android.view.*;
 import android.widget.TextView;
+import app.luoxianlv.host.NormalForegroundIdleEvidence;
 import java.io.*;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +30,10 @@ public final class NativeNormalReleaseInstrumentation extends Instrumentation {
   private Object analytics, disclaimer;
   private Method agreed;
   private String disclaimerHash;
+  private boolean foregroundAttempted, foregroundIdleVerified;
+  private NormalForegroundIdleEvidence foregroundEvidence;
+  private NormalForegroundIdleEvidence.Observation foregroundPair;
+  private static final String FOREGROUND = "app.luoxianlv.service.PlaybackForegroundService";
 
   @Override public void onCreate(Bundle input) { super.onCreate(input); arguments = input; start(); }
   private static final class Check extends AssertionError { Check(String value) { super(value); } }
@@ -141,6 +146,86 @@ public final class NativeNormalReleaseInstrumentation extends Instrumentation {
     report.put("gesturePlaybackVerified", false);
   }
 
+  private ActivityManager.RunningServiceInfo foregroundState(Context target) {
+    var manager = target.getSystemService(ActivityManager.class);
+    check(manager != null, "ActivityManager unavailable");
+    for (var service : manager.getRunningServices(128))
+      if (TARGET.equals(service.service.getPackageName()) && FOREGROUND.equals(service.service.getClassName())) return service;
+    return null;
+  }
+
+  private String foregroundLog() throws Exception {
+    // 固定本PID与固定tag；不读其他日志，不清全局logcat，不返回原文。
+    try (var input = new ParcelFileDescriptor.AutoCloseInputStream(getUiAutomation().executeShellCommand(
+        "logcat -d -v epoch --pid " + android.os.Process.myPid() + " -s 播放服务:I"))) {
+      var bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[4096];
+      for (int count; (count = input.read(buffer)) != -1;) {
+        check(count > 0 && bytes.size() + count <= NormalForegroundIdleEvidence.MAX_BYTES, "Foreground fixed-tag log exceeds bound");
+        bytes.write(buffer, 0, count);
+      }
+      return bytes.toString(StandardCharsets.UTF_8);
+    }
+  }
+
+  private void idleForegroundOnce(Context target) throws Exception {
+    privacy(); check(offline(target), "Internet available before idle foreground start");
+    var bridge = Class.forName("app.luoxianlv.hot.contract.PlaybackBridge", false, host);
+    var evidence = new NormalForegroundIdleEvidence(android.os.Process.myPid(), foregroundLog());
+    foregroundEvidence = evidence;
+    main(() -> {
+      try {
+        check(home.hasWindowFocus() && foregroundState(target) == null, "Refuses non-foreground home or pre-existing foreground service");
+        check(bridge.getMethod("current").invoke(null) == null, "Refuses an existing accessibility/playback connection");
+        var accessibility = target.getSystemService(android.view.accessibility.AccessibilityManager.class);
+        check(accessibility != null, "AccessibilityManager unavailable");
+        for (var service : accessibility.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK))
+          check(!TARGET.equals(service.getResolveInfo().serviceInfo.packageName), "Refuses enabled normal accessibility service");
+        evidence.startedAt(System.currentTimeMillis());
+        foregroundAttempted = true;
+        ComponentName component = target.startForegroundService(new Intent().setClassName(TARGET, FOREGROUND));
+        check(component != null && FOREGROUND.equals(component.getClassName()), "Ordinary foreground start did not resolve normal service");
+      } catch (ReflectiveOperationException error) { throw new AssertionError("Playback connection observation failed", error); }
+    });
+    long until = SystemClock.elapsedRealtime() + 15000;
+    boolean liveForeground = false;
+    NormalForegroundIdleEvidence.Observation observation;
+    do {
+      privacy(); check(offline(target), "Internet available during idle foreground observation");
+      observation = evidence.observe(foregroundLog());
+      check(!observation.unavailable() && !observation.stopRequested(), "Foreground service stopped by error or explicit stop request");
+      var live = foregroundState(target);
+      liveForeground |= live != null && live.foreground;
+      if (observation.idleStopped() && live == null) break;
+      check(SystemClock.elapsedRealtime() < until, "Normal foreground promise/idle self-stop was not observed");
+      SystemClock.sleep(50);
+    } while (true);
+    // 继续观察窗口，不能让稍后同PID错误被首个短暂pair掩盖。
+    long settled = SystemClock.elapsedRealtime() + 1000;
+    do {
+      privacy(); check(offline(target), "Internet available after idle foreground stop");
+      observation = evidence.observe(foregroundLog());
+      check(observation.idleStopped() && !observation.unavailable() && !observation.stopRequested()
+          && foregroundState(target) == null, "Normal idle self-stop did not remain settled");
+      SystemClock.sleep(50);
+    } while (SystemClock.elapsedRealtime() < settled);
+    foregroundIdleVerified = true;
+    foregroundPair = observation;
+    report.put("foregroundServiceLifecycleVerified", true)
+        .put("foregroundServiceLifecycleScope", "one-foreground-promise-then-idle-self-stop")
+        .put("foregroundStartCalls", 1).put("foregroundStartId", observation.startId())
+        .put("foregroundEnterEpochMillis", observation.enterEpochMillis()).put("foregroundStopEpochMillis", observation.stopEpochMillis())
+        .put("foregroundLiveSampleObserved", liveForeground).put("foregroundPromiseObservedFromFixedLog", true)
+        .put("foregroundIdleStopObservedFromFixedLog", true).put("foregroundServiceAbsentAfterStop", true)
+        .put("foregroundForcedStopUsed", false).put("accessibilityEnabledByTest", false).put("playbackStartedByTest", false);
+  }
+
+  private void requireForegroundStillIdle(Context target) throws Exception {
+    var current = foregroundEvidence.observe(foregroundLog());
+    check(current.idleStopped() && !current.unavailable() && !current.stopRequested()
+        && current.startId() == foregroundPair.startId() && current.enterEpochMillis() == foregroundPair.enterEpochMillis()
+        && foregroundState(target) == null, "Idle foreground evidence changed during remaining privacy window");
+  }
+
   @Override public void onStart() {
     Context target = getTargetContext(); boolean passed = false;
     long started = SystemClock.elapsedRealtime();
@@ -207,8 +292,9 @@ public final class NativeNormalReleaseInstrumentation extends Instrumentation {
         } catch (Exception error) { throw new AssertionError("Normal resource/privacy read failed", error); }
       });
       componentAndServiceBoundary(target);
+      idleForegroundOnce(target);
       long privacyStart = SystemClock.elapsedRealtime();
-      do { privacy(); check(offline(target), "Internet became available during local observation"); SystemClock.sleep(100); }
+      do { privacy(); check(offline(target), "Internet became available during local observation"); requireForegroundStillIdle(target); SystemClock.sleep(100); }
       while (SystemClock.elapsedRealtime() - privacyStart < 10000);
       report.put("privacyObservedMs", SystemClock.elapsedRealtime() - privacyStart).put("consentClicked", false)
           .put("formalInitializeAttempted", false).put("businessHomeStatus", "blocked-by-unconsented-home")
@@ -222,6 +308,10 @@ public final class NativeNormalReleaseInstrumentation extends Instrumentation {
         if (error.getCause() != null) report.put("causeType", error.getCause().getClass().getName());
       } catch (Exception ignored) { }
     } finally {
+      if (foregroundAttempted && !foregroundIdleVerified) {
+        try { main(() -> { if (foregroundState(target) != null) target.stopService(new Intent().setClassName(TARGET, FOREGROUND)); }); }
+        catch (Throwable closing) { passed = false; }
+      }
       try { if (home != null) main(() -> home.finish()); }
       catch (Throwable closing) { passed = false; }
       try {

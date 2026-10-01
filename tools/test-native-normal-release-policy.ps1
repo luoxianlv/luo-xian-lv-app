@@ -56,6 +56,9 @@ try {
         $manifest.manifest.instrumentation.name -cne 'app.luoxianlv.tools.NativeNormalReleaseInstrumentation' -or $manifest.manifest.application.debuggable -cne 'false') { throw 'Independent normal runner manifest differs.' }; $script:normalChecks++
     $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'test-support/NativeNormalReleaseInstrumentation.java') -Raw
     if ($source -match 'import app\.luoxianlv\.hot\.|getMethod\("(?:initialize|preInitialize|markAgreed|connect)"|\.(?:performAction|command)\(') { throw 'Runner calls mutable business/consent/playback actions.' }; $script:normalChecks++
+    if ([regex]::Matches($source,'\.startForegroundService\(').Count -ne 1 -or $source -match 'getDeclaredField|getDeclaredMethod|settings put|PlaybackForegroundService\.start') { throw 'Normal foreground probe must make one public start without private R8/system mutation access.' }; $script:normalChecks++
+    $prepare = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'prepare-native-normal-release.ps1') -Raw
+    if (-not $prepare.Contains('NativeForegroundLogEvents.java') -or -not $prepare.Contains('NormalForegroundIdleEvidence.java')) { throw 'Prepare must compile actual shared foreground evidence parser.' }; $script:normalChecks++
     Write-Output "Normal Release policy: $script:normalChecks independent checks passed"
 } finally {
     $resolved=[IO.Path]::GetFullPath($scratch); $prefix=$parent.TrimEnd([IO.Path]::DirectorySeparatorChar)+[IO.Path]::DirectorySeparatorChar
