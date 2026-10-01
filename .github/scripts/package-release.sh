@@ -1,5 +1,17 @@
 set -euo pipefail
 
+native_package="${NATIVE_RELEASE_PACKAGE:-false}"
+[[ "$native_package" == true || "$native_package" == false ]] || { echo 'Invalid native package switch' >&2; exit 1; }
+if [[ "$native_package" == true ]]; then
+  test -f app-host/build.gradle.kts && test -f tools/verify-native-release.ps1 \
+    || { echo 'This source tag does not support native packaging' >&2; exit 1; }
+  command -v pwsh >/dev/null || { echo 'PowerShell 7 is required for the native artifact audit' >&2; exit 1; }
+  test -n "${NATIVE_HOT_CONFIG_JSON:-}" || { echo 'Missing public native hot-update configuration' >&2; exit 1; }
+  printf '%s' "$NATIVE_HOT_CONFIG_JSON" | jq -e \
+    '.applicationId == "app.luoxianlv" and .environment == "production" and (.origin | startswith("https://"))' >/dev/null \
+    || { echo 'Invalid production native hot-update scope' >&2; exit 1; }
+fi
+
 for name in ANDROID_KEYSTORE_BASE64 ORG_GRADLE_PROJECT_releaseStorePassword ORG_GRADLE_PROJECT_releaseKeyAlias ORG_GRADLE_PROJECT_releaseKeyPassword ANDROID_SIGNING_CERT_SHA256; do
   test -n "${!name:-}" || { printf '缺少签名配置：%s\n' "$name" >&2; exit 1; }
 done
@@ -13,9 +25,28 @@ build_args=()
 if [ -n "${UPDATE_BASE_URL:-}" ]; then
   build_args+=("-PupdateBaseUrl=$UPDATE_BASE_URL")
 fi
-bash ./gradlew testDebugUnitTest assembleRelease --no-daemon "${build_args[@]}"
-
-apk=app/build/outputs/apk/release/app-release.apk
+if [[ "$native_package" == true ]]; then
+  hot_config="$RUNNER_TEMP/native-hot-config.json"
+  printf '%s' "$NATIVE_HOT_CONFIG_JSON" > "$hot_config"
+  build_args+=("-PhotUpdateConfig=$hot_config" '-PnativeOptimize=true' '-PnativeRequireReleaseSigning=true')
+  bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest :app-business:testDebugUnitTest \
+    :app-host:exportReleaseNativeBuildReport --no-daemon "${build_args[@]}"
+  apk=app-host/build/outputs/apk/release/app-host-release.apk
+  pwsh -NoProfile -File tools/verify-native-release.ps1 -ExpectOptimized \
+    -HostApk "$apk" -ExpectedCertificateSha256 "$ANDROID_SIGNING_CERT_SHA256"
+  mkdir -p native-release-artifacts
+  for role in host runtime business; do
+    cp -R "app-$role/build/native-report/release" "native-release-artifacts/$role"
+  done
+  cp app-host/build/native-release-verification.json native-release-artifacts/
+  cp hot-contract/build/native-sdk/release/host-contract-sdk.jar native-release-artifacts/
+  cp app-runtime/build/native-sdk/release/runtime-sdk.jar native-release-artifacts/
+  cp app-runtime/build/native-link/release/runtime.apk native-release-artifacts/runtime/
+  cp app-business/build/native-link/release/business.apk native-release-artifacts/business/
+else
+  bash ./gradlew testDebugUnitTest assembleRelease --no-daemon "${build_args[@]}"
+  apk=app/build/outputs/apk/release/app-release.apk
+fi
 apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
 aapt=$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)
 signature=$("$apksigner" verify --verbose --print-certs "$apk")
@@ -25,7 +56,9 @@ if [ "$certificate" != "$ANDROID_SIGNING_CERT_SHA256" ]; then
   printf '%s\n' "$signature" >&2
   exit 1
 fi
-test -s app/build/outputs/mapping/release/mapping.txt || { echo 'Missing R8 mapping' >&2; exit 1; }
+if [[ "$native_package" == false ]]; then
+  test -s app/build/outputs/mapping/release/mapping.txt || { echo 'Missing R8 mapping' >&2; exit 1; }
+fi
 badging=$("$aapt" dump badging "$apk")
 code=$(sed -nE "s/^package: .*versionCode='([0-9]+)'.*/\1/p" <<< "$badging")
 version=$(sed -nE "s/^package: .*versionName='([^']+)'.*/\1/p" <<< "$badging")

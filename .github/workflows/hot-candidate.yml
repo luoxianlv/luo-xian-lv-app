@@ -44,8 +44,16 @@ jobs:
             release) variant_name=Release ;;
             *) exit 1 ;;
           esac
+          native_args=()
+          if [[ "$NATIVE_VARIANT" == release ]]; then
+            native_args+=('-PnativeOptimize=true')
+          fi
           bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest \
-            ":app-host:export${variant_name}NativeBuildReport" --no-daemon --console=plain
+            ":app-host:export${variant_name}NativeBuildReport" "${native_args[@]}" --no-daemon --console=plain
+      - name: 核验优化 Release 三层 SDK 与映射
+        if: inputs.variant == 'release'
+        shell: pwsh
+        run: ./tools/verify-native-release.ps1 -ExpectOptimized -CompileOnly
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-${{ inputs.variant }}-${{ github.sha }}
@@ -58,5 +66,6 @@ jobs:
             app-business/build/outputs/apk/${{ inputs.variant }}/*.apk
             hot-contract/build/native-sdk/${{ inputs.variant }}/
             app-runtime/build/native-sdk/${{ inputs.variant }}/
+            app-host/build/native-release-verification.json
           if-no-files-found: error
           retention-days: 14

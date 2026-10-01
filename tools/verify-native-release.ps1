@@ -47,10 +47,10 @@ if (-not $ApkSigner) {
     $sdkRoot = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $env:LOCALAPPDATA 'Android/Sdk' }
     $buildTools = @(Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'build-tools') -Directory | Sort-Object { [version]($_.Name -replace '-.*$', '') } -Descending)
     foreach ($directory in $buildTools) {
-        $candidate = Join-Path $directory.FullName 'apksigner.bat'
+        $candidate = Join-Path $directory.FullName $(if ($IsWindows) { 'apksigner.bat' } else { 'apksigner' })
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { $ApkSigner = $candidate; break }
     }
-    if (-not $ApkSigner) { throw 'apksigner.bat is required for public signature verification.' }
+    if (-not $ApkSigner) { throw 'apksigner is required for public signature verification.' }
 }
 $ApkSigner = (Resolve-Path -LiteralPath $ApkSigner).Path
 if (-not $ReportOutput) { $ReportOutput = Join-Path $nativeRoot 'app-host/build/native-release-verification.json' }
