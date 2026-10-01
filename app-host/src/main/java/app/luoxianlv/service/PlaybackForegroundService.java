@@ -72,27 +72,89 @@ public final class PlaybackForegroundService extends Service {
     startPending = false;
     if (intent != null && STOP.equals(intent.getAction())) stopRequested = true;
     closePreparation();
-    preparation = Bootstrap.ready(() -> evaluate(intent, startId));
+    Preparation waiting = new Preparation(intent, startId);
+    preparation = waiting;
+    waiting.awaitReady();
     return START_STICKY;
   }
 
-  private void evaluate(Intent intent, int startId) {
-    if (instance != this || lastStartId != startId) return;
-    try {
-      if (policy == null)
-        policy = Bootstrap.source().factory.foreground(Bootstrap.source().prepared.context(this));
-      diagnostic("已进入前台：启动序号=" + startId + "，停止请求=" + stopRequested);
-      if (intent != null && STOP.equals(intent.getAction())) {
-        stopRequested = true;
-        policy.stopPlayback();
-      }
-      if (stopRequested || !policy.shouldRun()) {
+  /** 每条启动命令独立等待；同步 ready 回调也不能覆盖延后重试的取消句柄。 */
+  private final class Preparation implements AutoCloseable {
+    private final Intent intent;
+    private final int startId;
+    private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable retry = this::evaluate;
+    private AutoCloseable readiness;
+    private boolean closed;
+
+    Preparation(Intent intent, int startId) {
+      this.intent = intent;
+      this.startId = startId;
+    }
+
+    private boolean current() {
+      return !closed && instance == PlaybackForegroundService.this && lastStartId == startId;
+    }
+
+    void awaitReady() {
+      if (!current()) return;
+      AutoCloseable registered = Bootstrap.ready(this::evaluate);
+      if (closed) {
+        try {
+          registered.close();
+        } catch (Exception failure) {
+          HostDiagnostics.log(Log.WARN, "播放服务", "取消播放准备监听失败", failure);
+        }
+      } else readiness = registered;
+    }
+
+    private void evaluate() {
+      if (!current()) return;
+      try {
+        boolean created =
+            Bootstrap.initialCreation(
+                () -> {
+                  if (!current()) return;
+                  if (policy == null) {
+                    var selected = Bootstrap.source();
+                    policy =
+                        selected.factory.foreground(
+                            selected.prepared.context(PlaybackForegroundService.this));
+                  }
+                  diagnostic("已进入前台：启动序号=" + startId + "，停止请求=" + stopRequested);
+                  if (intent != null && STOP.equals(intent.getAction())) {
+                    stopRequested = true;
+                    policy.stopPlayback();
+                  }
+                  if (stopRequested || !policy.shouldRun()) stopIfLatest();
+                });
+        if (!created && current()) main.postDelayed(retry, 16);
+        else close();
+      } catch (Throwable failure) {
+        HostDiagnostics.log(Log.ERROR, "播放服务", "播放业务不可用，停止本次前台服务", failure);
+        try {
+          Bootstrap.componentFailed(failure);
+        } catch (Throwable stopping) {
+          failure.addSuppressed(stopping);
+        }
         stopIfLatest();
-        return;
+        close();
       }
-    } catch (Throwable failure) {
-      HostDiagnostics.log(Log.ERROR, "播放服务", "播放业务不可用，停止本次前台服务", failure);
-      stopIfLatest();
+    }
+
+    @Override
+    public void close() {
+      if (closed) return;
+      closed = true;
+      main.removeCallbacks(retry);
+      if (readiness != null) {
+        try {
+          readiness.close();
+        } catch (Exception failure) {
+          HostDiagnostics.log(Log.WARN, "播放服务", "取消播放准备监听失败", failure);
+        }
+        readiness = null;
+      }
     }
   }
 
@@ -114,6 +176,7 @@ public final class PlaybackForegroundService extends Service {
   private void stopIfLatest() {
     // 旧命令不能撤掉较新启动请求所需的通知。
     if (lastStartId != 0 && stopSelfResult(lastStartId)) {
+      closePreparation();
       stopForeground(STOP_FOREGROUND_REMOVE);
       foreground = false;
       diagnostic("已停止：启动序号=" + lastStartId);

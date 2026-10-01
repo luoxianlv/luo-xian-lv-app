@@ -6,11 +6,11 @@ import kotlin.math.*
 import kotlin.random.Random
 
 /** 白色球体及不规则立体碎片；复用几何，每帧投影并按深度排序。 */
-internal class StageLightRenderer(private val dark: Boolean) {
+internal class StageLightRenderer(private val dark: Boolean, context: android.content.Context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val path = Path()
     private var background: Shader? = null
-    private val sphere = if (Build.VERSION.SDK_INT >= 33) WhiteSphereShader() else null
+    private val sphere = if (Build.VERSION.SDK_INT >= 33) WhiteSphereShader(context) else null
     private val fallback =
         RadialGradient(
             -.32f,

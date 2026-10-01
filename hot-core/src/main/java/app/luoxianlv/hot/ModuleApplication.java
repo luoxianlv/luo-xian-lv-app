@@ -13,6 +13,7 @@ final class ModuleApplication extends Application
   private final ModuleResources source;
   private final ModuleResources.Binding resources;
   private final ClassLoader loader;
+  private final ResourceScope official;
   private final java.util.List<ComponentCallbacks> componentCallbacks = new java.util.ArrayList<>();
   private final java.util.List<ActivityLifecycleCallbacks> activityCallbacks =
       new java.util.ArrayList<>();
@@ -21,10 +22,15 @@ final class ModuleApplication extends Application
   private boolean retired;
 
   ModuleApplication(Application platform, ModuleResources resources, ClassLoader loader) {
+    this(platform, resources, loader, new ResourceScope(null, null, null, "baseline"));
+  }
+
+  ModuleApplication(Application platform, ModuleResources resources, ClassLoader loader, ResourceScope official) {
     this.platform = platform;
     this.source = resources;
     this.resources = resources.forOwner(platform, new android.content.res.Configuration());
     this.loader = loader;
+    this.official = official;
     attachBaseContext(platform);
   }
 
@@ -51,6 +57,11 @@ final class ModuleApplication extends Application
   @Override
   public ClassLoader getClassLoader() {
     return loader;
+  }
+
+  @Override public Object getSystemService(String name) {
+    return app.luoxianlv.hot.contract.OfficialResources.SERVICE.equals(name)
+        ? official : super.getSystemService(name);
   }
 
   @Override
@@ -106,6 +117,7 @@ final class ModuleApplication extends Application
 
   synchronized void closeCallbacks() {
     retired = true;
+    official.retire();
     for (var callback : componentCallbacks) platform.unregisterComponentCallbacks(callback);
     for (var callback : activityCallbacks) platform.unregisterActivityLifecycleCallbacks(callback);
     for (var callback : assistCallbacks) platform.unregisterOnProvideAssistDataListener(callback);

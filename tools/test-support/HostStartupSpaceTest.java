@@ -50,6 +50,7 @@ public final class HostStartupSpaceTest {
   private static void loaderMode(boolean deferred) throws Exception {
     // 测试替身只由独立 runner 生成，生产源码不添加测试开关。
     NativeLoader.class.getField("testOnlySpaceDeferred").setBoolean(null, deferred);
+    NativeLoader.class.getField("testOnlyResourceUnsupported").setBoolean(null, false);
     NativeLoader.class.getField("testOnlyAttempts").set(null, new java.util.ArrayList<String>());
     NativeLoader.class.getField("testOnlyDiscardCalls").setInt(null, 0);
   }
@@ -71,10 +72,14 @@ public final class HostStartupSpaceTest {
     final HostStartup startup;
 
     Fixture() throws Exception {
-      try (var pack = open("base.lxhp"); var delta = open("delta.lxhp")) {
+      try (var pack = open("base.lxhp");
+          var delta = open("delta.lxhp")) {
         base = store.prepare(pack);
         next = store.prepare(delta);
-        trust.accept(pack.trustBytes(), pack.trustSignature(), journal,
+        trust.accept(
+            pack.trustBytes(),
+            pack.trustSignature(),
+            journal,
             Instant.parse("2026-09-29T00:00:00Z"));
       }
       confirm(base, 1);
@@ -94,8 +99,18 @@ public final class HostStartupSpaceTest {
     private HotPackage open(String name) throws Exception {
       File file = temporary.newFile();
       Files.write(file.toPath(), vector(name));
-      return new HotPackage(file, new HotPackage.Policy(root, "app.luoxianlv.debug", "test", 1,
-          1, Instant.parse("2026-09-29T00:00:00Z"), Set.of(), null, null));
+      return new HotPackage(
+          file,
+          new HotPackage.Policy(
+              root,
+              "app.luoxianlv.debug",
+              "test",
+              1,
+              1,
+              Instant.parse("2026-09-29T00:00:00Z"),
+              Set.of(),
+              null,
+              null));
     }
 
     private void confirm(ContentStore.Snapshot snapshot, long revision) throws Exception {
@@ -116,6 +131,18 @@ public final class HostStartupSpaceTest {
     assertEquals(expected.trustVersion, actual.trustVersion);
     assertEquals(expected.phase, actual.phase);
     assertEquals(expected.quarantine, actual.quarantine);
+  }
+
+  @Test
+  public void unsupportedResourcesKeepStableAndRevisionWithoutQuarantine() throws Exception {
+    Fixture f = new Fixture();
+    loaderMode(false);
+    NativeLoader.class.getField("testOnlyResourceUnsupported").setBoolean(null, true);
+    var before = f.journal.state();
+    assertNull(f.startup.prepareStable());
+    sameState(before, f.journal.state());
+    assertEquals(0, NativeLoader.class.getField("testOnlyDiscardCalls").getInt(null));
+    assertEquals(List.of(before.stable), attempts());
   }
 
   @Test

@@ -109,6 +109,25 @@ public final class Bootstrap {
     return playback != null && (playback.playbackInUse() || playback.playbackCanReplace());
   }
 
+  /** 资源健康只约束整组观察；未出现可见资源首帧时仍允许正常服务工作。 */
+  public static boolean resourcesReady() {
+    if (Looper.myLooper() != Looper.getMainLooper())
+      throw new IllegalStateException("资源健康必须在主线程读取");
+    ProcessHooks selected = process;
+    if (businessStopped || selected == null) return false;
+    try {
+      boolean ready = selected.resourcesReady();
+      return ready && !businessStopped && process == selected;
+    } catch (Throwable error) {
+      try {
+        componentFailed(error);
+      } catch (Throwable stopping) {
+        Log.e("原生宿主", "资源健康失败后停用业务未完成", stopping);
+      }
+      return false;
+    }
+  }
+
   static boolean canAutoActivate() {
     return source != null
         && activation == null
@@ -248,8 +267,10 @@ public final class Bootstrap {
 
               @Override
               public boolean inUse() {
-                return PAGES.keySet().stream().anyMatch(PageSwapHost::inUse)
-                    || (playback != null && playback.playbackInUse());
+                return resourcesReady()
+                    && !businessStopped
+                    && (PAGES.keySet().stream().anyMatch(PageSwapHost::inUse)
+                        || (playback != null && playback.playbackInUse()));
               }
 
               @Override
@@ -483,22 +504,19 @@ public final class Bootstrap {
       }
     } catch (Throwable error) {
       failure = error;
-      if (process != null) {
-        try {
-          process.close();
-        } catch (Throwable closing) {
-          error.addSuppressed(closing);
-        }
-        process = null;
-      }
       if (updates != null && updates.coldPending()) {
         updates.failCold(error, HostUpdates.contentFailure(error));
-      } else if (startup != null && prepared.manifest != null) {
-        worker.execute(
+      } else {
+        // 已构造过业务时只能结束本进程；保存失败不能靠 STABLE 阶段推断恢复成功。
+        stopBusiness(error);
+        process = null;
+        if (startup != null && prepared.manifest != null) {
+          worker.execute(
             () -> {
               try {
                 startup.journal.stableContentFailed(
                     prepared.manifest, startup.quarantine, startup.config.hostContract);
+                MAIN.post(() -> recoveryPersisted(true));
               } catch (Throwable recoveryFailure) {
                 error.addSuppressed(recoveryFailure);
                 updateBlocked = true;
@@ -507,7 +525,10 @@ public final class Bootstrap {
                 worker.shutdown();
               }
             });
-        return;
+          return;
+        }
+        // 安装包组合没有热更稳定选择需要回退，用户仍通过独立新进程重试。
+        recoveryPersisted(true);
       }
     }
     complete();

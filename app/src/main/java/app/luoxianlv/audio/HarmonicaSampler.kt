@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import app.luoxianlv.business.BusinessJobs
+import app.luoxianlv.hot.contract.OfficialAssets
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
@@ -15,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference
 /** 每个演练场持有一条口琴音频流；构造前先在 IO 线程解码采样。 */
 class HarmonicaSampler(
     samples: Map<Int, HarmonicaSample>,
+    private val gain: Float = 1f,
     private val onInterrupted: () -> Unit,
 ) : AutoCloseable {
     private data class Command(val midi: Int?)
@@ -77,6 +79,7 @@ class HarmonicaSampler(
                                     if (it.midi == null) voice.noteOff() else voice.noteOn(it.midi)
                                 }
                                 voice.render(buffer)
+                                if (gain != 1f) for (i in buffer.indices) buffer[i] = (buffer[i] * gain).toInt().toShort()
                                 var offset = 0
                                 while (running && offset < buffer.size) {
                                     val written =
@@ -145,12 +148,12 @@ class HarmonicaSampler(
     companion object {
         fun load(context: Context): Map<Int, HarmonicaSample> {
             val index =
-                context.assets.open("harmonica/index.tsv").bufferedReader().use { it.readLines() }
+                OfficialAssets.text(context, "harmonica", "index.tsv", "harmonica/index.tsv", 65536).lines()
             return index
                 .filter { it.isNotBlank() }
                 .associate { line ->
                     val (midi, count, start, end, blend) = line.split('\t').map(String::toInt)
-                    val bytes = context.assets.open("harmonica/$midi.pcm").use { it.readBytes() }
+                    val bytes = OfficialAssets.read(context, "harmonica", "$midi.pcm", "harmonica/$midi.pcm", 16 * 1024 * 1024)
                     require(bytes.size == count * 2) { "损坏的口琴音源 $midi" }
                     val pcm = ShortArray(count)
                     ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(pcm)

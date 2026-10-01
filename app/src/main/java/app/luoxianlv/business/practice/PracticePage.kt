@@ -64,6 +64,7 @@ class PracticePage : ViewPage() {
             (if (host.isCurrent()) PreparedWallpaper.take(activity, pageContext)
                 else PracticeBackdrop(pageContext))
                 .also {
+                    it.onOfficialFailure = { error -> if (!ending) ready.failed(error) }
                     it.setSoundEnabled(false)
                     root.addView(it, FrameLayout.LayoutParams(-1, -1))
                 }
@@ -356,7 +357,7 @@ class PracticePage : ViewPage() {
         val samples = loadedSamples ?: return
         if (sampler != null || !resumed || !ownsSession || exiting || ending) return
         sampler =
-            HarmonicaSampler(samples) {
+            HarmonicaSampler(samples, app.luoxianlv.business.ui.OfficialRuntimeConfig.read(pageContext).harmonicaGain) {
                 if (ownsSession) {
                     keyboard?.silence()
                     PlaybackConnection.instance?.pause()

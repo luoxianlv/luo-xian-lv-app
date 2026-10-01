@@ -37,7 +37,7 @@ class StageCurtain(context: Context, dark: Boolean) : View(context) {
         }
     private val labelMetrics =
         android.graphics.Paint.FontMetrics().also { labelPaint.getFontMetrics(it) }
-    private val renderer = StageLightRenderer(dark)
+    private val renderer = StageLightRenderer(dark, context)
     private val exitRenderer = StageExitRenderer(dark)
     private var exitProgress: Float? = null
     private val rect = RectF()

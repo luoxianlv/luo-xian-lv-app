@@ -11,6 +11,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -77,12 +78,13 @@ fun LuoXianLvTheme(
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
+    val official = remember(context) { OfficialPalette.load(context) }
     val baseColors =
         when {
             darkTheme -> DarkColors
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
             else -> LightColors
-        }
+        }.let { official?.apply(darkTheme, it) ?: it }
     val alpha =
         if (darkTheme) {
             ON_BACKDROP_SURFACE_ALPHA_DARK

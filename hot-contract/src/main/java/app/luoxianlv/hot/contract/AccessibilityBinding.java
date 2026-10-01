@@ -18,6 +18,9 @@ public interface AccessibilityBinding {
   /** 健康观察只累计实际演奏；保持前台服务或显示浮窗不代表正在使用模块。 */
   default void usage(boolean playing) {}
 
+  /** 本代异步官方资源/业务错误通过受控宿主恢复；不能遗失或直接当作健康。 */
+  default void contentFailed(Throwable failure) { throw new IllegalStateException("异步业务失败", failure); }
+
   interface GestureCallback {
     void completed(boolean success);
   }

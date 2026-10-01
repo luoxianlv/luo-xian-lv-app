@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 保留默认页面仪器；本机 Debug 冷启动通过显式组件使用独立无界面入口。 -->
+    <instrumentation
+        android:name="app.luoxianlv.host.NativeAppInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.NativeServiceColdInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+</manifest>

@@ -30,6 +30,9 @@ public interface ProcessHooks extends AutoCloseable {
     return false;
   }
 
+  /** 声明官方渲染器的代际须有可见首帧；服务端JS预检不能代替资源健康。 */
+  default boolean resourcesReady() { return true; }
+
   @Override
   default void close() {}
 }

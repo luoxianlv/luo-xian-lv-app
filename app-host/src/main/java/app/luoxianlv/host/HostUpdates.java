@@ -99,7 +99,8 @@ final class HostUpdates {
 
   static boolean contentFailure(Throwable error) {
     for (Throwable value = error; value != null; value = value.getCause())
-      if (value instanceof ColdGuardFailure) return false;
+      if (value instanceof ColdGuardFailure || value instanceof NativeLoader.ResourceUnsupported)
+        return false;
     return true;
   }
 
@@ -232,7 +233,7 @@ final class HostUpdates {
   private void coldUsage() {
     if (coldTicket == null) return;
     boolean observed = coldExposed && coldFramesReady();
-    controller.setActive(coldTicket, observed && Bootstrap.inUse());
+    controller.setActive(coldTicket, observed && Bootstrap.inUse() && Bootstrap.resourcesReady());
     if (observed) {
       for (var page : Bootstrap.pages())
         if (page.host().inUse()) recordUse(page.route().replace('.', '_'));
@@ -297,8 +298,8 @@ final class HostUpdates {
     var budget = new DownloadBudget(new File(root, "budget"));
     // 热更断点使用内部目录，便于原子隔离后安全回收；用户壁纸/日志继续使用各自外部目录。
     var downloads =
-        new ObjectDownloader(new File(root, "downloads"), budget,
-            new File(root, "download-records-private-v1"));
+        new ObjectDownloader(
+            new File(root, "downloads"), budget, new File(root, "download-records-private-v1"));
     client =
         new UpdateClient(
             api,
@@ -312,7 +313,8 @@ final class HostUpdates {
             budget,
             state.config.mounts,
             SystemClock::elapsedRealtime,
-            new PreparationSpace(application));
+            new PreparationSpace(application),
+            BundledBaseline.objects(application));
   }
 
   void usageChanged() {

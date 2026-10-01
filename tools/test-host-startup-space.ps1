@@ -27,6 +27,10 @@ import java.util.*;
 /** JVM test double: actual trust/cache/budget, no Android execution or APK class loading. */
 public final class NativeLoader {
   public static boolean testOnlySpaceDeferred;
+  public static boolean testOnlyResourceUnsupported;
+  public static final class ResourceUnsupported extends Exception {
+    public ResourceUnsupported() { super("本机资源能力不满足"); }
+  }
   public static List<String> testOnlyAttempts = new ArrayList<>();
   public static int testOnlyDiscardCalls;
   private final ContentStore store;
@@ -42,6 +46,7 @@ public final class NativeLoader {
     snapshot.manifest.compatible("app.luoxianlv.debug", environment, 1, Set.of());
     trust.verifyStable(snapshot, state);
     store.verifySnapshotObjects(snapshot);
+    if (testOnlyResourceUnsupported) throw new ResourceUnsupported();
     if (testOnlySpaceDeferred)
       new PreparationSpace(path -> new PreparationSpace.Volume("test", 16L << 20, 4096))
           .admit(List.of(new PreparationSpace.Demand(snapshot.directory, 1)));

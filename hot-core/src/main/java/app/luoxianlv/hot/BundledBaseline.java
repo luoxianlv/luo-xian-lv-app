@@ -48,26 +48,26 @@ public final class BundledBaseline {
   /** 在线准备仅复用安装包声明的准确对象；不以外部索引、旧缓存记录或文件名推断身份。 */
   public static UpdateClient.LocalObjects objects(Context context) {
     return new UpdateClient.LocalObjects() {
-      private BundledBaseline prepared;
-
       @Override
       public synchronized File find(String hash, long size) throws Exception {
         StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "安装包对象检查必须在后台执行");
         Context installed = context.createPackageContext(context.getPackageName(), 0);
         StrictJson.Obj index;
+        byte[] raw;
         try (InputStream input = installed.getAssets().open("baseline/index.json")) {
+          raw = HotPackage.read(input, 8192);
           index =
-              StrictJson.object(HotPackage.read(input, 8192))
+              StrictJson.object(raw)
                   .only("schema", "runtimeAbi", "entryClass", "runtime", "business");
         }
         StrictJson.require(index.number("schema") == 1, "安装包恢复索引无效");
         for (String role : List.of("runtime", "business")) {
           var artifact = index.object(role).only("sha256", "size");
           if (!artifact.string("sha256").equals(hash) || artifact.number("size") != size) continue;
-          if (prepared == null) prepared = prepare(installed);
-          File result = role.equals("runtime") ? prepared.runtime : prepared.business;
-          ContentStore.verifyFile(result, hash, size);
-          return result;
+          // 仅准备本候选准确匹配的对象，不为无关的配对模块额外复制或占空间。
+          synchronized (BundledBaseline.class) {
+            return copy(installed, directory(installed, raw), role, artifact);
+          }
         }
         return null;
       }
@@ -88,10 +88,7 @@ public final class BundledBaseline {
     String abi = index.string("runtimeAbi"), entry = index.string("entryClass");
     StrictJson.require(
         HotManifest.validId(abi) && entry.matches("[A-Za-z_$][A-Za-z0-9_.$]+"), "内置恢复入口无效");
-    File directory =
-        new File(context.getNoBackupFilesDir(), "native-baseline/" + HotSignatures.hash(raw));
-    requested.add(directory.getCanonicalPath());
-    StrictJson.require(directory.isDirectory() || directory.mkdirs(), "无法创建内置恢复目录");
+    File directory = directory(context, raw);
     StrictJson.Obj runtime = index.object("runtime").only("sha256", "size");
     StrictJson.Obj business = index.object("business").only("sha256", "size");
     File runtimeApk = copy(installed, directory, "runtime", runtime);
@@ -126,29 +123,59 @@ public final class BundledBaseline {
       throws Exception {
     String hash = metadata.string("sha256");
     long size = metadata.number("size");
+    return copyArtifact(
+        directory, name, hash, size, () -> installed.getAssets().open("baseline/" + name + ".apk"));
+  }
+
+  @FunctionalInterface
+  interface InstalledStream {
+    InputStream open() throws Exception;
+  }
+
+  /** 纯文件边界便于实测取消；调用方保证来源仅来自已安装APK。 */
+  static File copyArtifact(
+      File directory, String name, String hash, long size, InstalledStream source)
+      throws Exception {
     StrictJson.require(
-        HotManifest.validHash(hash) && size > 0 && size <= HotManifest.MAX_EXPANDED, "内置模块声明无效");
+        (name.equals("runtime") || name.equals("business"))
+            && HotManifest.validHash(hash)
+            && size > 0
+            && size <= HotManifest.MAX_EXPANDED,
+        "内置模块声明无效");
     File destination = new File(directory, name + ".apk");
+    StrictJson.require(
+        !Files.isSymbolicLink(destination.toPath())
+            && (!destination.exists() || destination.isFile()),
+        "内置模块缓存类型异常");
     if (destination.isFile()) {
       try {
         ContentStore.verifyFile(destination, hash, size);
         return destination;
-      } catch (Exception corrupted) {
-        destination.setWritable(true, true);
-        Files.delete(destination.toPath());
+      } catch (IllegalArgumentException corrupted) {
+        /* 内容损坏才重建；取消或读取故障直接传播。 */
       }
     }
     StrictJson.require(directory.getUsableSpace() >= size + (16L << 20), "空间不足，无法准备内置恢复模块");
     File temporary = File.createTempFile(name, ".part", directory);
     try {
-      try (InputStream input = installed.getAssets().open("baseline/" + name + ".apk");
+      try (InputStream input = source.open();
           FileOutputStream out = new FileOutputStream(temporary)) {
         StrictJson.require(temporary.setReadOnly(), "无法将内置模块设为只读");
         ContentStore.copyVerified(input, out, hash, size);
         out.getFD().sync();
       }
+      ContentStore.verifyFile(temporary, hash, size);
+      StrictJson.require(
+          !Files.isSymbolicLink(destination.toPath())
+              && (!destination.exists() || destination.isFile()),
+          "内置模块提交目标类型异常");
+      if (System.getProperty("os.name", "").startsWith("Windows") && destination.exists())
+        destination.setWritable(true, true);
       ContentStore.moveAtomic(
-          temporary.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE);
+          temporary.toPath(),
+          destination.toPath(),
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING);
       ContentStore.syncDirectory(directory);
       return destination;
     } finally {
@@ -157,6 +184,19 @@ public final class BundledBaseline {
         Files.deleteIfExists(temporary.toPath());
       }
     }
+  }
+
+  private static File directory(Context context, byte[] index) throws Exception {
+    File parent = new File(context.getNoBackupFilesDir(), "native-baseline");
+    StrictJson.require(
+        !Files.isSymbolicLink(parent.toPath()) && (parent.isDirectory() || parent.mkdirs()),
+        "内置恢复根目录类型异常");
+    File result = new File(parent, HotSignatures.hash(index));
+    StrictJson.require(
+        !Files.isSymbolicLink(result.toPath()) && (result.isDirectory() || result.mkdir()),
+        "内置恢复目录类型异常");
+    requested.add(result.getCanonicalPath());
+    return result;
   }
 
   /** 只有由安装包逐项验证过的当前缓存才登记；既有异常记录不覆盖。 */

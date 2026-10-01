@@ -51,6 +51,16 @@ public final class NativeLoader {
     }
   }
 
+  /** 本地设备能力不足，不表示签名资源损坏，不能据此隔离内容。 */
+  public static final class ResourceUnsupported extends Exception {
+    public final String mount;
+    public final int requiredApi, actualApi;
+    public ResourceUnsupported(String mount, int requiredApi, int actualApi) {
+      super("当前设备不支持官方资源挂载 " + mount + "，需要 API " + requiredApi + "，当前 " + actualApi);
+      this.mount = mount; this.requiredApi = requiredApi; this.actualApi = actualApi;
+    }
+  }
+
   public static final class Prepared {
     public final HotManifest manifest;
     public final String runtimeHash, runtimeAbi;
@@ -59,6 +69,7 @@ public final class NativeLoader {
     private final ModuleResources resources;
     public final File resourceRoot;
     private final String identity;
+    private final ResourceScope official;
     private ModuleApplication moduleApplication;
     private boolean retired;
     private AutoCloseable contentLease;
@@ -97,6 +108,12 @@ public final class NativeLoader {
         String identity,
         String runtimeHash,
         String runtimeAbi) {
+      this(manifest, entry, loader, resources, resourceRoot, identity, runtimeHash, runtimeAbi,
+          new ResourceScope(null, null, null, identity));
+    }
+
+    private Prepared(HotManifest manifest, Class<?> entry, ClassLoader loader, ModuleResources resources,
+        File resourceRoot, String identity, String runtimeHash, String runtimeAbi, ResourceScope official) {
       this.manifest = manifest;
       this.entry = entry;
       this.loader = loader;
@@ -105,6 +122,7 @@ public final class NativeLoader {
       this.identity = identity;
       this.runtimeHash = runtimeHash;
       this.runtimeAbi = runtimeAbi;
+      this.official = official;
     }
 
     /** 构造业务对象可能建立主线程生命周期，必须由宿主在主线程调用。 */
@@ -113,6 +131,7 @@ public final class NativeLoader {
       requireActive();
       markRuntimeUsed();
       Object value = entry.getDeclaredConstructor().newInstance();
+      if (value instanceof BusinessFactory) ((BusinessFactory) value).bindResources(official);
       return value instanceof BusinessFactory
           ? ((BusinessFactory) value).page("main")
           : (NativePage) value;
@@ -122,7 +141,9 @@ public final class NativeLoader {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "业务工厂必须在主线程创建");
       requireActive();
       markRuntimeUsed();
-      return entry.asSubclass(BusinessFactory.class).getDeclaredConstructor().newInstance();
+      BusinessFactory factory = entry.asSubclass(BusinessFactory.class).getDeclaredConstructor().newInstance();
+      factory.bindResources(official);
+      return factory;
     }
 
     private void markRuntimeUsed() {
@@ -143,6 +164,7 @@ public final class NativeLoader {
     public synchronized void closeCallbacks() {
       StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "代际监听必须在主线程释放");
       retired = true;
+      official.retire();
       if (moduleApplication != null) moduleApplication.closeCallbacks();
       resources.close();
       if (contentLease != null) {
@@ -185,7 +207,7 @@ public final class NativeLoader {
       if (moduleApplication == null) {
         Context app = owner.getApplicationContext();
         StrictJson.require(app instanceof Application, "模块上下文缺少真实 Application");
-        moduleApplication = new ModuleApplication((Application) app, resources, loader);
+        moduleApplication = new ModuleApplication((Application) app, resources, loader, official);
       }
       return new PageContext(owner, resources, loader, moduleApplication);
     }
@@ -276,6 +298,8 @@ public final class NativeLoader {
     File mounted = null;
     if (manifest.artifacts.stream().anyMatch(artifact -> !artifact.mount.isEmpty()))
       mounted = new ResourceMounts(store).prepare(snapshot, supportedMounts);
+    var official = new ResourceScope(store, snapshot, mounted, manifest.snapshotId);
+    official.validate();
     RuntimeSlot shared = runtime(snapshot);
     File business = apkAlias(snapshot.directory, manifest.business, "business.apk");
     rejectBusinessNativeCode(business);
@@ -299,7 +323,8 @@ public final class NativeLoader {
         mounted,
         manifest.snapshotId,
         shared.hash,
-        shared.abi);
+        shared.abi,
+        official);
   }
 
   public static synchronized String residentRuntimeHash() {
@@ -524,6 +549,8 @@ public final class NativeLoader {
 
     @Override
     public Object getSystemService(String name) {
+      if (app.luoxianlv.hot.contract.OfficialResources.SERVICE.equals(name))
+        return application.getSystemService(name);
       if (Context.LAYOUT_INFLATER_SERVICE.equals(name))
         return LayoutInflater.from(getBaseContext()).cloneInContext(this);
       return super.getSystemService(name);

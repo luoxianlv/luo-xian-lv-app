@@ -26,6 +26,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private boolean onlinePersist;
   private String startupSnapshot;
   private String automaticSnapshot;
+  private String resourceSnapshot;
+  private String rejectedResource, resourceFallback;
   private boolean receiptFault;
   private boolean receiptRecovered;
   private String restartPrepared;
@@ -70,6 +72,9 @@ public final class NativeAppInstrumentation extends Instrumentation {
     onlinePersist = arguments != null && "true".equals(arguments.getString("onlinePersist"));
     startupSnapshot = arguments == null ? null : arguments.getString("startupSnapshot");
     automaticSnapshot = arguments == null ? null : arguments.getString("automaticSnapshot");
+    resourceSnapshot = arguments == null ? null : arguments.getString("resourceSnapshot");
+    rejectedResource = arguments == null ? null : arguments.getString("rejectedResource");
+    resourceFallback = arguments == null ? null : arguments.getString("resourceFallback");
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
     receiptRecovered = arguments != null && "true".equals(arguments.getString("receiptRecovered"));
     restartPrepared = arguments == null ? null : arguments.getString("restartPrepared");
@@ -427,6 +432,14 @@ public final class NativeAppInstrumentation extends Instrumentation {
       } else if (restartPrepared != null) {
         NativeRestartChecks.run(this, restartPrepared);
         report.putString("stream", "通过：不同共享运行时完整缓存并持久等待重启，当前组合未改变。\n");
+        success = true;
+      } else if (rejectedResource != null) {
+        NativeResourceChecks.rejected(this, main, rejectedResource, resourceFallback);
+        report.putString("stream", "通过：损坏的官方渲染资源隔离，原稳定首帧恢复，用户壁纸文件保持。\n");
+        success = true;
+      } else if (resourceSnapshot != null) {
+        NativeResourceChecks.run(this, main, resourceSnapshot);
+        report.putString("stream", "通过：普通资源更新、真实音色/主题/配置/AGSL消费及真实健康观察。\n");
         success = true;
       } else if (automaticSnapshot != null) {
         NativeAutomaticChecks.run(this, main, automaticSnapshot, receiptFault);

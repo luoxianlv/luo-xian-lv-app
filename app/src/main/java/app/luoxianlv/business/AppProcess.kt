@@ -56,6 +56,7 @@ class AppProcess(private val context: Context) : ProcessHooks {
     override fun close() {
         if (closed) return
         closed = true
+        OfficialRendererGate.retire()
         BusinessJobs.gate.retire()
         diagnostics?.close()
         diagnostics = null
@@ -76,7 +77,9 @@ class AppProcess(private val context: Context) : ProcessHooks {
     }
 
     override fun released() =
-        closed && BusinessJobs.gate.released() && ScoreWork.released && AppLog.released
+        closed && OfficialRendererGate.released() && BusinessJobs.gate.released() && ScoreWork.released && AppLog.released
+
+    override fun resourcesReady() = OfficialRendererGate.resourcesReady()
 
     override fun diagnosticsAllowed(): Boolean =
         !BuildConfig.DEBUG &&

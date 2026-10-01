@@ -26,8 +26,11 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     private var initialized = false
     private var renderingRequested = !deferRendering
     var onPrepared: (() -> Unit)? = null
+    var onOfficialFailure: ((Throwable) -> Unit)? = null
+    var officialFailure: Throwable? = null
+        private set
     val prepared
-        get() = renderState == "ready" || renderState == "static" || renderState == "error"
+        get() = officialFailure == null && (renderState == "ready" || renderState == "static" || renderState == "error")
 
     private val previewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val posterView =
@@ -99,7 +102,15 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     override fun shouldInterceptRequest(
                         view: WebView?,
                         request: WebResourceRequest?,
-                    ): WebResourceResponse? = request?.let(resources::response)
+                    ): WebResourceResponse? = request?.let {
+                        resources.response(it).also {
+                            resources.officialFailure?.let { error ->
+                                BusinessJobs.post(android.os.Handler(android.os.Looper.getMainLooper())) {
+                                    if (!closed) rejectOfficial(error)
+                                }
+                            }
+                        }
+                    }
 
                     override fun onRenderProcessGone(
                         view: WebView,
@@ -127,6 +138,11 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     }
 
                     override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                        if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
+                            (message.message().startsWith("Uncaught") || message.message().contains("SyntaxError")) &&
+                            !message.sourceId().contains("/project/") &&
+                            app.luoxianlv.hot.contract.OfficialAssets.mounted(context, "wallpaperengine"))
+                            rejectOfficial(IllegalStateException("已声明官方壁纸脚本执行失败"))
                         val text =
                             "引擎诊断（${message.sourceId()}:${message.lineNumber()}）：${message.message()}"
                         when (message.messageLevel()) {
@@ -173,6 +189,14 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
             .show()
     }
 
+    private fun rejectOfficial(error: Throwable) {
+        if (closed || officialFailure != null) return
+        officialFailure = error
+        app.luoxianlv.business.OfficialRendererGate.reject(error)
+        onOfficialFailure?.invoke(error)
+        fail("已声明官方资源失败")
+    }
+
     private fun releaseWeb() {
         web?.let {
             removeView(it)
@@ -213,6 +237,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
 
     fun close() {
         onPrepared = null
+        onOfficialFailure = null
         closed = true
         previewScope.cancel()
         (posterView.drawable as? Animatable)?.stop()

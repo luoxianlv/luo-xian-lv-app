@@ -301,6 +301,15 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     private int gestures;
     private int captures;
 
+    @Override public void contentFailed(Throwable failure) {
+      Runnable report = () -> {
+        if (session == null) return;
+        if (handover != null && handover.failed(this, failure)) return;
+        if (current()) NativeAccessibilityService.this.failed(this, failure);
+      };
+      if (Looper.myLooper() == Looper.getMainLooper()) report.run(); else main.post(report);
+    }
+
     boolean released() {
       StrictJson.require(!closeFailed, "播放业务退出失败，禁止结束整组交接");
       return session == null && retiredSession == null && gestures == 0 && captures == 0;
