@@ -125,6 +125,65 @@ function Prepare-ContinuousFresh([string]$OriginalServices) {
     Invoke-Adb install -r $HostApk | Out-Null
     Invoke-Adb shell run-as $package mkdir -p files/native-continuous | Out-Null
 }
+
+function Read-ContinuousReverse {
+    $found = @()
+    foreach ($line in @(Invoke-Adb reverse --list)) {
+        $parts = ([string]$line).Trim() -split '\s+'
+        if ($parts.Count -ge 2 -and $parts[-2] -eq 'tcp:18472') {
+            if ($parts[-1] -notmatch '^tcp:[1-9][0-9]{0,4}$' -or [int]$parts[-1].Substring(4) -gt 65535) {
+                throw '现有18472反向映射格式不支持安全还原'
+            }
+            $found += $parts[-1]
+        }
+    }
+    if ($found.Count -gt 1) { throw '同端口有多个反向映射，拒绝改变' }
+    if ($found.Count) { return $found[0] }
+    return ''
+}
+
+function Restore-ContinuousEnvironment([string]$OriginalServices, [string]$OriginalEnabled, [string]$OriginalReverse) {
+    $errors = [Collections.Generic.List[string]]::new()
+    try { Invoke-Adb shell am force-stop $package | Out-Null }
+    catch { $errors.Add('停止本轮Debug进程失败') }
+    try {
+        if ($OriginalReverse) { Invoke-Adb reverse tcp:18472 $OriginalReverse | Out-Null }
+        elseif (Read-ContinuousReverse) { Invoke-Adb reverse --remove tcp:18472 | Out-Null }
+    } catch { $errors.Add('还原18472反向映射失败') }
+    try { Set-ContinuousServices $OriginalServices }
+    catch { $errors.Add('还原原无障碍组件失败') }
+    try {
+        if ($OriginalEnabled -eq 'null') { Invoke-Adb shell settings delete secure accessibility_enabled | Out-Null }
+        else { Invoke-Adb shell settings put secure accessibility_enabled $OriginalEnabled | Out-Null }
+    } catch { $errors.Add('还原原无障碍启用标志失败') }
+    try { Invoke-Adb shell am start -n "$package/app.luoxianlv.MainActivity" | Out-Null }
+    catch { $errors.Add('恢复Debug首页失败') }
+    # 操作失败不跳过其他恢复；settings/reverse必须回读，不能仅信命令exit0。
+    foreach ($setting in @(@('enabled_accessibility_services',$OriginalServices),@('accessibility_enabled',$OriginalEnabled))) {
+        try {
+            $until = [DateTime]::UtcNow.AddSeconds(15)
+            do {
+                $actual = ((Invoke-Adb shell settings get secure $setting[0]) -join "`n").Trim()
+                if ($actual -eq $setting[1]) { break }
+                if ([DateTime]::UtcNow -ge $until) { throw '原无障碍设置值未恢复' }
+                Start-Sleep -Milliseconds 100
+            } while ($true)
+        } catch { $errors.Add('原无障碍设置核验失败：' + $setting[0]) }
+    }
+    try { if ((Read-ContinuousReverse) -ne $OriginalReverse) { throw '原映射未恢复' } }
+    catch { $errors.Add('原18472反向映射核验失败') }
+    try {
+        $until = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+            $activity = (Invoke-Adb shell dumpsys activity activities) -join "`n"
+            if ($activity -match '(?m)(mResumedActivity|topResumedActivity):[^\r\n]*app\.luoxianlv\.debug/(app\.luoxianlv\.)?MainActivity\b' -or
+                $activity -match '(?m)(mResumedActivity|topResumedActivity):[^\r\n]*app\.luoxianlv\.debug/\.MainActivity\b') { break }
+            if ([DateTime]::UtcNow -ge $until) { throw 'Debug首页未恢复为实际Resumed窗口' }
+            Start-Sleep -Milliseconds 100
+        } while ($true)
+    } catch { $errors.Add('实际Debug首页核验失败') }
+    $errors.ToArray()
+}
 # CONTINUOUS_POLICY_END
 
 function Read-ApkJson([string]$Name) {
@@ -210,7 +269,11 @@ $services = ((Invoke-Adb shell settings get secure enabled_accessibility_service
 $enabled = ((Invoke-Adb shell settings get secure accessibility_enabled) -join "`n").Trim()
 [void](Select-ContinuousServices $services $component)
 if ($enabled -notin @('null','0','1')) { throw '无障碍启用状态无法安全保存还原' }
+$originalReverse = Read-ContinuousReverse
 $instrument = $null
+$continuousFailure = $null
+$continuousCleanupErrors = [Collections.Generic.List[string]]::new()
+$deviceReport = $null
 $fallback = $base.snapshotId
 $lastPublished = $null
 $stdout = Join-Path $output 'instrumentation.txt'
@@ -304,20 +367,28 @@ try {
         '--server', $origin, '--token-file', $tokenFile) | Out-Null
     $deviceReport | Add-Member -NotePropertyName localChannelRestoredTo -NotePropertyValue $fallback
     $deviceReport | Add-Member -NotePropertyName hostApkSha256 -NotePropertyValue (Get-FileHash -LiteralPath $HostApk -Algorithm SHA256).Hash.ToLowerInvariant()
-    Save-Json (Join-Path $output 'report.json') $deviceReport
-    Write-Output "通过：同一 PID 连续更新、真实健康、整组回退与持有上界；报告：$(Join-Path $output 'report.json')"
+} catch {
+    $continuousFailure = $_
 } finally {
     if ($instrument) {
-        $instrument.Refresh()
-        if (!$instrument.HasExited) {
-            # 只停止本次 ADB 客户端及独立 Debug 应用，避免失败后继续投放或占用设备。
-            Stop-Process -Id $instrument.Id -ErrorAction SilentlyContinue
-        }
+        try {
+            $instrument.Refresh()
+            if (!$instrument.HasExited) { Stop-Process -Id $instrument.Id -ErrorAction Stop }
+        } catch { $continuousCleanupErrors.Add('停止本轮ADB客户端失败') }
     }
-    Invoke-Adb shell am force-stop $package | Out-Null
-    Invoke-Adb reverse --remove tcp:18472 | Out-Null
-    Set-ContinuousServices $services
-    if ($enabled -eq 'null') { Invoke-Adb shell settings delete secure accessibility_enabled | Out-Null }
-    else { Invoke-Adb shell settings put secure accessibility_enabled $enabled | Out-Null }
-    Invoke-Adb shell am start -n "$package/app.luoxianlv.MainActivity" | Out-Null
+    foreach ($cleanupError in @(Restore-ContinuousEnvironment $services $enabled $originalReverse)) {
+        $continuousCleanupErrors.Add($cleanupError)
+    }
 }
+if ($continuousFailure -or $continuousCleanupErrors.Count) {
+    $failureMessage = if ($continuousFailure) { [string]$continuousFailure.Exception.Message } else { '连续设备观察未完整收尾' }
+    if ($continuousCleanupErrors.Count) { $failureMessage += '；收尾错误：' + ($continuousCleanupErrors -join '；') }
+    throw $failureMessage
+}
+if (!$deviceReport) { throw '缺少完整连续设备回执' }
+$deviceReport | Add-Member -NotePropertyName driverOriginalAccessibilityRestored -NotePropertyValue $true
+$deviceReport | Add-Member -NotePropertyName driverOriginalReverseRestored -NotePropertyValue $true
+$deviceReport | Add-Member -NotePropertyName driverHomeRestored -NotePropertyValue $true
+$deviceReport | Add-Member -NotePropertyName driverRestartedAfterObservation -NotePropertyValue $true
+Save-Json (Join-Path $output 'report.json') $deviceReport
+Write-Output "通过：同一 PID 连续更新、真实健康、整组回退、持有上界及原环境还原；报告：$(Join-Path $output 'report.json')"
