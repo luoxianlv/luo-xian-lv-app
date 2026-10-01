@@ -1,0 +1,14 @@
+uniform shader background;
+uniform float2 center;
+uniform float radius;
+uniform float strength;
+half4 main(float2 xy) {
+    float2 delta=xy-center;
+    float distance=length(delta);
+    float r=distance/max(radius,1.0);
+    float field=exp(-pow((r-1.12)/0.40,2.0));
+    float envelope=1.0-smoothstep(1.8,2.25,r);
+    float bend=radius*0.22*field*envelope*strength;
+    float2 direction=delta/max(distance,0.001);
+    return background.eval(xy-direction*bend);
+}

@@ -1,0 +1,71 @@
+name: 原生热更候选构建
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 构建变体（只生成候选产物，不签名发布）
+        required: true
+        type: choice
+        default: debug
+        options: [debug, release]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hot-candidate-${{ github.ref }}-${{ inputs.variant }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: 检查核心并导出实际三层产物
+        shell: bash
+        env:
+          NATIVE_VARIANT: ${{ inputs.variant }}
+        run: |
+          set -euo pipefail
+          case "$NATIVE_VARIANT" in
+            debug) variant_name=Debug ;;
+            release) variant_name=Release ;;
+            *) exit 1 ;;
+          esac
+          native_args=()
+          if [[ "$NATIVE_VARIANT" == release ]]; then
+            native_args+=('-PnativeOptimize=true')
+          fi
+          bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest \
+            ":app-host:export${variant_name}NativeBuildReport" "${native_args[@]}" --no-daemon --console=plain
+      - name: 核验优化 Release 三层 SDK 与映射
+        if: inputs.variant == 'release'
+        shell: pwsh
+        run: ./tools/verify-native-release.ps1 -ExpectOptimized -CompileOnly
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ inputs.variant }}-${{ github.sha }}
+          path: |
+            app-host/build/native-report/${{ inputs.variant }}/
+            app-runtime/build/native-report/${{ inputs.variant }}/
+            app-business/build/native-report/${{ inputs.variant }}/
+            app-host/build/outputs/apk/${{ inputs.variant }}/*.apk
+            app-runtime/build/outputs/apk/${{ inputs.variant }}/*.apk
+            app-business/build/outputs/apk/${{ inputs.variant }}/*.apk
+            hot-contract/build/native-sdk/${{ inputs.variant }}/
+            app-runtime/build/native-sdk/${{ inputs.variant }}/
+            app-host/build/native-release-verification.json
+          if-no-files-found: error
+          retention-days: 14

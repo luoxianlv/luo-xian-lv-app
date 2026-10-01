@@ -453,7 +453,7 @@ class PracticeKeyboard(context: Context) : View(context) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w > 0 && h > 0 && (w <= h || h < 200 * density)) {
             close()
-            PracticePlaybackGate.setReady(false)
+            PracticePlaybackGate.invalidateSession(session)
             post { onExit() }
         }
     }

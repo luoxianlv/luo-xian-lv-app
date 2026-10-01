@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "algorithm": "ecdsa-p256-sha256",
+  "keyId": "b6a1556b4db2b3801cdcb226674383deb36f1a26aef9e02e1fdc4cf0a7f4990e",
+  "purpose": "root",
+  "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEBuiD9OpN6AIF8lUF94wuNS+EVnrrohhMydoa1bUdW9DlNjA97JxC9Wi7VjO8RwjkYjt+t/H9LULbXFkTpaPbww=="
+}

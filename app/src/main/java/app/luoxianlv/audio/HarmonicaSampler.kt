@@ -7,6 +7,8 @@ import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import app.luoxianlv.business.BusinessJobs
+import app.luoxianlv.hot.contract.OfficialAssets
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
@@ -14,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference
 /** 每个演练场持有一条口琴音频流；构造前先在 IO 线程解码采样。 */
 class HarmonicaSampler(
     samples: Map<Int, HarmonicaSample>,
+    private val gain: Float = 1f,
     private val onInterrupted: () -> Unit,
 ) : AutoCloseable {
     private data class Command(val midi: Int?)
@@ -27,6 +30,7 @@ class HarmonicaSampler(
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
     @Volatile private var running = true
+    @Volatile private var closed = false
     private val track =
         AudioTrack.Builder()
             .setAudioAttributes(attributes)
@@ -53,12 +57,21 @@ class HarmonicaSampler(
     private val worker: Thread
 
     init {
-        check(track.state == AudioTrack.STATE_INITIALIZED) { "无法初始化音频输出" }
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            track.release()
+            error("无法初始化音频输出")
+        }
+        val lease =
+            BusinessJobs.gate.retain()
+                ?: run {
+                    track.release()
+                    error("本代音频已退役")
+                }
         worker =
             Thread(
                     {
-                        Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                         try {
+                            Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
                             track.play()
                             val buffer = ShortArray(240)
                             while (running) {
@@ -66,6 +79,7 @@ class HarmonicaSampler(
                                     if (it.midi == null) voice.noteOff() else voice.noteOn(it.midi)
                                 }
                                 voice.render(buffer)
+                                if (gain != 1f) for (i in buffer.indices) buffer[i] = (buffer[i] * gain).toInt().toShort()
                                 var offset = 0
                                 while (running && offset < buffer.size) {
                                     val written =
@@ -80,16 +94,34 @@ class HarmonicaSampler(
                                 }
                             }
                         } catch (_: Exception) {
-                            if (running) main.post { onInterrupted() }
+                            if (running)
+                                BusinessJobs.post(main) {
+                                    if (!closed) onInterrupted()
+                                }
                         } finally {
                             running = false
-                            runCatching { track.stop() }
-                            track.release()
+                            try {
+                                runCatching { track.stop() }
+                                track.release()
+                            } finally {
+                                lease.close()
+                            }
                         }
                     },
                     "harmonica-output",
                 )
-                .apply { start() }
+                .apply {
+                    try {
+                        start()
+                    } catch (failure: Throwable) {
+                        try {
+                            track.release()
+                        } finally {
+                            lease.close()
+                        }
+                        throw failure
+                    }
+                }
     }
 
     fun noteOn(midi: Int): Boolean {
@@ -104,6 +136,7 @@ class HarmonicaSampler(
     }
 
     override fun close() {
+        closed = true
         running = false
         // 暂停用于唤醒阻塞写入；音轨仅由输出线程释放。
         runCatching {
@@ -115,12 +148,12 @@ class HarmonicaSampler(
     companion object {
         fun load(context: Context): Map<Int, HarmonicaSample> {
             val index =
-                context.assets.open("harmonica/index.tsv").bufferedReader().use { it.readLines() }
+                OfficialAssets.text(context, "harmonica", "index.tsv", "harmonica/index.tsv", 65536).lines()
             return index
                 .filter { it.isNotBlank() }
                 .associate { line ->
                     val (midi, count, start, end, blend) = line.split('\t').map(String::toInt)
-                    val bytes = context.assets.open("harmonica/$midi.pcm").use { it.readBytes() }
+                    val bytes = OfficialAssets.read(context, "harmonica", "$midi.pcm", "harmonica/$midi.pcm", 16 * 1024 * 1024)
                     require(bytes.size == count * 2) { "损坏的口琴音源 $midi" }
                     val pcm = ShortArray(count)
                     ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(pcm)

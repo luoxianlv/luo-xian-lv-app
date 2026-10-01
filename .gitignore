@@ -21,6 +21,7 @@ tools/*.pdb
 /*.mp4
 /.superpowers/
 .staging/
+/.local/
 
 .idea
 # 签名密钥（勿提交）

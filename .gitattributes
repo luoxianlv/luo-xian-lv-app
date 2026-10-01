@@ -1,0 +1,6 @@
+hot-core/**/*.java text eol=lf
+hot-core/**/*.md text eol=lf
+# 这些公开向量来自 Go；其签名依赖原始字节，不能转换换行。
+hot-core/src/test/resources/protocol-v1/* -text
+hot-core/src/test/resources/permit-v1/* -text
+*.lxhp binary

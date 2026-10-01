@@ -9,6 +9,11 @@ on:
         description: 要发布的已有版本标签（如 v1.0.1）
         required: true
         type: string
+      native_package:
+        description: 使用三层原生宿主（需要配置公开热更配置；旧标签保持关闭）
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -43,7 +48,7 @@ jobs:
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: ${{ inputs.native_package && '21' || '17' }}
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-provider: basic
@@ -56,6 +61,8 @@ jobs:
           ORG_GRADLE_PROJECT_releaseKeyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
           UPDATE_BASE_URL: ${{ vars.UPDATE_BASE_URL }}
           ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+          NATIVE_RELEASE_PACKAGE: ${{ inputs.native_package && 'true' || 'false' }}
+          NATIVE_HOT_CONFIG_JSON: ${{ vars.NATIVE_HOT_CONFIG_JSON }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/package-release.sh"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -66,7 +73,9 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-mapping
-          path: source/app/build/outputs/mapping/release/mapping.txt
+          path: |
+            source/app/build/outputs/mapping/release/mapping.txt
+            source/native-release-artifacts/
           if-no-files-found: error
           retention-days: 90
 

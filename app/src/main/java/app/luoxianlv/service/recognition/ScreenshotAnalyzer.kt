@@ -1,22 +1,22 @@
 package app.luoxianlv.service.recognition
 
-import android.accessibilityservice.AccessibilityService
 import android.graphics.Bitmap
 import android.os.SystemClock
+import app.luoxianlv.business.playback.PlaybackSession
 import app.luoxianlv.debug.AppLog
+import app.luoxianlv.hot.contract.AccessibilityBinding
 import app.luoxianlv.profile.ScreenRecognizer
-import app.luoxianlv.service.MusicAccessibilityService
 
 internal object ScreenshotAnalyzer {
     /** 图像转换和识别仅在工作线程执行，不操作播放状态或视图。 */
-    fun recognize(screenshot: AccessibilityService.ScreenshotResult): ScreenRecognizer.Result? {
+    fun recognize(screenshot: AccessibilityBinding.Frame): ScreenRecognizer.Result? {
         val started = SystemClock.uptimeMillis()
         val result = runCatching {
             val hardware =
                 try {
-                    Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
+                    Bitmap.wrapHardwareBuffer(screenshot.buffer, screenshot.colorSpace)
                 } finally {
-                    screenshot.hardwareBuffer.close()
+                    screenshot.close()
                 }
             val bitmap =
                 try {
@@ -33,7 +33,7 @@ internal object ScreenshotAnalyzer {
             }
         }
             .onFailure {
-                AppLog.w(MusicAccessibilityService.TAG, "截图识别失败", it)
+                AppLog.w(PlaybackSession.TAG, "截图识别失败", it)
             }
             .getOrNull()
         AppLog.log("识别耗时毫秒=${SystemClock.uptimeMillis() - started}")

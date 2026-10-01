@@ -1,0 +1,559 @@
+package app.luoxianlv.hot;
+
+import android.app.Application;
+import android.content.Context;
+import android.content.pm.ApplicationInfo;
+import android.content.res.AssetManager;
+import android.content.res.Resources;
+import android.os.Looper;
+import android.view.LayoutInflater;
+import app.luoxianlv.hot.contract.BusinessFactory;
+import app.luoxianlv.hot.contract.NativePage;
+import dalvik.system.DexClassLoader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.Enumeration;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+
+/** 一进程一套共享运行时；业务类使用独立加载器，旧页面由上层代际管理器按租约释放。 */
+public final class NativeLoader {
+  private static RuntimeSlot runtime;
+  private final Context application;
+  private final ContentStore store;
+  private final ContentQuarantine quarantine;
+  private final long hostContract;
+  private final Set<String> supportedMounts;
+
+  private static final class RuntimeSlot {
+    final String hash, abi;
+    final File apk;
+    final ClassLoader loader;
+    volatile boolean used;
+    AutoCloseable contentLease;
+
+    RuntimeSlot(String hash, String abi, File apk, ClassLoader loader) {
+      this.hash = hash;
+      this.abi = abi;
+      this.apk = apk;
+      this.loader = loader;
+    }
+  }
+
+  public static final class RestartRequired extends Exception {
+    RestartRequired() {
+      super("共享运行时改变，需下次进程启动采用整组快照");
+    }
+  }
+
+  /** 本地设备能力不足，不表示签名资源损坏，不能据此隔离内容。 */
+  public static final class ResourceUnsupported extends Exception {
+    public final String mount;
+    public final int requiredApi, actualApi;
+    public ResourceUnsupported(String mount, int requiredApi, int actualApi) {
+      super("当前设备不支持官方资源挂载 " + mount + "，需要 API " + requiredApi + "，当前 " + actualApi);
+      this.mount = mount; this.requiredApi = requiredApi; this.actualApi = actualApi;
+    }
+  }
+
+  public static final class Prepared {
+    public final HotManifest manifest;
+    public final String runtimeHash, runtimeAbi;
+    private final Class<?> entry;
+    private final ClassLoader loader;
+    private final ModuleResources resources;
+    public final File resourceRoot;
+    private final String identity;
+    private final ResourceScope official;
+    private ModuleApplication moduleApplication;
+    private boolean retired;
+    private AutoCloseable contentLease;
+
+    Prepared(
+        HotManifest manifest,
+        Class<?> entry,
+        ClassLoader loader,
+        Resources resources,
+        File resourceRoot) {
+      this(
+          manifest,
+          entry,
+          loader,
+          testResources(resources),
+          resourceRoot,
+          manifest == null ? "baseline" : manifest.snapshotId,
+          manifest == null ? "" : manifest.runtime.sha256,
+          manifest == null ? "" : manifest.runtimeAbi);
+    }
+
+    private static ModuleResources testResources(Resources resources) {
+      try {
+        return new ModuleResources(resources, null, null);
+      } catch (java.io.IOException impossible) {
+        throw new IllegalStateException(impossible);
+      }
+    }
+
+    private Prepared(
+        HotManifest manifest,
+        Class<?> entry,
+        ClassLoader loader,
+        ModuleResources resources,
+        File resourceRoot,
+        String identity,
+        String runtimeHash,
+        String runtimeAbi) {
+      this(manifest, entry, loader, resources, resourceRoot, identity, runtimeHash, runtimeAbi,
+          new ResourceScope(null, null, null, identity));
+    }
+
+    private Prepared(HotManifest manifest, Class<?> entry, ClassLoader loader, ModuleResources resources,
+        File resourceRoot, String identity, String runtimeHash, String runtimeAbi, ResourceScope official) {
+      this.manifest = manifest;
+      this.entry = entry;
+      this.loader = loader;
+      this.resources = resources;
+      this.resourceRoot = resourceRoot;
+      this.identity = identity;
+      this.runtimeHash = runtimeHash;
+      this.runtimeAbi = runtimeAbi;
+      this.official = official;
+    }
+
+    /** 构造业务对象可能建立主线程生命周期，必须由宿主在主线程调用。 */
+    public NativePage instantiate() throws Exception {
+      StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "业务页面必须在主线程创建");
+      requireActive();
+      markRuntimeUsed();
+      Object value = entry.getDeclaredConstructor().newInstance();
+      if (value instanceof BusinessFactory) ((BusinessFactory) value).bindResources(official);
+      return value instanceof BusinessFactory
+          ? ((BusinessFactory) value).page("main")
+          : (NativePage) value;
+    }
+
+    public BusinessFactory factory() throws Exception {
+      StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "业务工厂必须在主线程创建");
+      requireActive();
+      markRuntimeUsed();
+      BusinessFactory factory = entry.asSubclass(BusinessFactory.class).getDeclaredConstructor().newInstance();
+      factory.bindResources(official);
+      return factory;
+    }
+
+    private void markRuntimeUsed() {
+      synchronized (NativeLoader.class) {
+        if (runtime != null && runtime.hash.equals(runtimeHash)) runtime.used = true;
+      }
+    }
+
+    public String identity() {
+      return identity;
+    }
+
+    public ClassLoader classLoader() {
+      return loader;
+    }
+
+    /** 调用者先证明页面/会话与工作队列退出；此处只解除本代应用监听。 */
+    public synchronized void closeCallbacks() {
+      StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "代际监听必须在主线程释放");
+      retired = true;
+      official.retire();
+      if (moduleApplication != null) moduleApplication.closeCallbacks();
+      resources.close();
+      if (contentLease != null) {
+        try {
+          contentLease.close();
+        } catch (Exception error) {
+          throw new IllegalStateException("模块文件租约释放失败", error);
+        }
+        contentLease = null;
+      }
+    }
+
+    private void requireActive() {
+      StrictJson.require(!retired, "已退役模块不能重新创建业务或上下文");
+    }
+
+    public PageTarget page(String route, BusinessFactory factory) {
+      StrictJson.require(route != null && route.matches("[a-z][a-z0-9._-]{0,95}"), "业务路由无效");
+      return new PageTarget() {
+        @Override
+        public String identity() {
+          return Prepared.this.identity() + "#" + route;
+        }
+
+        @Override
+        public Context context(Context owner) {
+          return Prepared.this.context(owner);
+        }
+
+        @Override
+        public NativePage create() {
+          return factory.page(route);
+        }
+      };
+    }
+
+    public synchronized Context context(Context owner) {
+      StrictJson.require(Looper.myLooper() == Looper.getMainLooper(), "模块上下文必须在主线程创建");
+      requireActive();
+      if (moduleApplication == null) {
+        Context app = owner.getApplicationContext();
+        StrictJson.require(app instanceof Application, "模块上下文缺少真实 Application");
+        moduleApplication = new ModuleApplication((Application) app, resources, loader, official);
+      }
+      return new PageContext(owner, resources, loader, moduleApplication);
+    }
+  }
+
+  public NativeLoader(
+      Context application, ContentStore store, ContentQuarantine quarantine, long hostContract) {
+    this(application, store, quarantine, hostContract, java.util.Collections.emptySet());
+  }
+
+  /** 只允许准备失败、尚未构造任何业务时放弃加载器；执行过业务后不能混用另一运行时。 */
+  public boolean discardUninitializedRuntime(String expectedHash) {
+    synchronized (NativeLoader.class) {
+      if (runtime == null) return true;
+      if (!runtime.hash.equals(expectedHash) || runtime.used) return false;
+      try {
+        if (runtime.contentLease != null) runtime.contentLease.close();
+      } catch (Exception error) {
+        throw new IllegalStateException("未使用运行时租约释放失败", error);
+      }
+      runtime = null;
+      return true;
+    }
+  }
+
+  public NativeLoader(
+      Context application,
+      ContentStore store,
+      ContentQuarantine quarantine,
+      long hostContract,
+      Set<String> supportedMounts) {
+    this.application = application.getApplicationContext();
+    this.store = store;
+    this.quarantine = quarantine;
+    this.hostContract = hostContract;
+    this.supportedMounts = java.util.Collections.unmodifiableSet(new HashSet<>(supportedMounts));
+  }
+
+  /** 调用前必须验证许可并落盘 PREPARING 日志；该方法在后台校验与准备，不创建 View。 */
+  public Prepared prepare(ContentStore.Snapshot snapshot, ActivationJournal.State activation)
+      throws Exception {
+    StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "禁止在主线程校验或加载热更包");
+    HotManifest manifest = snapshot.manifest;
+    StrictJson.require(
+        manifest.applicationId.equals(application.getPackageName())
+            && hostContract >= manifest.hostMin
+            && hostContract <= manifest.hostMax,
+        "候选与实际宿主不兼容");
+    StrictJson.require(
+        activation.phase == ActivationJournal.Phase.PREPARING
+            && activation.candidate.equals(manifest.snapshotId),
+        "执行新代码前必须先保存本次激活记录");
+    return prepareVerified(snapshot);
+  }
+
+  /** 普通冷启动仅允许稳定日志指向的已签名组合，不使用过期许可启动新候选。 */
+  public Prepared prepareStable(
+      ContentStore.Snapshot snapshot,
+      ActivationJournal.State state,
+      TrustStore trust,
+      String environment)
+      throws Exception {
+    StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "稳定版本必须在后台准备");
+    snapshot.manifest.compatible(
+        application.getPackageName(), environment, hostContract, supportedMounts);
+    trust.verifyStable(snapshot, state);
+    return prepareVerified(snapshot);
+  }
+
+  private Prepared prepareVerified(ContentStore.Snapshot snapshot) throws Exception {
+    AutoCloseable lease = store.pin(snapshot);
+    try {
+      Prepared prepared = preparePinned(snapshot);
+      prepared.contentLease = lease;
+      return prepared;
+    } catch (Throwable error) {
+      lease.close();
+      throw error;
+    }
+  }
+
+  private Prepared preparePinned(ContentStore.Snapshot snapshot) throws Exception {
+    HotManifest manifest = snapshot.manifest;
+    quarantine.requireAllowed(manifest, hostContract);
+    store.verifySnapshotObjects(snapshot);
+    CompiledContract.require(application, store.objectFile(manifest.business.sha256));
+    new PreparationSpace(application).beforeLoad(store, snapshot, residentRuntimeHash());
+    File mounted = null;
+    if (manifest.artifacts.stream().anyMatch(artifact -> !artifact.mount.isEmpty()))
+      mounted = new ResourceMounts(store).prepare(snapshot, supportedMounts);
+    var official = new ResourceScope(store, snapshot, mounted, manifest.snapshotId);
+    official.validate();
+    RuntimeSlot shared = runtime(snapshot);
+    File business = apkAlias(snapshot.directory, manifest.business, "business.apk");
+    rejectBusinessNativeCode(business);
+    DexClassLoader loader =
+        new DexClassLoader(
+            business.getAbsolutePath(),
+            application.getCodeCacheDir().getAbsolutePath(),
+            null,
+            shared.loader);
+    Class<?> entry = businessEntry(manifest.business.entryClass, loader);
+    ApplicationInfo combined = new ApplicationInfo(application.getApplicationInfo());
+    combined.splitSourceDirs =
+        new String[] {shared.apk.getAbsolutePath(), business.getAbsolutePath()};
+    combined.splitPublicSourceDirs = combined.splitSourceDirs.clone();
+    Resources resources = application.getPackageManager().getResourcesForApplication(combined);
+    return new Prepared(
+        manifest,
+        entry,
+        loader,
+        new ModuleResources(resources, shared.apk, business),
+        mounted,
+        manifest.snapshotId,
+        shared.hash,
+        shared.abi,
+        official);
+  }
+
+  public static synchronized String residentRuntimeHash() {
+    return runtime == null ? "" : runtime.hash;
+  }
+
+  /** APK 签名保护的内置恢复组合；文件与哈希必须先由 BundledBaseline 校验，不能用于下载候选。 */
+  public Prepared prepareBaseline(BundledBaseline baseline) throws Exception {
+    StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "禁止在主线程准备内置业务");
+    baseline.verify();
+    CompiledContract.require(application, baseline.business);
+    RuntimeSlot shared;
+    synchronized (NativeLoader.class) {
+      if (runtime == null) {
+        requireThinHost();
+        verifyRuntimeAbi(baseline.runtime, baseline.abi);
+        String libraries =
+            extractLibraries(baseline.runtime, new File(baseline.directory, "native"));
+        runtime =
+            new RuntimeSlot(
+                baseline.runtimeHash,
+                baseline.abi,
+                baseline.runtime,
+                new DexClassLoader(
+                    baseline.runtime.getPath(),
+                    application.getCodeCacheDir().getPath(),
+                    libraries,
+                    application.getClassLoader()));
+      }
+      if (!runtime.hash.equals(baseline.runtimeHash) || !runtime.abi.equals(baseline.abi))
+        throw new RestartRequired();
+      shared = runtime;
+    }
+    rejectBusinessNativeCode(baseline.business);
+    DexClassLoader loader =
+        new DexClassLoader(
+            baseline.business.getPath(),
+            application.getCodeCacheDir().getPath(),
+            null,
+            shared.loader);
+    Class<?> entry = businessEntry(baseline.entry, loader);
+    ApplicationInfo combined = new ApplicationInfo(application.getApplicationInfo());
+    combined.splitSourceDirs = new String[] {shared.apk.getPath(), baseline.business.getPath()};
+    combined.splitPublicSourceDirs = combined.splitSourceDirs.clone();
+    Resources resources = application.getPackageManager().getResourcesForApplication(combined);
+    return new Prepared(
+        null,
+        entry,
+        loader,
+        new ModuleResources(resources, shared.apk, baseline.business),
+        null,
+        "apk:" + baseline.runtimeHash + ":" + baseline.businessHash,
+        shared.hash,
+        shared.abi);
+  }
+
+  private static Class<?> businessEntry(String name, ClassLoader loader) throws Exception {
+    Class<?> entry = Class.forName(name, false, loader);
+    StrictJson.require(
+        NativePage.class.isAssignableFrom(entry) || BusinessFactory.class.isAssignableFrom(entry),
+        "业务入口没有实现宿主契约");
+    StrictJson.require(entry.getClassLoader() == loader, "业务入口被父加载器截获");
+    return entry;
+  }
+
+  private void requireThinHost() throws Exception {
+    try {
+      Class.forName("kotlin.Unit", false, application.getClassLoader());
+      throw new IllegalStateException("宿主仍包含共享运行时，需要完成三层 APK 构建迁移");
+    } catch (ClassNotFoundException expected) {
+    }
+  }
+
+  private static void verifyRuntimeAbi(File apk, String expected) throws Exception {
+    try (ZipFile zip = new ZipFile(apk)) {
+      ZipEntry marker = zip.getEntry("assets/runtime-abi.txt");
+      StrictJson.require(marker != null && marker.getSize() <= 256, "运行时缺少 ABI 标识");
+      try (InputStream input = zip.getInputStream(marker)) {
+        StrictJson.require(
+            new String(HotPackage.read(input, 256), StandardCharsets.UTF_8).trim().equals(expected),
+            "运行时实际 ABI 与声明不符");
+      }
+    }
+  }
+
+  private RuntimeSlot runtime(ContentStore.Snapshot snapshot) throws Exception {
+    synchronized (NativeLoader.class) {
+      HotManifest manifest = snapshot.manifest;
+      if (runtime != null) {
+        if (!runtime.hash.equals(manifest.runtime.sha256)
+            || !runtime.abi.equals(manifest.runtimeAbi)) throw new RestartRequired();
+        return runtime;
+      }
+      // 迁移未完成的旧宿主不能冒充薄宿主，否则 Kotlin/Compose 会被父加载器错误截获。
+      requireThinHost();
+      File runtimeDirectory = store.runtimeDirectory(manifest.runtime.sha256);
+      File apk = apkAlias(runtimeDirectory, manifest.runtime, "runtime.apk");
+      verifyRuntimeAbi(apk, manifest.runtimeAbi);
+      String libraries = extractLibraries(apk, new File(runtimeDirectory, "native"));
+      ClassLoader loader =
+          new DexClassLoader(
+              apk.getAbsolutePath(),
+              application.getCodeCacheDir().getAbsolutePath(),
+              libraries,
+              application.getClassLoader());
+      AutoCloseable lease = store.pinRuntime(manifest.runtime.sha256);
+      runtime = new RuntimeSlot(manifest.runtime.sha256, manifest.runtimeAbi, apk, loader);
+      runtime.contentLease = lease;
+      return runtime;
+    }
+  }
+
+  private File apkAlias(File directory, HotManifest.Artifact artifact, String name)
+      throws Exception {
+    File source = store.objectFile(artifact.sha256), alias = new File(directory, name);
+    if (alias.exists()) {
+      ContentStore.verifyFile(alias, artifact.sha256, artifact.size);
+      return alias;
+    }
+    StrictJson.require(
+        directory.getUsableSpace() >= artifact.size + 16L * StrictJson.MAX_BYTES, "空间不足，保留当前运行时");
+    // Android 应用沙箱可能禁止硬链接；使用只读、校验后原子提交的 APK 副本。
+    File temporary = File.createTempFile("apk-", ".part", directory);
+    try {
+      try (InputStream input = Files.newInputStream(source.toPath());
+          FileOutputStream output = new FileOutputStream(temporary)) {
+        StrictJson.require(temporary.setReadOnly(), "无法将模块副本设为只读");
+        byte[] buffer = new byte[32768];
+        long total = 0;
+        int n;
+        while ((n = input.read(buffer)) != -1) {
+          total += n;
+          StrictJson.require(total <= artifact.size, "模块来源大小改变");
+          output.write(buffer, 0, n);
+        }
+        StrictJson.require(total == artifact.size, "模块来源不完整");
+        output.getFD().sync();
+      }
+      ContentStore.verifyFile(temporary, artifact.sha256, artifact.size);
+      ContentStore.moveAtomic(
+          temporary.toPath(), alias.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+    } finally {
+      if (temporary.exists()) {
+        temporary.setWritable(true, true);
+        Files.deleteIfExists(temporary.toPath());
+      }
+    }
+    ContentStore.syncDirectory(directory);
+    return alias;
+  }
+
+  private static void rejectBusinessNativeCode(File apk) throws Exception {
+    try (ZipFile zip = new ZipFile(apk)) {
+      Enumeration<? extends ZipEntry> entries = zip.entries();
+      while (entries.hasMoreElements())
+        StrictJson.require(
+            !entries.nextElement().getName().startsWith("lib/"), "原生库必须放入共享运行时组，不能即时替换");
+    }
+  }
+
+  private static String extractLibraries(File apk, File directory) throws Exception {
+    var plan = NativeLibraries.inspect(apk, directory, NativeLibraries.systemAbis());
+    new PreparationSpace()
+        .admit(
+            java.util.List.of(
+                new PreparationSpace.Demand(directory.getParentFile(), plan.bytes, plan.paths)));
+    return plan.materialize();
+  }
+
+  static final class PageContext extends android.view.ContextThemeWrapper {
+    private final ModuleResources source;
+    private final ModuleResources.Binding resources;
+    private final android.content.res.Configuration overrides;
+    private final ClassLoader loader;
+    private final Application application;
+
+    PageContext(
+        Context base, ModuleResources resources, ClassLoader loader, Application application) {
+      this(base, resources, loader, application, new android.content.res.Configuration());
+    }
+
+    PageContext(
+        Context base,
+        ModuleResources resources,
+        ClassLoader loader,
+        Application application,
+        android.content.res.Configuration overrides) {
+      super(base, 0);
+      this.source = resources;
+      this.overrides = new android.content.res.Configuration(overrides);
+      this.resources = resources.forOwner(base, this.overrides);
+      this.loader = loader;
+      this.application = application;
+    }
+
+    @Override
+    public Context getApplicationContext() {
+      return application;
+    }
+
+    @Override
+    public Context createConfigurationContext(android.content.res.Configuration override) {
+      var merged = new android.content.res.Configuration(overrides);
+      merged.updateFrom(override);
+      return new PageContext(getBaseContext(), source, loader, application, merged);
+    }
+
+    @Override
+    public Resources getResources() {
+      return resources.get();
+    }
+
+    @Override
+    public AssetManager getAssets() {
+      return getResources().getAssets();
+    }
+
+    @Override
+    public ClassLoader getClassLoader() {
+      return loader;
+    }
+
+    @Override
+    public Object getSystemService(String name) {
+      if (app.luoxianlv.hot.contract.OfficialResources.SERVICE.equals(name))
+        return application.getSystemService(name);
+      if (Context.LAYOUT_INFLATER_SERVICE.equals(name))
+        return LayoutInflater.from(getBaseContext()).cloneInContext(this);
+      return super.getSystemService(name);
+    }
+  }
+}

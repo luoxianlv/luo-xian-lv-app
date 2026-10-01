@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** 统一中文诊断日志：后台有界写入、8 MiB 轮转，日志和截图合计保留至多 50 MiB。 */
 object AppLog {
-    private val lock = Any()
+    private val lock = app.luoxianlv.hot.contract.ProcessLocks.monitor("diagnostics")
     private val dropped = AtomicLong()
     private var lastTrim = 0L
     private val worker =
@@ -46,6 +46,12 @@ object AppLog {
 
     /** 仅供后台导出调用：等待已入队记录写完；队列满时仍可插入屏障。 */
     fun flush() {
+        if (worker.isShutdown) {
+            check(worker.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                "旧日志队列尚未退出"
+            }
+            return
+        }
         val barrier = java.util.concurrent.FutureTask<Unit> {}
         try {
             worker.execute(barrier)
@@ -189,4 +195,11 @@ object AppLog {
     fun <T> withSnapshot(action: () -> T): T = synchronized(lock) { action() }
 
     fun directory(): File? = dir
+
+    fun retire() {
+        worker.shutdown()
+    }
+
+    val released: Boolean
+        get() = worker.isTerminated
 }

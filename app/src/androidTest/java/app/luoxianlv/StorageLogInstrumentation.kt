@@ -2,9 +2,11 @@ package app.luoxianlv
 
 import android.app.Instrumentation
 import android.os.Bundle
+import android.util.Log
 import androidx.core.content.FileProvider
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.debug.DebugExport
+import app.luoxianlv.hot.contract.HostDiagnostics
 import app.luoxianlv.storage.AppStorage
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import java.io.File
@@ -80,6 +82,7 @@ class StorageLogInstrumentation : Instrumentation() {
             )
             AppLog.i("存储测试", "中文编码验证：壁纸、识别、暂停与恢复；标识=$id")
             AppLog.w("存储测试", "异常原文保留", java.io.IOException("测试错误详情"))
+            HostDiagnostics.log(Log.WARN, "宿主测试", "宿主中文日志接入：$id", LinkageError("业务加载原始原因"))
             AppLog.flush()
             val log = File(AppStorage.logs(targetContext), "play-debug.log").readBytes()
             check(!log.take(3).toByteArray().contentEquals(byteArrayOf(-17, -69, -65)))
@@ -88,6 +91,9 @@ class StorageLogInstrumentation : Instrumentation() {
                 text.contains("中文编码验证") && text.contains(id) && text.contains("java.io.IOException")
             )
             check(!text.contains('\uFFFD'))
+            check(
+                text.contains("宿主中文日志接入：$id") && text.contains("java.lang.LinkageError: 业务加载原始原因")
+            )
             val archive = runBlocking { DebugExport.create(targetContext) }
             check(archive.parentFile == AppStorage.diagnostics(targetContext))
             ZipFile(archive).use { zip ->
@@ -112,7 +118,11 @@ class StorageLogInstrumentation : Instrumentation() {
             targetContext.contentResolver.openInputStream(uri)!!.use {
                 check(it.read() == 0x50 && it.read() == 0x4b)
             }
-            result.putString("stream", "外部目录、旧壁纸迁移、延迟清理、UTF-8 中文日志、原始异常和诊断 ZIP 分享读取验证通过。\n")
+            checkSharedFiles()
+            result.putString(
+                "stream",
+                "外部目录、旧壁纸迁移、延迟清理、UTF-8 中文日志、原始异常、诊断 ZIP 与五类旧分享地址、越界/符号链接/写入拒绝验证通过。\n",
+            )
             success = true
         } catch (error: Throwable) {
             result.putString("stream", error.stackTraceToString())

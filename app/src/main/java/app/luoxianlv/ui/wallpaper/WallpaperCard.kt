@@ -19,11 +19,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.ui.theme.OnBackdropContent
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import app.luoxianlv.wallpaper.render.WallpaperPreview
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 @Composable
 internal fun WallpaperCard(
@@ -46,14 +45,13 @@ internal fun WallpaperCard(
             var preview by
                 remember(entry.id) { mutableStateOf<android.graphics.drawable.Drawable?>(null) }
             LaunchedEffect(entry.id) {
-                preview =
-                    withContext(Dispatchers.IO) {
-                        WallpaperPreview.load(
-                            context,
-                            entry.root,
-                            (112 * context.resources.displayMetrics.density).toInt(),
-                        )
-                    }
+                preview = BusinessJobs.io {
+                    WallpaperPreview.load(
+                        context,
+                        entry.root,
+                        (112 * context.resources.displayMetrics.density).toInt(),
+                    )
+                }
             }
             Box(
                 Modifier.size(112.dp, 70.dp)

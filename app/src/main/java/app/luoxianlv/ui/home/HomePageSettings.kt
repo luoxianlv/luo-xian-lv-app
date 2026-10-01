@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -17,6 +16,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import app.luoxianlv.business.ui.LocalPageVisible
+import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
+import app.luoxianlv.business.ui.PageReplacementGuard
 import app.luoxianlv.ui.components.SmallSwitch
 import app.luoxianlv.ui.theme.OnBackdropContent
 
@@ -30,12 +32,14 @@ internal fun HomePageSettings(
 ) {
     var menu by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
+    val visible = LocalPageVisible.current
+    PageReplacementGuard { !menu }
     Box {
         IconButton(onClick = { menu = true }) {
             // 同上：图标直接压在内容卡渐变上，不能吃默认的黑。
             Icon(Icons.Filled.Tune, contentDescription = "首页设置", tint = OnBackdropContent)
         }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        DropdownMenu(expanded = menu && visible, onDismissRequest = { menu = false }) {
             DropdownMenuItem(
                 text = { Text("编辑一言") },
                 leadingIcon = { Icon(Icons.Filled.EditNote, contentDescription = null) },

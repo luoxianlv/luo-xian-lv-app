@@ -6,6 +6,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import app.luoxianlv.wallpaper.data.WallpaperArchive
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
+import app.luoxianlv.hot.contract.OfficialAssets
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FilterInputStream
@@ -13,6 +14,8 @@ import java.io.InputStream
 
 /** 只读离线源，仅允许渲染资源、当前项目和视频分段请求。 */
 class WallpaperResources(private val context: Context, private val project: File?) {
+    @Volatile var officialFailure: Throwable? = null
+        private set
     fun response(request: WebResourceRequest): WebResourceResponse {
         fun denied(code: Int = 404) =
             WebResourceResponse(
@@ -44,7 +47,7 @@ class WallpaperResources(private val context: Context, private val project: File
                     )
             ) {
                 file = null
-                open = { context.assets.open("wallpaperengine$path") }
+                open = { OfficialAssets.open(context, "wallpaperengine", path.removePrefix("/"), "wallpaperengine$path") }
             } else if (path.startsWith("/project/")) {
                 val relative = path.removePrefix("/project/")
                 if (project == null) {
@@ -139,7 +142,9 @@ class WallpaperResources(private val context: Context, private val project: File
                 headers,
                 stream,
             )
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            if (url.path.orEmpty().removePrefix("/") in setOf("index.html", "host.mjs", "webwallgl.mjs", "compat.mjs", "clock.mjs", "scene-video.mjs", "lifecycle.mjs", "audio.mjs"))
+                if (OfficialAssets.mounted(context, "wallpaperengine")) officialFailure = error
             denied()
         }
     }

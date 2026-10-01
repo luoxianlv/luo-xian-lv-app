@@ -6,11 +6,12 @@ import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.view.Display
-import androidx.core.content.FileProvider
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.business.BusinessJobs
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.Kv
-import app.luoxianlv.service.MusicAccessibilityService
+import app.luoxianlv.hot.contract.SharedFiles
 import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.io.FileOutputStream
@@ -24,12 +25,11 @@ import org.json.JSONObject
 /** 打包调试信息（日志/截图/布局/设备信息）成 ZIP 并通过 FileProvider 分享。 */
 object DebugExport {
     /** 只生成诊断包，不启动分享界面；导出前等待后台日志写入。 */
-    suspend fun create(context: Context): File =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            AppLog.init(context)
-            AppLog.flush()
-            AppLog.withSnapshot { export(context) }
-        }
+    suspend fun create(context: Context): File = BusinessJobs.io {
+        AppLog.init(context)
+        AppLog.flush()
+        AppLog.withSnapshot { export(context) }
+    }
 
     suspend fun exportAndShare(context: Context): Boolean {
         val file =
@@ -37,8 +37,7 @@ object DebugExport {
                 ?: return false
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
             runCatching {
-                val uri =
-                    FileProvider.getUriForFile(context, context.packageName + ".updates", file)
+                val uri = SharedFiles.getUriForFile(context, context.packageName + ".updates", file)
                 val send =
                     Intent(Intent.ACTION_SEND).apply {
                         type = "application/zip"
@@ -167,7 +166,7 @@ object DebugExport {
     }
 
     private fun diagnostics(context: Context): JSONObject {
-        val d = MusicAccessibilityService.instance?.diagnostics()
+        val d = PlaybackConnection.instance?.diagnostics()
         val layout = ConfigStore.load(context)
         val prefs = Kv.of(context, "ratio_config_v3").all
         val modes = JSONObject()

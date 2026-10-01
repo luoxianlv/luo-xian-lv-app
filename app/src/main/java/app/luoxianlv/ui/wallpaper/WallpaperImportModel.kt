@@ -2,17 +2,15 @@ package app.luoxianlv.ui.wallpaper
 
 import android.app.Application
 import android.net.Uri
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import android.os.Bundle
 import androidx.compose.runtime.*
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class WallpaperImportModel(application: Application) : AndroidViewModel(application) {
     var busy by mutableStateOf(false)
@@ -26,6 +24,22 @@ class WallpaperImportModel(application: Application) : AndroidViewModel(applicat
 
     private var started = false
 
+    fun saveCompleted() =
+        Bundle().apply {
+            if (started && !busy) {
+                putBoolean("completed", true)
+                putBoolean("success", success)
+                putString("message", message)
+            }
+        }
+
+    fun restoreCompleted(state: Bundle?) {
+        if (started || state?.getBoolean("completed") != true) return
+        started = true
+        success = state.getBoolean("success")
+        message = state.getString("message") ?: "导入已结束。"
+    }
+
     fun start(uri: Uri?) {
         if (started) return
         started = true
@@ -36,13 +50,12 @@ class WallpaperImportModel(application: Application) : AndroidViewModel(applicat
         busy = true
         viewModelScope.launch {
             try {
-                val title =
-                    withContext(Dispatchers.IO) {
-                        val job = currentCoroutineContext()
-                        WallpaperProjectStore.import(getApplication(), uri, false) {
-                            job.ensureActive()
-                        }
+                val title = BusinessJobs.io {
+                    val job = currentCoroutineContext()
+                    WallpaperProjectStore.import(getApplication(), uri, false) {
+                        job.ensureActive()
                     }
+                }
                 success = true
                 message = "已导入：$title"
             } catch (error: Exception) {

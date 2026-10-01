@@ -8,25 +8,24 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.luoxianlv.BuildConfig
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.data.Kv
+import app.luoxianlv.hot.contract.SharedFiles
 import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 data class AppUpdateState(
@@ -69,39 +68,36 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(checking = true, error = null) }
         viewModelScope.launch {
             try {
-                val release =
-                    withContext(Dispatchers.IO) {
-                        val connection =
-                            open(
-                                "$baseUrl/api/update/stable?versionCode=${BuildConfig.VERSION_CODE}"
-                            )
-                        try {
-                            check(connection.responseCode == 200) {
-                                "更新服务暂时不可用 (${connection.responseCode})"
-                            }
-                            val text =
-                                connection.inputStream.use { input ->
-                                    val output = java.io.ByteArrayOutputStream()
-                                    val buffer = ByteArray(8192)
-                                    while (output.size() <= 256 * 1024) {
-                                        val count = input.read(buffer)
-                                        if (count < 0) break
-                                        output.write(buffer, 0, count)
-                                    }
-                                    output.toByteArray()
-                                }
-                            require(text.size <= 256 * 1024) { "更新信息过大" }
-                            parseAppRelease(
-                                JSONObject(text.toString(Charsets.UTF_8)),
-                                BuildConfig.VERSION_CODE,
-                                baseUrl,
-                                BuildConfig.UPDATE_SOURCE,
-                                BuildConfig.INTERNAL_BUILD,
-                            )
-                        } finally {
-                            connection.disconnect()
+                val release = BusinessJobs.io {
+                    val connection =
+                        open("$baseUrl/api/update/stable?versionCode=${BuildConfig.VERSION_CODE}")
+                    try {
+                        check(connection.responseCode == 200) {
+                            "更新服务暂时不可用 (${connection.responseCode})"
                         }
+                        val text =
+                            connection.inputStream.use { input ->
+                                val output = java.io.ByteArrayOutputStream()
+                                val buffer = ByteArray(8192)
+                                while (output.size() <= 256 * 1024) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    output.write(buffer, 0, count)
+                                }
+                                output.toByteArray()
+                            }
+                        require(text.size <= 256 * 1024) { "更新信息过大" }
+                        parseAppRelease(
+                            JSONObject(text.toString(Charsets.UTF_8)),
+                            BuildConfig.VERSION_CODE,
+                            baseUrl,
+                            BuildConfig.UPDATE_SOURCE,
+                            BuildConfig.INTERNAL_BUILD,
+                        )
+                    } finally {
+                        connection.disconnect()
                     }
+                }
                 prefs.edit().putLong("last_check", now).apply()
                 _state.update {
                     it.copy(
@@ -137,7 +133,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         cleanupCache()
         job = viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                BusinessJobs.io {
                     val sources = release.sources.sortedBy { if (it.id == selected) 0 else 1 }
                     var failure: Exception? = null
                     for (source in sources) {
@@ -147,12 +143,12 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                             target.exists() &&
                                 runCatching { verify(target, release, source) }.isSuccess
                         )
-                            return@withContext
+                            return@io
                         if (target.exists()) check(target.delete()) { "无法清理失效的更新包，请重试" }
                         _state.update { it.copy(source = source.label, progress = 0f) }
                         try {
                             downloadFile(source.url, target, release, source)
-                            return@withContext
+                            return@io
                         } catch (e: Exception) {
                             coroutineContext.ensureActive()
                             target.delete()
@@ -323,7 +319,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                 release.sources.firstOrNull { it.id == _state.value.selectedSource }
                     ?: release.sources.first()
             val uri =
-                FileProvider.getUriForFile(app, "${app.packageName}.updates", apk(release, source))
+                SharedFiles.getUriForFile(app, "${app.packageName}.updates", apk(release, source))
             activity.startActivity(
                 Intent(Intent.ACTION_VIEW)
                     .setDataAndType(uri, "application/vnd.android.package-archive")

@@ -66,48 +66,51 @@ class PlatformClient(private val context: Context) {
         accessToken: String,
         onResult: (Result<List<SyncedScore>>) -> Unit,
     ) {
-        Thread {
-            onResult(
-                runCatching {
-                    require(deviceId.isNotBlank()) { "设备标识不能为空" }
-                    require(accessToken.isNotBlank()) { "登录凭证不能为空" }
-                    val records = mutableListOf<SyncedScore>()
-                    var cursor: String? = null
-                    for (pageIndex in 0 until MAX_LIBRARY_PAGES) {
-                        val device = java.net.URLEncoder.encode(deviceId, "UTF-8")
-                        val cursorQuery =
-                            cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" }
-                                ?: ""
-                        val payload =
-                            http
-                                .requestText(
-                                    "$baseUrl/api/client/library?device_id=$device$cursorQuery",
-                                    accessToken,
-                                )
-                                .trim()
-                        val (items, nextCursor) = responses.parseLibraryPage(payload)
-                        (0 until items.length())
-                            .mapNotNull { index ->
-                                responses.parseSyncedScore(items.optJSONObject(index))?.let { score
-                                    ->
-                                    if (
-                                        score.notationText.isNotBlank() || score.contentUrl != null
-                                    ) {
-                                        enrichContent(score, accessToken)
-                                    } else {
-                                        score
+        if (
+            !app.luoxianlv.business.BusinessJobs.thread("同步曲库") {
+                onResult(
+                    runCatching {
+                        require(deviceId.isNotBlank()) { "设备标识不能为空" }
+                        require(accessToken.isNotBlank()) { "登录凭证不能为空" }
+                        val records = mutableListOf<SyncedScore>()
+                        var cursor: String? = null
+                        for (pageIndex in 0 until MAX_LIBRARY_PAGES) {
+                            val device = java.net.URLEncoder.encode(deviceId, "UTF-8")
+                            val cursorQuery =
+                                cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" }
+                                    ?: ""
+                            val payload =
+                                http
+                                    .requestText(
+                                        "$baseUrl/api/client/library?device_id=$device$cursorQuery",
+                                        accessToken,
+                                    )
+                                    .trim()
+                            val (items, nextCursor) = responses.parseLibraryPage(payload)
+                            (0 until items.length())
+                                .mapNotNull { index ->
+                                    responses.parseSyncedScore(items.optJSONObject(index))?.let {
+                                        score ->
+                                        if (
+                                            score.notationText.isNotBlank() ||
+                                                score.contentUrl != null
+                                        ) {
+                                            enrichContent(score, accessToken)
+                                        } else {
+                                            score
+                                        }
                                     }
                                 }
-                            }
-                            .also(records::addAll)
-                        if (nextCursor == null || nextCursor == cursor) break
-                        cursor = nextCursor
+                                .also(records::addAll)
+                            if (nextCursor == null || nextCursor == cursor) break
+                            cursor = nextCursor
+                        }
+                        records
                     }
-                    records
-                }
-            )
-        }
-            .start()
+                )
+            }
+        )
+            onResult(Result.failure(IllegalStateException("本代同步已停用，请重新操作")))
     }
 
     /** 拉取平台曲目并原子合并较新版本；结果回调在工作线程执行。 */

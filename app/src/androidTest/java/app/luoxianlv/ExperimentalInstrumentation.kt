@@ -1,6 +1,5 @@
 package app.luoxianlv
 
-import android.accessibilityservice.AccessibilityService
 import android.app.Activity
 import android.app.Instrumentation
 import android.app.UiAutomation
@@ -13,10 +12,13 @@ import android.view.Display
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.data.ExperimentalOptions
 import app.luoxianlv.data.Song
-import app.luoxianlv.service.MusicAccessibilityService
+import app.luoxianlv.hot.contract.AccessibilityBinding
+import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.ui.components.ImportFilePicker
 import app.luoxianlv.ui.practice.*
 import java.util.concurrent.CopyOnWriteArrayList
@@ -87,7 +89,7 @@ class ExperimentalInstrumentation : Instrumentation() {
         var ok = false
         var stage: PracticeActivity? = null
         var previousSong: Song? = null
-        var service: MusicAccessibilityService? = null
+        var service: PlaybackConnection? = null
         val priorEnabled = shell("settings get secure accessibility_enabled")
         val priorServices = shell("settings get secure enabled_accessibility_services")
         val previousFixed = ExperimentalOptions.fixedHarmonicaKeys(targetContext)
@@ -106,8 +108,8 @@ class ExperimentalInstrumentation : Instrumentation() {
                     .apply { add(component) }
             shell("settings put secure enabled_accessibility_services ${enabled.joinToString(":")}")
             shell("settings put secure accessibility_enabled 1")
-            await("无障碍未连接") { MusicAccessibilityService.instance != null }
-            service = MusicAccessibilityService.instance!!
+            await("无障碍未连接") { PlaybackConnection.instance != null }
+            service = PlaybackConnection.instance!!
             val player = service
             previousSong = player.song
             stage =
@@ -131,17 +133,16 @@ class ExperimentalInstrumentation : Instrumentation() {
                 pauseBackdrop(active.window.decorView)
                 active.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
                 // 模拟其他软件：无法借助演练场状态，也无法截图。
-                PracticePlaybackGate.leave()
+                PracticePlaybackGate.leave(checkNotNull(keys.findViewTreeLifecycleOwner()))
             }
             SystemClock.sleep(500)
             val blocked = CountDownLatch(1)
             var screenshotFailed = false
             runOnMainSync {
-                player.takeScreenshot(
+                (PlaybackBridge.current() as AccessibilityBinding).screenshot(
                     Display.DEFAULT_DISPLAY,
-                    active.mainExecutor,
-                    object : AccessibilityService.TakeScreenshotCallback {
-                        override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                    object : AccessibilityBinding.ScreenshotCallback {
+                        override fun success(screenshot: AccessibilityBinding.Frame) {
                             Thread {
                                 screenshotFailed =
                                     app.luoxianlv.service.recognition.ScreenshotAnalyzer.recognize(
@@ -152,7 +153,7 @@ class ExperimentalInstrumentation : Instrumentation() {
                                 .start()
                         }
 
-                        override fun onFailure(errorCode: Int) {
+                        override fun failure(errorCode: Int) {
                             screenshotFailed = true
                             blocked.countDown()
                         }

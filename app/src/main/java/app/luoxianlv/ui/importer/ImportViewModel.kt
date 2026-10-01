@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.ui.AppEvents
 import app.luoxianlv.ui.syncSelectionToService
@@ -31,43 +32,47 @@ class ImportViewModel(private val app: Application) : AndroidViewModel(app) {
     fun import(uri: Uri) {
         if (_state.value.importing) return
         _state.update { it.copy(importing = true, error = null) }
-        viewModelScope.launch(Dispatchers.IO) {
-            val read = runCatching {
-                val resolver = app.contentResolver
-                val name =
-                    resolver
-                        .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
-                        ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "导入乐曲"
-                validateMidiName(name)
-                val bytes =
-                    resolver.openInputStream(uri)?.use { stream ->
-                        readMidi(name, stream)
-                    } ?: error("无法读取文件")
-                name to bytes
-            }
-            read
-                .onSuccess { (name, bytes) ->
-                    val imported = runCatching {
-                        repository.addMidi(name.substringBeforeLast('.'), bytes)
-                    }
-                    imported
-                        .onSuccess { song ->
-                            withContext(Dispatchers.Main) { syncSelectionToService(song) }
-                            // 导入会改变歌单，曲库页需要重新读取
-                            AppEvents.notifyLibraryChanged()
-                            _state.update { it.copy(importing = false, importedTitle = song.title) }
+        viewModelScope.launch {
+            BusinessJobs.io {
+                val read = runCatching {
+                    val resolver = app.contentResolver
+                    val name =
+                        resolver
+                            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                            ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "导入乐曲"
+                    validateMidiName(name)
+                    val bytes =
+                        resolver.openInputStream(uri)?.use { stream ->
+                            readMidi(name, stream)
+                        } ?: error("无法读取文件")
+                    name to bytes
+                }
+                read
+                    .onSuccess { (name, bytes) ->
+                        val imported = runCatching {
+                            repository.addMidi(name.substringBeforeLast('.'), bytes)
                         }
-                        .onFailure { e ->
-                            if (e is CancellationException) throw e
-                            _state.update {
-                                it.copy(importing = false, error = e.message ?: "文件格式无效")
+                        imported
+                            .onSuccess { song ->
+                                withContext(Dispatchers.Main) { syncSelectionToService(song) }
+                                // 导入会改变歌单，曲库页需要重新读取
+                                AppEvents.notifyLibraryChanged()
+                                _state.update {
+                                    it.copy(importing = false, importedTitle = song.title)
+                                }
                             }
-                        }
-                }
-                .onFailure { e ->
-                    if (e is CancellationException) throw e
-                    _state.update { it.copy(importing = false, error = e.message ?: "无法读取文件") }
-                }
+                            .onFailure { e ->
+                                if (e is CancellationException) throw e
+                                _state.update {
+                                    it.copy(importing = false, error = e.message ?: "文件格式无效")
+                                }
+                            }
+                    }
+                    .onFailure { e ->
+                        if (e is CancellationException) throw e
+                        _state.update { it.copy(importing = false, error = e.message ?: "无法读取文件") }
+                    }
+            }
         }
     }
 

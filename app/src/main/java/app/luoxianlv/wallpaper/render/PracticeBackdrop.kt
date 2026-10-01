@@ -8,6 +8,7 @@ import android.webkit.*
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.Toast
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
 import kotlinx.coroutines.*
@@ -25,8 +26,11 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     private var initialized = false
     private var renderingRequested = !deferRendering
     var onPrepared: (() -> Unit)? = null
+    var onOfficialFailure: ((Throwable) -> Unit)? = null
+    var officialFailure: Throwable? = null
+        private set
     val prepared
-        get() = renderState == "ready" || renderState == "static" || renderState == "error"
+        get() = officialFailure == null && (renderState == "ready" || renderState == "static" || renderState == "error")
 
     private val previewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val posterView =
@@ -37,14 +41,13 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     init {
         addView(posterView, LayoutParams(-1, -1))
         previewScope.launch {
-            project =
-                withContext(Dispatchers.IO) {
-                    WallpaperProjectStore.root(context)
-                }
+            project = BusinessJobs.io {
+                WallpaperProjectStore.root(context)
+            }
             if (closed) return@launch
             initialized = true
             if (renderingRequested) startRendering()
-            val preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, project) }
+            val preview = BusinessJobs.io { WallpaperPreview.load(context, project) }
             if (!closed && renderState != "ready") {
                 posterView.setImageDrawable(preview)
                 if (!suspended) (preview as? Animatable)?.start()
@@ -99,7 +102,15 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     override fun shouldInterceptRequest(
                         view: WebView?,
                         request: WebResourceRequest?,
-                    ): WebResourceResponse? = request?.let(resources::response)
+                    ): WebResourceResponse? = request?.let {
+                        resources.response(it).also {
+                            resources.officialFailure?.let { error ->
+                                BusinessJobs.post(android.os.Handler(android.os.Looper.getMainLooper())) {
+                                    if (!closed) rejectOfficial(error)
+                                }
+                            }
+                        }
+                    }
 
                     override fun onRenderProcessGone(
                         view: WebView,
@@ -127,6 +138,11 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     }
 
                     override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                        if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
+                            (message.message().startsWith("Uncaught") || message.message().contains("SyntaxError")) &&
+                            !message.sourceId().contains("/project/") &&
+                            app.luoxianlv.hot.contract.OfficialAssets.mounted(context, "wallpaperengine"))
+                            rejectOfficial(IllegalStateException("已声明官方壁纸脚本执行失败"))
                         val text =
                             "引擎诊断（${message.sourceId()}:${message.lineNumber()}）：${message.message()}"
                         when (message.messageLevel()) {
@@ -158,7 +174,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
         AppLog.w("壁纸", "渲染失败，切换到预览背景：$reason")
         releaseWeb()
         previewScope.launch {
-            val preview = withContext(Dispatchers.IO) { WallpaperPreview.load(context, project) }
+            val preview = BusinessJobs.io { WallpaperPreview.load(context, project) }
             if (!closed && renderState == "error") {
                 posterView.setImageDrawable(preview)
                 if (!suspended) (preview as? Animatable)?.start()
@@ -171,6 +187,14 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                 Toast.LENGTH_LONG,
             )
             .show()
+    }
+
+    private fun rejectOfficial(error: Throwable) {
+        if (closed || officialFailure != null) return
+        officialFailure = error
+        app.luoxianlv.business.OfficialRendererGate.reject(error)
+        onOfficialFailure?.invoke(error)
+        fail("已声明官方资源失败")
     }
 
     private fun releaseWeb() {
@@ -213,6 +237,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
 
     fun close() {
         onPrepared = null
+        onOfficialFailure = null
         closed = true
         previewScope.cancel()
         (posterView.drawable as? Animatable)?.stop()

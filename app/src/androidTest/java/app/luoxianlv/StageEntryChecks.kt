@@ -191,7 +191,42 @@ internal fun Instrumentation.checkStageEntry() {
             true
         }
     runOnMainSync { stage.window.decorView.viewTreeObserver.addOnPreDrawListener(frameCheck) }
-    await("Stage not playable") { PracticePlaybackGate.ready }
+    fun fullscreenGuide(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        node ?: return null
+        if (
+            node.isVisibleToUser &&
+                node.packageName?.toString() == "com.android.systemui" &&
+                node.text?.toString() in setOf("Got it", "知道了")
+        )
+            return node
+        return (0 until node.childCount).firstNotNullOfOrNull { fullscreenGuide(node.getChild(it)) }
+    }
+    var guideSeen = 0L
+    var guideDismissed = false
+    await("Stage not playable") {
+        check(!stage.isFinishing && !stage.isDestroyed) { "Stage exited before becoming playable" }
+        if (!guideDismissed) {
+            uiAutomation.clearCache()
+            fullscreenGuide(uiAutomation.rootInActiveWindow)?.let { guide ->
+                if (guideSeen == 0L) guideSeen = SystemClock.uptimeMillis()
+                if (SystemClock.uptimeMillis() - guideSeen >= 5000) {
+                    var target = guide
+                    while (!target.isClickable && target.parent != null) target = target.parent
+                    check(target.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                    guideDismissed = true
+                }
+            }
+        }
+        PracticePlaybackGate.ready
+    }
+    if (guideDismissed) {
+        sendStatus(
+            1,
+            android.os.Bundle().apply {
+                putString("stream", "系统全屏提示停留 5 秒后继续进入演练场通过。\n")
+            },
+        )
+    }
     runOnMainSync {
         stage.window.decorView.viewTreeObserver.removeOnPreDrawListener(frameCheck)
         check(!portraitKeys) { "Keyboard appeared before landscape" }
@@ -234,7 +269,7 @@ internal fun Instrumentation.checkStageEntry() {
     }
 
     runOnMainSync {
-        stage.onBackPressedDispatcher.onBackPressed()
+        stage.onBackPressed()
         check(
             stage.requestedOrientation ==
                 android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

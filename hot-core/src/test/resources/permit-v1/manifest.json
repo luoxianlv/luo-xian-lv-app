@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "kind": "hot",
+  "applicationId": "app.luoxianlv.debug",
+  "environment": "test",
+  "label": "本地联调-target",
+  "createdAt": "2026-09-28T22:34:58Z",
+  "hostContract": {
+    "min": 1,
+    "max": 3
+  },
+  "runtimeAbi": "local-test-v1",
+  "activation": "live",
+  "stateSchema": {
+    "current": 1,
+    "readable": {
+      "min": 1,
+      "max": 1
+    }
+  },
+  "artifacts": [
+    {
+      "id": "runtime",
+      "role": "runtime",
+      "sha256": "c9ff002cd1a7ad53343b86468ac7435506eb5b21ede334691e3fc5bf455b017c",
+      "size": 35,
+      "requires": []
+    },
+    {
+      "id": "business",
+      "role": "business",
+      "sha256": "f8f9b73d4e2bdb0b72c7ef1478bd2a30aba6bfaffad04e6e9eaa7cb4091736e6",
+      "size": 8389385,
+      "requires": [
+        "runtime"
+      ],
+      "entryClass": "app.luoxianlv.fixture.Entry"
+    }
+  ]
+}

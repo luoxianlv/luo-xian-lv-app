@@ -3,6 +3,7 @@ package app.luoxianlv.ui.floating
 import android.content.Context
 import android.content.res.ColorStateList
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -10,8 +11,8 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import app.luoxianlv.R
+import app.luoxianlv.business.playback.PlaybackSession
 import app.luoxianlv.data.timeLabel
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.service.bindPlaybackButton
 import app.luoxianlv.ui.floating.PlayerUi.dp
 import kotlin.math.roundToInt
@@ -20,13 +21,29 @@ import kotlin.math.roundToInt
 internal class FloatingPanel(
     context: Context,
     private val palette: PlayerUiPalette,
-    private val service: MusicAccessibilityService,
+    private val service: PlaybackSession,
     private val speedControlsVisible: Boolean,
     private val onSelectSong: () -> Unit,
     private val onToggleSpeed: () -> Unit,
     private val onCollapse: () -> Unit,
     private val onAttachDrag: (View) -> Unit,
 ) : FrameLayout(context) {
+    var touching = false
+        private set
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) touching = true
+        try {
+            return super.dispatchTouchEvent(event)
+        } finally {
+            if (
+                event.actionMasked == MotionEvent.ACTION_UP ||
+                    event.actionMasked == MotionEvent.ACTION_CANCEL
+            )
+                touching = false
+        }
+    }
+
     private var title: TextView? = null
     private var status: TextView? = null
     private var play: ImageView? = null

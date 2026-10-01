@@ -1,9 +1,9 @@
 package app.luoxianlv.ui.components
 
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
 
 /** 首次启动引导：确保用户开启无障碍服务（悬浮窗控制器依附于它）。 */
 @Composable
@@ -58,6 +58,7 @@ fun ErrorDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        blockReplacement = false,
         onDismissRequest = onDismiss,
         title = { Text("未能完成") },
         text = { Text(message) },

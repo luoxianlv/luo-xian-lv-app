@@ -40,9 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.data.ConfigStore
 import app.luoxianlv.debug.DebugExport
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.components.IconBlue
 import app.luoxianlv.ui.components.IconCyan
 import app.luoxianlv.ui.components.IconGreen
@@ -63,8 +63,8 @@ fun PlaybackDiagnosticsScreen(
     snackbarHostState: SnackbarHostState,
 ) {
     val context = LocalContext.current
-    var diagnostics by remember { mutableStateOf<MusicAccessibilityService.Diagnostics?>(null) }
-    LaunchedEffect(Unit) { diagnostics = MusicAccessibilityService.instance?.diagnostics() }
+    var diagnostics by remember { mutableStateOf<PlaybackConnection.Diagnostics?>(null) }
+    LaunchedEffect(Unit) { diagnostics = PlaybackConnection.instance?.diagnostics() }
     val scope = rememberCoroutineScope()
     var exporting by remember { mutableStateOf(false) }
     val d = diagnostics

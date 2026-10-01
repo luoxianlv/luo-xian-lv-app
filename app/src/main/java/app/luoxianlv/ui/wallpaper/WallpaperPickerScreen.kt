@@ -1,7 +1,6 @@
 package app.luoxianlv.ui.wallpaper
 
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,16 +17,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.luoxianlv.business.BusinessJobs
+import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
+import app.luoxianlv.business.ui.PageReplacementGuard
+import app.luoxianlv.business.ui.rememberPageLauncher
 import app.luoxianlv.ui.components.ActionPill
 import app.luoxianlv.ui.components.ImportFilePicker
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.ui.theme.OnBackdropContent
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Unit) {
@@ -37,10 +38,11 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
     var selected by remember { mutableStateOf(WallpaperProjectStore.selectedId(context)) }
     var soundEnabled by remember { mutableStateOf(WallpaperProjectStore.soundEnabled(context)) }
     var busy by remember { mutableStateOf(false) }
+    PageReplacementGuard { !busy }
     var error by remember { mutableStateOf<String?>(null) }
     var minute by remember { mutableStateOf(WallpaperProjectStore.minute(context)) }
     suspend fun refresh() {
-        entries = withContext(Dispatchers.IO) { WallpaperProjectStore.entries(context) }
+        entries = BusinessJobs.io { WallpaperProjectStore.entries(context) }
     }
     val requestWallpaper = rememberWallpaperRequest { scope.launch { refresh() } }
     LaunchedEffect(Unit) {
@@ -59,7 +61,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
         busy = true
         scope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                BusinessJobs.io {
                     val job = currentCoroutineContext()
                     WallpaperProjectStore.import(context, uri, false) { job.ensureActive() }
                 }
@@ -73,7 +75,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
             }
         }
     }
-    val zip = rememberLauncherForActivityResult(ImportFilePicker("选择壁纸 ZIP")) { import(it) }
+    val zip = rememberPageLauncher("wallpaper.import", ImportFilePicker("选择壁纸 ZIP")) { import(it) }
     Box(Modifier.fillMaxSize()) {
         GradientBackdrop()
         Column(

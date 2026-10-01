@@ -1,21 +1,12 @@
 package app.luoxianlv.storage
 
 import android.content.Context
+import app.luoxianlv.hot.contract.AppDirectories
 import java.io.File
 
 /** 可查看的业务文件统一放入应用专属外部目录；不可用时回退内部目录，凭据不迁出。 */
 object AppStorage {
-    @Volatile private var base: File? = null
-
-    @Synchronized
-    fun root(context: Context): File =
-        base
-            ?: run {
-                val external = runCatching { context.getExternalFilesDir(null) }.getOrNull()
-                (external?.takeIf { (it.isDirectory || it.mkdirs()) && it.canWrite() }
-                        ?: context.filesDir)
-                    .also { base = it }
-            }
+    fun root(context: Context): File = AppDirectories.visibleRoot(context)
 
     private fun directory(context: Context, name: String) =
         File(root(context), name).apply { mkdirs() }

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "version": 1,
+  "applicationId": "app.luoxianlv.debug",
+  "environment": "test",
+  "notBefore": "2026-01-01T00:00:00Z",
+  "notAfter": "2030-01-01T00:00:00Z",
+  "keys": [
+    {
+      "key": {
+        "schema": 1,
+        "algorithm": "ecdsa-p256-sha256",
+        "keyId": "f6a36abf12ff79180be28068cb19badc605f02e64cd65d622344fa8bfa70a852",
+        "purpose": "content",
+        "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEihhw3i271xs3WIfGJ2qEy56dlG88A1aSjpPGYNtZAZdaGoZn/sbmEU1HUju5H4b8Pd0wSh9b5Qe+orTx5wIvUg=="
+      },
+      "notBefore": "2026-01-01T00:00:00Z",
+      "notAfter": "2030-01-01T00:00:00Z"
+    }
+  ],
+  "revokedKeyIds": []
+}

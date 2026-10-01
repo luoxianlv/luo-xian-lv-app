@@ -3,6 +3,8 @@ package app.luoxianlv.ui.settings
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.luoxianlv.business.BusinessJobs
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.data.AccountSession
 import app.luoxianlv.data.AppearanceSettings
@@ -14,15 +16,12 @@ import app.luoxianlv.data.ThemeMode
 import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.service.KeepAliveStatus
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.update.UpdateAutoCheck
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class SettingsUiState(
     val session: AccountSession? = null,
@@ -50,10 +49,9 @@ class SettingsViewModel(private val app: Application) : AndroidViewModel(app) {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             // 系统权限查询可能等待 Binder；不可阻塞导航动画，也不重复查询正在刷新的状态。
-            val keepAlive =
-                withContext(Dispatchers.IO) {
-                    runCatching { KeepAlive.status(app) }.getOrDefault(_state.value.keepAlive)
-                }
+            val keepAlive = BusinessJobs.io {
+                runCatching { KeepAlive.status(app) }.getOrDefault(_state.value.keepAlive)
+            }
             _state.update {
                 it.copy(
                     session = sessionStore.current(),
@@ -107,7 +105,7 @@ class SettingsViewModel(private val app: Application) : AndroidViewModel(app) {
         AppearanceStore.save(app, next)
         _state.update { it.copy(appearance = next) }
         // 悬浮窗是服务里的独立窗口，不像 Compose 那样跟着偏好流重组，单独通知一次。
-        MusicAccessibilityService.instance?.refreshFloatingTheme()
+        PlaybackConnection.instance?.refreshFloatingTheme()
     }
 
     /** 开关自动检查更新：直接改偏好并落盘。 */
@@ -121,7 +119,7 @@ class SettingsViewModel(private val app: Application) : AndroidViewModel(app) {
     /** 保存校准并热加载到服务；返回是否成功。 */
     fun saveCalibration(layout: KeyLayout): Boolean = runCatching {
         ConfigStore.save(app, layout)
-        MusicAccessibilityService.instance?.reloadConfig()
+        PlaybackConnection.instance?.reloadConfig()
     }
         .isSuccess
 

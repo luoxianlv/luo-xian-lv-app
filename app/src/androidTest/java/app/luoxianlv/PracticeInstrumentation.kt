@@ -30,7 +30,9 @@ class PracticeInstrumentation : Instrumentation() {
         var stage: PracticeActivity? = null
         val result = Bundle()
         try {
+            sendStatus(1, Bundle().apply { putString("stream", "验证演练场入口、转屏和后台返回。\n") })
             checkStageEntry()
+            sendStatus(1, Bundle().apply { putString("stream", "入口和后台返回通过。\n") })
             if (argumentsEntryOnly) {
                 finish(
                     -1,
@@ -155,6 +157,9 @@ class PracticeInstrumentation : Instrumentation() {
                 second.recycle()
             }
             val fit = PracticeGeometry.fit(keyboard.width.toFloat(), keyboard.height.toFloat())
+            sendStatus(1, Bundle().apply { putString("stream", "验证演奏页原位替换与旧代际释放。\n") })
+            keyboard = checkPracticePageSwap(activity)
+            sendStatus(1, Bundle().apply { putString("stream", "演奏页原位替换通过。\n") })
             fun touch(key: PracticeGeometry.Key, action: Int) {
                 runOnMainSync {
                     val now = SystemClock.uptimeMillis()
@@ -292,7 +297,7 @@ class PracticeInstrumentation : Instrumentation() {
             pickerFrame.recycle()
             check(!PracticePlaybackGate.ready) { "Stage kept playing behind picker" }
             val stageMonitor = addMonitor(PracticeActivity::class.java.name, null, false)
-            runOnMainSync { picker.onBackPressedDispatcher.onBackPressed() }
+            runOnMainSync { picker.onBackPressed() }
             val returned =
                 waitForMonitorWithTimeout(stageMonitor, 10000) as? PracticeActivity
                     ?: error("Picker did not return to stage")

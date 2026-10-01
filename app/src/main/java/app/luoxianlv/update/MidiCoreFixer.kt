@@ -1,6 +1,7 @@
 package app.luoxianlv.update
 
 import android.content.Context
+import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.core.harmonica.RustCompiledMidi
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.Song
@@ -37,18 +38,19 @@ object MidiCoreFixer {
         val now = System.currentTimeMillis()
         if (now - prefs.getLong(KEY_LAST_CHECK, 0L) < CHECK_INTERVAL_MS) return
         if (!running.compareAndSet(false, true)) return
-        prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
-        Thread {
-            try {
-                runCheck(app)
-            } catch (t: Throwable) {
-                AppLog.w(TAG, "编译版本检查失败", t)
-            } finally {
-                running.set(false)
+        if (
+            !BusinessJobs.thread("曲目版本检查") {
+                try {
+                    prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
+                    runCheck(app)
+                } catch (t: Throwable) {
+                    AppLog.w(TAG, "编译版本检查失败", t)
+                } finally {
+                    running.set(false)
+                }
             }
-        }
-            .apply { isDaemon = true }
-            .start()
+        )
+            running.set(false)
     }
 
     /** 修复一首歌；[onDone] 在后台线程通知，界面更新由调用方切回主线程。 */
@@ -58,19 +60,20 @@ object MidiCoreFixer {
         onDone: (Boolean) -> Unit,
     ) {
         val app = context.applicationContext
-        Thread {
-            val ok = runCatching {
-                if (song.remoteId.isBlank()) return@runCatching false
-                val version =
-                    fetchVersionBlocking(app)
-                        ?: Kv.of(app, STORE).getString(KEY_KNOWN_VERSION, "").orEmpty()
-                recompileWithRetry(app, song, version)
+        if (
+            !BusinessJobs.thread("单曲修复") {
+                val ok = runCatching {
+                    if (song.remoteId.isBlank()) return@runCatching false
+                    val version =
+                        fetchVersionBlocking(app)
+                            ?: Kv.of(app, STORE).getString(KEY_KNOWN_VERSION, "").orEmpty()
+                    recompileWithRetry(app, song, version)
+                }
+                    .getOrDefault(false)
+                onDone(ok)
             }
-                .getOrDefault(false)
-            onDone(ok)
-        }
-            .apply { isDaemon = true }
-            .start()
+        )
+            onDone(false)
     }
 
     private fun runCheck(app: Context) {

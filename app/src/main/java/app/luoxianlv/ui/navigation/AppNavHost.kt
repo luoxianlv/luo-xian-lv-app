@@ -16,6 +16,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +28,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.luoxianlv.business.ui.LocalPageVisible
+import app.luoxianlv.business.ui.findActivity
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.ui.components.FloatingNavBar
@@ -59,32 +62,38 @@ import kotlinx.coroutines.launch
  *
  * 「我的」是首页式页面（无曲目列表），它的左侧导航栏指向另外三个； 「导入」从顶级 Tab 降为「曲库」内的子页面。
  */
-private val tabs = listOf(Routes.HOME, Routes.LIBRARY, Routes.DISCOVER, Routes.SETTINGS)
+private val tabs = mainTabs
 
 /** 子页面（覆盖层，不参与手势滑动） */
-private val subPages =
-    listOf(
-        Routes.SEARCH,
-        Routes.PLATFORM,
-        Routes.LOGIN,
-        Routes.ABOUT,
-        Routes.IMPORT,
-        Routes.DIAGNOSTICS,
-        Routes.ANALYTICS_DEBUG,
-        Routes.EXPERIMENTAL,
-    )
+private val subPages = overlayRoutes
 
 /** 「我的」在 [tabs] 中的下标：它显示时底部导航栏要隐藏。 */
 private val HOME_INDEX = tabs.indexOf(Routes.HOME)
 
 /** 微信式导航骨架：四个顶级 Tab 用 HorizontalPager 承载，左右滑动切换； 子页面以覆盖层形式滑入；浮空导航栏的胶囊跟随滑动进度。 */
 @Composable
-fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
+fun AppNavHost(
+    appUpdates: AppUpdateViewModel = viewModel(),
+    navigation: MainNavigationState = remember { MainNavigationState() },
+) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(initialPage = HOME_INDEX) { tabs.size }
-    var subPage by remember { mutableStateOf<String?>(null) }
+    val pagerState =
+        rememberPagerState(initialPage = tabs.indexOf(navigation.tab).coerceAtLeast(0)) {
+            tabs.size
+        }
+    var subPage by navigation.subPage
     var navigationJob by remember { mutableStateOf<Job?>(null) }
+    val pageVisible = LocalPageVisible.current
+
+    androidx.compose.runtime.LaunchedEffect(pagerState, navigation) {
+        androidx.compose.runtime
+            .snapshotFlow { pagerState.isScrollInProgress to pagerState.settledPage }
+            .collect { (moving, index) ->
+                navigation.moving = moving
+                navigation.tab = tabs[index]
+            }
+    }
 
     // 预加载跟随导航宿主，不能随首页被 Pager 回收而反复销毁、重建 WebView。
     StagePrewarmEffect()
@@ -126,7 +135,7 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
         }
     val libraryActive = pagerState.currentPage == HOME_INDEX
     val updateState by appUpdates.state.collectAsState()
-    val activity = LocalContext.current as android.app.Activity
+    val activity = checkNotNull(LocalContext.current.findActivity())
     val updater = remember { PlatformClient(activity) }
     // U-App 页面统计：单 Activity + Compose 只能手动按页面名打点（U-APM 的页面维度是 Activity）。
     // 顶级 Tab 是跟手切换的 Pager、子页面是覆盖层，这里统一按当前页面名成对上报开始/结束。
@@ -189,55 +198,64 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
             Box(modifier = Modifier.fillMaxSize().padding(padding)) {
                 HorizontalPager(
                     state = pagerState,
+                    key = { tabs[it] },
                     modifier = Modifier.fillMaxSize(),
                 ) { page ->
-                    when (tabs[page]) {
-                        Routes.HOME -> {
-                            HomeScreen(
-                                onLibrary = { goTab(Routes.LIBRARY) },
-                                onDiscover = { goTab(Routes.DISCOVER) },
-                                onPractice = { dark ->
-                                    activity.startActivity(
-                                        android.content
-                                            .Intent(
-                                                activity,
-                                                app.luoxianlv.ui.practice.PracticeActivity::class
-                                                    .java,
-                                            )
-                                            .putExtra(
-                                                app.luoxianlv.ui.practice.StageEntry.DARK,
-                                                dark,
-                                            )
-                                    )
-                                },
-                                onSettings = { goTab(Routes.SETTINGS) },
-                                snackbarHostState = snackbarHostState,
-                            )
-                        }
+                    CompositionLocalProvider(
+                        LocalPageVisible provides
+                            (pageVisible &&
+                                !pagerState.isScrollInProgress &&
+                                pagerState.settledPage == page &&
+                                subPage == null)
+                    ) {
+                        when (tabs[page]) {
+                            Routes.HOME -> {
+                                HomeScreen(
+                                    onLibrary = { goTab(Routes.LIBRARY) },
+                                    onDiscover = { goTab(Routes.DISCOVER) },
+                                    onPractice = { dark ->
+                                        activity.startActivity(
+                                            android.content
+                                                .Intent()
+                                                .setClassName(
+                                                    activity,
+                                                    "app.luoxianlv.ui.practice.PracticeActivity",
+                                                )
+                                                .putExtra(
+                                                    app.luoxianlv.ui.practice.StageEntry.DARK,
+                                                    dark,
+                                                )
+                                        )
+                                    },
+                                    onSettings = { goTab(Routes.SETTINGS) },
+                                    snackbarHostState = snackbarHostState,
+                                )
+                            }
 
-                        Routes.LIBRARY -> {
-                            LibraryScreen(
-                                onImport = { subPage = Routes.IMPORT },
-                                snackbarHostState = snackbarHostState,
-                            )
-                        }
+                            Routes.LIBRARY -> {
+                                LibraryScreen(
+                                    onImport = { subPage = Routes.IMPORT },
+                                    snackbarHostState = snackbarHostState,
+                                )
+                            }
 
-                        Routes.DISCOVER -> {
-                            DiscoverScreen(
-                                onSearch = { subPage = Routes.SEARCH },
-                                snackbarHostState = snackbarHostState,
-                            )
-                        }
+                            Routes.DISCOVER -> {
+                                DiscoverScreen(
+                                    onSearch = { subPage = Routes.SEARCH },
+                                    snackbarHostState = snackbarHostState,
+                                )
+                            }
 
-                        Routes.SETTINGS -> {
-                            SettingsScreen(
-                                onLogin = { subPage = Routes.LOGIN },
-                                onAbout = { subPage = Routes.ABOUT },
-                                onDiagnostics = { subPage = Routes.DIAGNOSTICS },
-                                onAnalyticsDebug = { subPage = Routes.ANALYTICS_DEBUG },
-                                onExperimental = { subPage = Routes.EXPERIMENTAL },
-                                snackbarHostState = snackbarHostState,
-                            )
+                            Routes.SETTINGS -> {
+                                SettingsScreen(
+                                    onLogin = { subPage = Routes.LOGIN },
+                                    onAbout = { subPage = Routes.ABOUT },
+                                    onDiagnostics = { subPage = Routes.DIAGNOSTICS },
+                                    onAnalyticsDebug = { subPage = Routes.ANALYTICS_DEBUG },
+                                    onExperimental = { subPage = Routes.EXPERIMENTAL },
+                                    snackbarHostState = snackbarHostState,
+                                )
+                            }
                         }
                     }
                 }
@@ -256,83 +274,87 @@ fun AppNavHost(appUpdates: AppUpdateViewModel = viewModel()) {
                         //
                         // 所以这里自己铺一遍渐变底：既盖住下层页面，又与其它页面保持同一个底色。
                         Box(modifier = Modifier.fillMaxSize()) {
-                            GradientBackdrop()
-                            when (route) {
-                                Routes.SEARCH -> {
-                                    SearchScreen(
-                                        onBack = { subPage = null },
-                                        snackbarHostState = snackbarHostState,
-                                    )
-                                }
+                            CompositionLocalProvider(
+                                LocalPageVisible provides (pageVisible && subPage == route)
+                            ) {
+                                GradientBackdrop()
+                                when (route) {
+                                    Routes.SEARCH -> {
+                                        SearchScreen(
+                                            onBack = { subPage = null },
+                                            snackbarHostState = snackbarHostState,
+                                        )
+                                    }
 
-                                Routes.PLATFORM -> {
-                                    PlatformScreen(
-                                        onBack = { subPage = null },
-                                        snackbarHostState = snackbarHostState,
-                                    )
-                                }
+                                    Routes.PLATFORM -> {
+                                        PlatformScreen(
+                                            onBack = { subPage = null },
+                                            snackbarHostState = snackbarHostState,
+                                        )
+                                    }
 
-                                Routes.LOGIN -> {
-                                    LoginScreen(
-                                        onBack = { subPage = null },
-                                        onShushuLogin = { updater.startShushuLogin(activity) },
-                                        onRegister = {
-                                            runCatching {
-                                                activity.startActivity(
-                                                    android.content.Intent(
-                                                        android.content.Intent.ACTION_VIEW,
-                                                        android.net.Uri.parse(
-                                                            "https://www.luoxianlv.cn/login?mode=register"
-                                                        ),
-                                                    )
-                                                )
-                                            }
-                                                .onFailure {
-                                                    android.widget.Toast.makeText(
-                                                            activity,
-                                                            "无法打开浏览器，请访问 www.luoxianlv.cn 注册",
-                                                            android.widget.Toast.LENGTH_LONG,
+                                    Routes.LOGIN -> {
+                                        LoginScreen(
+                                            onBack = { subPage = null },
+                                            onShushuLogin = { updater.startShushuLogin(activity) },
+                                            onRegister = {
+                                                runCatching {
+                                                    activity.startActivity(
+                                                        android.content.Intent(
+                                                            android.content.Intent.ACTION_VIEW,
+                                                            android.net.Uri.parse(
+                                                                "https://www.luoxianlv.cn/login?mode=register"
+                                                            ),
                                                         )
-                                                        .show()
+                                                    )
                                                 }
-                                        },
-                                        snackbarHostState = snackbarHostState,
-                                    )
-                                }
+                                                    .onFailure {
+                                                        android.widget.Toast.makeText(
+                                                                activity,
+                                                                "无法打开浏览器，请访问 www.luoxianlv.cn 注册",
+                                                                android.widget.Toast.LENGTH_LONG,
+                                                            )
+                                                            .show()
+                                                    }
+                                            },
+                                            snackbarHostState = snackbarHostState,
+                                        )
+                                    }
 
-                                Routes.ABOUT -> {
-                                    AboutScreen(
-                                        onBack = { subPage = null },
-                                        snackbarHostState = snackbarHostState,
-                                        onCheckUpdate = { appUpdates.check(manual = true) },
-                                        checkingUpdate = updateState.checking,
-                                    )
-                                }
+                                    Routes.ABOUT -> {
+                                        AboutScreen(
+                                            onBack = { subPage = null },
+                                            snackbarHostState = snackbarHostState,
+                                            onCheckUpdate = { appUpdates.check(manual = true) },
+                                            checkingUpdate = updateState.checking,
+                                        )
+                                    }
 
-                                Routes.IMPORT -> {
-                                    ImportScreen(
-                                        onBack = { subPage = null },
-                                        onImported = {
-                                            subPage = null
-                                            goTab(Routes.LIBRARY)
-                                        },
-                                        snackbarHostState = snackbarHostState,
-                                    )
-                                }
+                                    Routes.IMPORT -> {
+                                        ImportScreen(
+                                            onBack = { subPage = null },
+                                            onImported = {
+                                                subPage = null
+                                                goTab(Routes.LIBRARY)
+                                            },
+                                            snackbarHostState = snackbarHostState,
+                                        )
+                                    }
 
-                                Routes.DIAGNOSTICS -> {
-                                    PlaybackDiagnosticsScreen(
-                                        onBack = { subPage = null },
-                                        snackbarHostState = snackbarHostState,
-                                    )
-                                }
+                                    Routes.DIAGNOSTICS -> {
+                                        PlaybackDiagnosticsScreen(
+                                            onBack = { subPage = null },
+                                            snackbarHostState = snackbarHostState,
+                                        )
+                                    }
 
-                                Routes.EXPERIMENTAL -> {
-                                    ExperimentalSettingsScreen(onBack = { subPage = null })
-                                }
+                                    Routes.EXPERIMENTAL -> {
+                                        ExperimentalSettingsScreen(onBack = { subPage = null })
+                                    }
 
-                                Routes.ANALYTICS_DEBUG -> {
-                                    AnalyticsDebugScreen(onBack = { subPage = null })
+                                    Routes.ANALYTICS_DEBUG -> {
+                                        AnalyticsDebugScreen(onBack = { subPage = null })
+                                    }
                                 }
                             }
                         }

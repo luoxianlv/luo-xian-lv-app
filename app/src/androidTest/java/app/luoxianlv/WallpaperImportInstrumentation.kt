@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
 import app.luoxianlv.ui.practice.*
 import app.luoxianlv.ui.wallpaper.WallpaperImportModel
 import app.luoxianlv.wallpaper.data.WallpaperProjectStore
@@ -23,6 +24,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 class WallpaperImportInstrumentation : Instrumentation() {
@@ -123,11 +127,32 @@ class WallpaperImportInstrumentation : Instrumentation() {
                 check(resolved?.activityInfo?.name == WallpaperImportActivity::class.java.name) {
                     "Missing system ZIP association: $action $mime"
                 }
-                val activity = startActivitySync(intent) as WallpaperImportActivity
+                var activity = startActivitySync(intent) as WallpaperImportActivity
                 current = activity
                 lateinit var model: WallpaperImportModel
                 runOnMainSync {
-                    model = ViewModelProvider(activity)[WallpaperImportModel::class.java]
+                    model =
+                        ViewModelProvider(activity.businessModels())[
+                            WallpaperImportModel::class.java]
+                }
+                lateinit var retainedJob: Job
+                runOnMainSync { retainedJob = model.viewModelScope.launch { awaitCancellation() } }
+                val monitor = addMonitor(WallpaperImportActivity::class.java.name, null, false)
+                val original = activity
+                runOnMainSync { original.recreate() }
+                activity =
+                    waitForMonitorWithTimeout(monitor, 15000) as? WallpaperImportActivity
+                        ?: error("壁纸导入窗口未重建")
+                removeMonitor(monitor)
+                current = activity
+                runOnMainSync {
+                    check(
+                        ViewModelProvider(activity.businessModels())[
+                            WallpaperImportModel::class.java] === model
+                    ) {
+                        "壁纸导入模型在重建后被替换"
+                    }
+                    check(retainedJob.isActive) { "窗口重建取消了导入任务所属作用域" }
                 }
                 val deadline = android.os.SystemClock.uptimeMillis() + 20000
                 var done = false
@@ -139,6 +164,12 @@ class WallpaperImportInstrumentation : Instrumentation() {
                     check(model.success) { model.message }
                     activity.finish()
                 }
+                val closeDeadline = android.os.SystemClock.uptimeMillis() + 5000
+                while (
+                    !retainedJob.isCancelled &&
+                        android.os.SystemClock.uptimeMillis() < closeDeadline
+                ) Thread.sleep(50)
+                check(retainedJob.isCancelled) { "真正关闭导入窗口后仍保留业务任务" }
             }
             fun all(v: View): List<View> =
                 listOf(v) +

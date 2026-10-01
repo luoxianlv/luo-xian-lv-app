@@ -1,8 +1,8 @@
 package app.luoxianlv.ui.practice
 
+import android.app.Activity
 import android.graphics.RectF
 import android.view.ViewGroup
-import androidx.activity.ComponentActivity
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
@@ -15,7 +15,13 @@ object StageEntry {
     const val DARK = "stageCurtainDark"
     private const val TAG = "practice-entry-curtain"
 
-    fun open(activity: ComponentActivity, bounds: RectF, dark: Boolean, launch: () -> Unit) {
+    fun open(
+        activity: Activity,
+        lifecycleOwner: LifecycleOwner,
+        bounds: RectF,
+        dark: Boolean,
+        launch: () -> Unit,
+    ) {
         val decor = activity.window.decorView as ViewGroup
         if (decor.findViewWithTag<android.view.View>(TAG) != null) return
         val previousOrientation = activity.requestedOrientation
@@ -44,7 +50,7 @@ object StageEntry {
             returnJob?.cancel()
             curtain.close()
             decor.removeView(curtain)
-            activity.lifecycle.removeObserver(observer)
+            lifecycleOwner.lifecycle.removeObserver(observer)
             if (!activity.isDestroyed) activity.requestedOrientation = previousOrientation
         }
         observer =
@@ -61,7 +67,7 @@ object StageEntry {
                     if (paused && launched) {
                         curtain.prepareHomeReturn()
                         returnJob =
-                            activity.lifecycleScope.launch {
+                            lifecycleOwner.lifecycleScope.launch {
                                 var stable = 0
                                 var previous = 0 to 0
                                 for (attempt in 0 until 80) {
@@ -90,7 +96,7 @@ object StageEntry {
                     remove()
                 }
             }
-        activity.lifecycle.addObserver(observer)
+        lifecycleOwner.lifecycle.addObserver(observer)
         // 点击事件内立即启动，让转屏先于竖屏动画。
         launched = true
         try {

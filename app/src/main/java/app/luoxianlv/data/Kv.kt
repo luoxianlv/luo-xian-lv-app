@@ -18,6 +18,6 @@ object Kv {
         name: String,
     ): SharedPreferences =
         adapters.getOrPut(name) {
-            FastKV.adapt(context.applicationContext, name)
+            FastKV.adapt(app.luoxianlv.hot.contract.PlatformApplication.of(context), name)
         }
 }

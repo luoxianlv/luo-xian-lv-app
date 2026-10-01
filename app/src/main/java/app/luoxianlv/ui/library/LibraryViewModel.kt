@@ -5,14 +5,14 @@ import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.luoxianlv.business.BusinessJobs
+import app.luoxianlv.business.playback.PlaybackConnection
 import app.luoxianlv.core.score.ScoreParser
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
-import app.luoxianlv.service.MusicAccessibilityService
 import app.luoxianlv.ui.AppEvents
 import app.luoxianlv.ui.syncSelectionToService
 import app.luoxianlv.update.MidiCoreFixer
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 
 /**
  * 曲库筛选。
@@ -147,22 +146,21 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      * 表现就是“点什么都没反应”，所以宁可漏掉一个字段也不能让整条状态流断掉。
      */
     private suspend fun readServiceStatus(): ServiceStatus {
-        val service = MusicAccessibilityService.instance
+        val service = PlaybackConnection.instance
         return ServiceStatus(
             connected = service != null,
             // 服务已经在跑就必然已开启，省掉一次系统查询
-            accessibilityEnabled =
-                service != null || withContext(Dispatchers.IO) { accessibilityIsEnabled() },
+            accessibilityEnabled = service != null || BusinessJobs.io { accessibilityIsEnabled() },
             floatingVisible = service?.floatingVisible == true,
             error = service?.error,
-            // song 在 onServiceConnected 里先于 instance 赋值，因此 instance 非空时 song 一定已初始化
-            activeSongId = runCatching { service?.song?.id.orEmpty() }.getOrDefault(""),
+            // 连接在业务初始化后发布；这里只取曲目 ID，不传递或解析谱面对象。
+            activeSongId = runCatching { service?.songId.orEmpty() }.getOrDefault(""),
         )
     }
 
     /** 查系统无障碍开关（binder 调用，失败按未开启处理，不让轮询挂掉）。 */
     private fun accessibilityIsEnabled(): Boolean = runCatching {
-        MusicAccessibilityService.isEnabled(getApplication())
+        PlaybackConnection.isEnabled(getApplication())
     }
         .getOrDefault(false)
 
@@ -171,7 +169,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         refreshJob = viewModelScope.launch {
             try {
                 val (songs, hidden) =
-                    withContext(Dispatchers.IO) {
+                    BusinessJobs.io {
                         libraryMutex.withLock {
                             repository.songs() to repository.hiddenBuiltInCount()
                         }
@@ -210,7 +208,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      * 老实现是单向的 startFloating()：窗口已经跑着时再点只会重复 show()， 同一个按钮没有任何办法把它关掉。
      */
     fun toggleFloating() {
-        setFloatingEnabled(MusicAccessibilityService.instance?.floatingVisible != true)
+        setFloatingEnabled(PlaybackConnection.instance?.floatingVisible != true)
     }
 
     /**
@@ -221,7 +219,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setFloatingEnabled(enabled: Boolean) {
         repository.floatingEnabled = enabled
-        val service = MusicAccessibilityService.instance
+        val service = PlaybackConnection.instance
         service?.showFloating(enabled)
         _local.update {
             it.copy(
@@ -249,7 +247,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     /** JSON 读写与谱面校验串行放在后台，主线程只更新界面。 */
     private fun changeLibrary(change: () -> String) = viewModelScope.launch {
         try {
-            val notice = withContext(Dispatchers.IO) { libraryMutex.withLock { change() } }
+            val notice = BusinessJobs.io { libraryMutex.withLock { change() } }
             refresh()
             _local.update { it.copy(notice = notice) }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -266,10 +264,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         MidiCoreFixer.fixSong(getApplication(), song) { ok ->
             val songs = repository.songs()
             // 回调在后台线程：服务 select 会碰悬浮窗视图，回主线程执行。
-            main.post {
+            BusinessJobs.post(main) {
                 // 服务可能持有旧 Song 实例，修好后让它也重新载入
                 if (ok) {
-                    MusicAccessibilityService.instance?.let { service ->
+                    PlaybackConnection.instance?.let { service ->
                         runCatching {
                             service.select(songs.first { it.id == song.id })
                         }
@@ -292,17 +290,16 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
         _local.update { it.copy(saving = true) }
         viewModelScope.launch {
             try {
-                val song =
-                    withContext(Dispatchers.IO) {
-                        libraryMutex.withLock {
-                            repository.add(
-                                title.ifBlank { original.title },
-                                score,
-                                ScoreParser.tempo(score, original.bpm),
-                                "简谱",
-                            )
-                        }
+                val song = BusinessJobs.io {
+                    libraryMutex.withLock {
+                        repository.add(
+                            title.ifBlank { original.title },
+                            score,
+                            ScoreParser.tempo(score, original.bpm),
+                            "简谱",
+                        )
                     }
+                }
                 refresh()
                 syncSelectionToService(song)
                 _local.update { it.copy(notice = "已另存为《${song.title}》") }

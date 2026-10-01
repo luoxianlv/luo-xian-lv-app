@@ -1,6 +1,5 @@
 package app.luoxianlv.ui.importer
 
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.luoxianlv.business.ui.rememberPageLauncher
 import app.luoxianlv.ui.components.ErrorDialogHost
 import app.luoxianlv.ui.components.ImportFilePicker
 import app.luoxianlv.ui.components.SnackbarNotice
@@ -43,7 +43,7 @@ fun ImportScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val launcher =
-        rememberLauncherForActivityResult(ImportFilePicker("选择 MIDI 文件")) { uri ->
+        rememberPageLauncher("midi.import", ImportFilePicker("选择 MIDI 文件")) { uri ->
             uri?.let(vm::import)
         }
 

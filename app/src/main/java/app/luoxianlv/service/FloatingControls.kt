@@ -3,6 +3,7 @@ package app.luoxianlv.service
 import android.animation.ValueAnimator
 import android.content.res.ColorStateList
 import android.graphics.PixelFormat
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.ContextThemeWrapper
@@ -17,10 +18,13 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import app.luoxianlv.R
+import app.luoxianlv.business.BusinessJobs
+import app.luoxianlv.business.playback.PlaybackSession
 import app.luoxianlv.data.Kv
 import app.luoxianlv.data.Song
 import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.AppLog
+import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.ui.floating.FloatingPanel
 import app.luoxianlv.ui.floating.PlayerUi
 import app.luoxianlv.ui.floating.PlayerUi.dp
@@ -36,7 +40,7 @@ import kotlinx.coroutines.*
  * - 收起：44dp 气泡（浅色白底 / 深色深蓝底）+ 蓝音符，可拖动；
  * - 展开：播放控制、倍速滑动条和底部播放进度条；播放进度条可点按/拖动 seek。 「选歌」开居中独立小窗，不再是贴面板下拉。
  */
-class FloatingControls(private val service: MusicAccessibilityService) {
+class FloatingControls(private val service: PlaybackSession) {
     private val context = ContextThemeWrapper(service, R.style.AppTheme)
     private val wm = service.getSystemService(WindowManager::class.java)
     private val prefs = Kv.of(service, "floating_position")
@@ -61,11 +65,26 @@ class FloatingControls(private val service: MusicAccessibilityService) {
             ?: FloatingDock.NONE
     private var dockAnimator: ValueAnimator? = null
     private var expanded = false
+    private var restoredExpanded: Boolean? = null
     private var speedControlsVisible = false
     private var panel: FloatingPanel? = null
     private var displayRequested = false
     private var showRetries = 0
     private var destroyed = false
+    var revision = 0L
+        private set
+
+    private var touching = false
+    val interacting
+        get() =
+            touching ||
+                panel?.touching == true ||
+                popup != null ||
+                playlistJob?.isActive == true ||
+                dockAnimator?.isRunning == true
+
+    val released
+        get() = destroyed && scope.coroutineContext[Job]?.isCompleted == true
 
     // 选歌窗打开时面板先退出，关闭后恢复（两者不共存）。
     private var panelHiddenForPicker = false
@@ -92,15 +111,42 @@ class FloatingControls(private val service: MusicAccessibilityService) {
     val isVisible: Boolean
         get() = displayRequested
 
+    fun snapshot() =
+        Bundle().apply {
+            putInt("schema", 1)
+            putInt("x", x)
+            putInt("y", y)
+            putString("dock", dock.name)
+            putBoolean("expanded", expanded)
+            putBoolean("speedControls", speedControlsVisible)
+        }
+
+    fun restore(state: Bundle?) {
+        check(root == null && popup == null && !touching)
+        if (state == null) return
+        require(state.getInt("schema") == 1)
+        x = state.getInt("x")
+        y = state.getInt("y")
+        dock = FloatingDock.valueOf(checkNotNull(state.getString("dock")))
+        expanded = state.getBoolean("expanded")
+        speedControlsVisible = state.getBoolean("speedControls")
+        restoredExpanded = expanded
+    }
+
     fun show() {
+        revision++
         destroyed = false
         displayRequested = true
         showRetries = 0
         if (root != null) return
-        handler.post { if (displayRequested && root == null) render(false) }
+        val open = restoredExpanded ?: false
+        restoredExpanded = null
+        handler.post { if (displayRequested && root == null) render(open) }
     }
 
     fun hide() {
+        revision++
+        touching = false
         displayRequested = false
         dockAnimator?.cancel()
         dockAnimator = null
@@ -154,7 +200,8 @@ class FloatingControls(private val service: MusicAccessibilityService) {
             .apply { gravity = Gravity.TOP or Gravity.LEFT }
 
     private fun render(open: Boolean) {
-        if (destroyed || !displayRequested || !MusicAccessibilityService.isEnabled(service)) return
+        revision++
+        if (destroyed || !displayRequested || !PlaybackBridge.isEnabled(service)) return
         if (!open) speedControlsVisible = false
         palette = PlayerUi.palette(context)
         // render 会先 hide() → dismissPlaylist()，先清标记避免在里面递归恢复面板。
@@ -240,7 +287,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
         if (
             !destroyed &&
                 displayRequested &&
-                MusicAccessibilityService.isEnabled(service) &&
+                PlaybackBridge.isEnabled(service) &&
                 ++showRetries <= 3
         ) {
             handler.postDelayed({ if (displayRequested && root == null) render(expanded) }, 500)
@@ -265,6 +312,8 @@ class FloatingControls(private val service: MusicAccessibilityService) {
             val p = params ?: return@setOnTouchListener false
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    revision++
+                    touching = true
                     dockAnimator?.cancel()
                     dockAnimator = null
                     initialDock = dock
@@ -306,6 +355,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    touching = false
                     if (moved) {
                         dock =
                             if (expanded) FloatingDock.NONE
@@ -324,6 +374,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
+                    touching = false
                     // 系统接管手势时回到按下前的位置，不把取消误判成点击或贴边。
                     dock = initialDock
                     p.x = bx
@@ -383,7 +434,7 @@ class FloatingControls(private val service: MusicAccessibilityService) {
         if (playlistJob?.isActive == true) return
         playlistJob = scope.launch {
             try {
-                val songs = withContext(Dispatchers.IO) { SongRepository(service).songs() }
+                val songs = BusinessJobs.io { SongRepository(service).songs() }
                 if (!destroyed && displayRequested) showPlaylist(songs)
             } catch (cancelled: CancellationException) {
                 throw cancelled

@@ -3,7 +3,6 @@ package app.luoxianlv.ui.settings
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +27,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHostState
@@ -51,6 +49,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
+import app.luoxianlv.business.ui.rememberPageLauncher
 import app.luoxianlv.data.ThemeMode
 import app.luoxianlv.service.KeepAlive
 import app.luoxianlv.ui.components.ErrorDialogHost
@@ -88,7 +88,10 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var showThemePicker by remember { mutableStateOf(false) }
     val notificationPermission =
-        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        rememberPageLauncher(
+            "settings.notifications",
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
             vm.refresh()
             if (!granted) KeepAlive.openNotificationSettings(context)
         }
@@ -170,10 +173,12 @@ fun SettingsScreen(
                         iconTint = IconTeal,
                     ) {
                         context.startActivity(
-                            android.content.Intent(
-                                context,
-                                app.luoxianlv.ui.practice.WallpaperPickerActivity::class.java,
-                            )
+                            android.content
+                                .Intent()
+                                .setClassName(
+                                    context,
+                                    "app.luoxianlv.ui.practice.WallpaperPickerActivity",
+                                )
                         )
                     }
                 }
