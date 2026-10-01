@@ -32,6 +32,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String renderUserWallpaper;
   private boolean schedulerOnly, schedulerPractice, schedulerOffline;
   private String networkRecovery;
+  private String downloadRunId;
   private boolean prepareUserScore, verifyUserScore;
   private boolean receiptFault;
   private boolean receiptRecovered;
@@ -88,6 +89,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
         arguments != null && "true".equals(arguments.getString("schedulerPractice"));
     schedulerOffline = arguments != null && "true".equals(arguments.getString("schedulerOffline"));
     networkRecovery = arguments == null ? null : arguments.getString("networkRecovery");
+    downloadRunId = arguments == null ? null : arguments.getString("downloadRunId");
     prepareUserScore = arguments != null && "true".equals(arguments.getString("prepareUserScore"));
     verifyUserScore = arguments != null && "true".equals(arguments.getString("verifyUserScore"));
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
@@ -421,6 +423,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
         java.nio.file.Files.write(
             verifiedPath, result.toString(2).getBytes(StandardCharsets.UTF_8));
         report.putString("stream", "通过：当前业务重新读取并解析同一用户谱，全部用户曲目、选曲与设置保持。\n");
+        success = true;
+      } else if (downloadRunId != null) {
+        NativeDownloadChecks.run(this, main, downloadRunId);
+        report.putString("stream", "通过：真实下载请求及对象读取验收，未注入调度或激活。\n");
         success = true;
       } else if (networkRecovery != null) {
         NativeSchedulerChecks.offlineRecovery(this, main, networkRecovery);
