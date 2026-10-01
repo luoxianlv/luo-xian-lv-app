@@ -1,6 +1,6 @@
 # 下载字节/取消外部driver：本地交付
 
-`tools/test-native-download.ps1`只允许独立emulator-5554、API127.0.0.1:18472及CLI/.local内明确Fixture/AuthDirectory。开发阶段没有实际运行driver、CLI、ADB、API或代理；只完成PowerShell解析和33项真实纯policy/mock检查。设备成功仍由根任务运行后补充。
+`tools/test-native-download.ps1`只允许独立emulator-5554、API127.0.0.1:18472及CLI/.local内明确Fixture/AuthDirectory。本轮修正通过PowerShell解析和63项真实policy/mock检查；子任务未操作CLI、ADB、API或代理。根任务首轮实际取消验收已执行，但driver错误判定回滚回执，整体失败，不能写为设备成功。
 
 ## 调用和资料
 
@@ -20,10 +20,10 @@ Fixture提供root.public.json、已签candidate.lxhp及plan-template.json。模�
 
 1. 公开根类型检查、CLI完整验签和Debug/test/live/小资源范围检查，随后upload登记；不把上传当发布。
 2. 新代理进程隐形启动，只listen127.0.0.1:18474→18472；只认本进程监听。拒绝已有18474或device tcp:18472反向端口，不接管其他任务。
-3. helper的arm到达后，读取实际Source S并要求API当前发布对应S。直接发布指定target，fallback=S、预期修订/replace-release/本run幂等身份均明确。发布回执及实时状态核对后才ACK armed。
+3. helper的arm到达后，读取实际Source S并要求API当前发布对应S。active状态的direct/staged发布以snapshot核对本机paired test来源；rolled_back状态以fallback核对来源，保留的旧snapshot不作为恢复目标。paused不下发新来源、revoked不在本轮自动恢复范围，均拒绝自动替换；不推断普通设备的灰度资格。直接发布指定target，fallback=S、预期修订/replace-release/本run幂等身份均明确。发布回执及实时状态核对后才ACK armed。
 4. delta在request_captured后释放指定原始对象响应并ACK released；cancellation保持等待，cancelled后先CAS回滚S，再释放与ACK。正常delta保留已确认target，正常取消恢复S。
 5. 严格核对本run/mode/target/source/passed、实际字节及同次自然健康；读取最终complete控制文件，避免进程退出和最后一轮轮询的竞态。
-6. 失败也只尝试恢复本轮明确发布；必须exact release ID、target、revision一致。若提交响应未知，仅在可能已提交的预期修订下重放原幂等请求取得归属；其他发布/修订不覆盖，保留失败诊断。
+6. 失败也只尝试恢复本轮明确发布；活动发布的release ID、target、revision、status和fallback均须一致。若发布提交响应未知，仅在可能已提交的预期修订下重放原幂等请求取得归属；其他发布/修订不覆盖，保留失败诊断。回滚成功保留原release ID和候选snapshot，status改为rolled_back、fallback改为S、revision恰为原值+1；最终渠道校验按这个归属，不能要求snapshot已改S。回滚响应丢失时，只读认领精确匹配的终态，不再次回滚。
 7. 共同300秒上界，主动工作预留最后15秒收尾；只停止本次ADB/代理，失败才停止独立Debug仪器，撤销并验证本次反向端口，恢复首页。全部核验后才生成最终成功报告和“通过”文字。
 
 所有外部命令通过ProcessStartInfo.ArgumentList传参并设置CreateNoWindow；读取管道异步，单命令有界，不输出CLI原始错误/凭据或服务URL。操作不删除用户数据、热更对象/断点、Wallpaper项目或旧run。
@@ -36,8 +36,10 @@ bodyBytesReturnedToProxy仅是上游body向代理Read返回的字节，不代表
 
 ## 本地验证
 
-`tools/test-native-download-driver-policy.ps1`提取实际纯policy函数并执行33项检查：候选scope/资源/大小、重复对象、非法前缀、JSON重复/大小写混淆、握手run/phase、旧回执拒绝、未健康TRIAL拒绝、预算与实际read区别、代理target/hash绑定、路径越界，以及同target不同release/新revision不得回滚。另静态核对隐藏进程、结构化参数和成功输出位于收尾验证之后。
+`tools/test-native-download-driver-policy.ps1`提取实际纯policy函数并执行63项检查：候选scope/资源/大小、重复对象、非法前缀、JSON重复/大小写混淆、握手run/phase、旧回执拒绝、未健康TRIAL拒绝、预算与实际read区别、代理target/hash绑定、路径越界，以及同target不同release/新revision不得回滚。增加真实36→37回滚形态、错误ID/snapshot/status/fallback/revision、已回滚不得二次写、active direct/staged及rolled_back来源、paused/未知状态拒绝。提取真实Restore-DownloadChannel函数，仅mock外部CLI/读取：正常回滚写一次，回执丢失后已37及重复收尾写零次。另静态核对隐藏进程、结构化参数和成功输出位于收尾验证之后。
 
-这些mock不验证实际外部子进程/未知提交恢复或设备时序；root实际运行必须继续核对原始instrumentation、API渠道恢复和代理停止。无法确认恢复的失败不被包装为成功。
+这些mock不验证实际外部子进程、未知发布提交恢复或设备时序；root实际运行必须继续核对原始instrumentation、API渠道恢复和代理停止。无法确认恢复的失败不被包装为成功。
 
-【MCP调用简报】本地限定源码/文档、PowerShell解析及33项policy/mock；无实际CLI/ADB/API/代理、秘密文件读取或push。
+首轮实际run `1fad2b2287af4cfcb304b6f512f9135e`：API回滚真实完成36→37，原release `4488c02e-d8bc-408a-9b97-d0ee3e19eb54`、候选K保持不变，status=rolled_back、fallback=J。旧driver错误期待snapshot=J，抛“本轮恢复回执不匹配”，整体未通过。此修正没有重新执行回滚、没有清理K.part；修正后的Android取消和554字节delta仍须根任务重跑。
+
+【MCP调用简报】本地限定源码/文档、PowerShell解析及63项policy/mock；子任务无实际CLI/ADB/API/代理、秘密文件读取或push。

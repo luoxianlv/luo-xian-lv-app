@@ -86,10 +86,36 @@ function Assert-DownloadControl($Control, [string]$RunId, [string]$Mode, [string
 function Assert-DownloadOwnedChannel($Channel, $Ownership) {
     if (!$Ownership -or !$Ownership.id -or !$Channel.current -or
         $Channel.current.id -cne $Ownership.id -or $Channel.current.snapshotId -cne $Ownership.target -or
-        [long]$Channel.revision -ne [long]$Ownership.revision) { throw '渠道已被其他操作改变，拒绝覆盖' }
+        [long]$Channel.revision -ne [long]$Ownership.revision -or
+        ($Ownership.status -and $Channel.current.status -cne $Ownership.status) -or
+        ($Ownership.fallback -and $Channel.current.fallbackId -cne $Ownership.fallback)) { throw '渠道已被其他操作改变，拒绝覆盖' }
+}
+function Assert-DownloadChannelSource($Channel, [string]$Source) {
+    if (!$Channel.current -or $Source -cnotmatch '^[a-f0-9]{64}$' -or $Channel.current.mode -notin @('direct','staged')) {
+        throw 'API当前发布不能核对设备原稳定来源'
+    }
+    # 这里只核对本机paired test已测得的Source；不推断普通设备的灰度资格。
+    $effective = switch -CaseSensitive ($Channel.current.status) {
+        'active' { [string]$Channel.current.snapshotId }
+        'rolled_back' { [string]$Channel.current.fallbackId }
+        default { throw '当前发布已暂停、撤销或状态未知，拒绝自动替换' }
+    }
+    if ($effective -cne $Source) { throw 'API当前发布不对应设备原稳定来源' }
+}
+function Resolve-DownloadRollbackReceipt($Channel, $Ownership, [string]$Source) {
+    if (!$Ownership -or !$Ownership.id -or $Source -cnotmatch '^[a-f0-9]{64}$' -or $Source -ceq $Ownership.target -or
+        !$Channel.current -or $Channel.current.id -cne $Ownership.id -or
+        $Channel.current.snapshotId -cne $Ownership.target -or $Channel.current.status -cne 'rolled_back' -or
+        $Channel.current.fallbackId -cne $Source -or [long]$Channel.revision -ne [long]$Ownership.revision+1) {
+        throw '本轮恢复回执不匹配'
+    }
+    # rollback保留原发布/候选身份，通过状态和fallback表示恢复目标。
+    [pscustomobject]@{id=$Ownership.id;revision=[long]$Channel.revision;target=$Ownership.target;
+        status='rolled_back';fallback=$Source;restoredTo=$Source}
 }
 function Select-DownloadRollback($Channel, $Ownership, [string]$Source) {
     Assert-DownloadOwnedChannel $Channel $Ownership
+    if ($Channel.current.status -cne 'active') { throw '本轮发布已非活动状态，拒绝重复或覆盖终态回滚' }
     if ($Source -cnotmatch '^[a-f0-9]{64}$' -or $Source -ceq $Ownership.target) { throw '恢复来源无效' }
     @('rollback', [string]$Ownership.id, '--to', $Source, '--reason', '本机下载取消验收恢复原稳定来源',
         '--expect-revision', [string]$Ownership.revision, '--application-id', 'app.luoxianlv.debug', '--environment', 'test')
@@ -238,7 +264,9 @@ function Resolve-DownloadPublication($Reply) {
         $Reply.response.current.snapshotId -cne $template.targetSnapshotId -or
         $Reply.response.current.fallbackId -cne $source -or $Reply.response.current.id -cnotmatch '^[a-f0-9-]{36}$' -or
         [long]$Reply.response.revision -ne [long]$originalChannel.revision+1) { throw '本轮发布身份/修订回执不匹配' }
-    [pscustomobject]@{id=$Reply.response.current.id;revision=[long]$Reply.response.revision;target=[string]$template.targetSnapshotId}
+    if ($Reply.response.current.status -cne 'active') { throw '本轮发布未处于活动状态' }
+    [pscustomobject]@{id=$Reply.response.current.id;revision=[long]$Reply.response.revision;
+        target=[string]$template.targetSnapshotId;status='active';fallback=$source}
 }
 function Restore-DownloadChannel {
     $channel = Read-DownloadChannel
@@ -250,11 +278,16 @@ function Restore-DownloadChannel {
         } else { throw '发布提交结果尚未确认，保留诊断且不覆盖其他渠道决定' }
     }
     if (!$ownership) { return }
+    if ($restored) { Assert-DownloadOwnedChannel $channel $restored; return }
+    if ($channel.current.status -ceq 'rolled_back') {
+        # 回执丢失后的收尾只认本轮ID/候选/预期+1修订和Source，不再次写渠道。
+        $script:restored = Resolve-DownloadRollbackReceipt $channel $ownership $source
+        return
+    }
     $arguments = Select-DownloadRollback $channel $ownership $source
     $reply = Invoke-DownloadLxhot ($arguments + @('--request-id',($runId+'-rollback'),'--server',$origin,'--token-file',$tokenFile))
-    if (!$reply.response.current -or $reply.response.current.snapshotId -cne $source -or
-        [long]$reply.response.revision -ne [long]$ownership.revision+1) { throw '本轮恢复回执不匹配' }
-    $script:restored = [pscustomobject]@{id=$reply.response.current.id;revision=[long]$reply.response.revision;target=$source}
+    if ($reply.requestId -cne ($runId+'-rollback')) { throw '本轮恢复请求身份不匹配' }
+    $script:restored = Resolve-DownloadRollbackReceipt $reply.response $ownership $source
 }
 
 try {
@@ -305,7 +338,7 @@ try {
                         $source = [string]$control.sourceIdentity
                         if ($template.sourceIdentity -and $source -cne $template.sourceIdentity) { throw '实际来源与模板不同' }
                         $originalChannel = Read-DownloadChannel
-                        if (!$originalChannel.current -or $originalChannel.current.snapshotId -cne $source) { throw 'API当前发布不对应设备原稳定来源' }
+                        Assert-DownloadChannelSource $originalChannel $source
                         $publishArguments = @('publish',$template.targetSnapshotId,'--fallback',$source,'--mode','direct','--scope','all-compatible',
                             '--replace-release',$originalChannel.current.id,'--expect-revision',[string]$originalChannel.revision,
                             '--request-id',$runId,'--server',$origin,'--token-file',$tokenFile)
