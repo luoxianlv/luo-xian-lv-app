@@ -42,6 +42,10 @@ $origin = 'http://127.0.0.1:18472'
 $package = 'app.luoxianlv.debug'
 $component = "$package/app.luoxianlv.service.MusicAccessibilityService"
 $runId = [Guid]::NewGuid().ToString('N')
+$continuousSource = [IO.File]::ReadAllText((Join-Path $repo 'app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'))
+$continuousBudgetMatch = [regex]::Matches($continuousSource, 'static final long STAGE_TIMEOUT_MILLIS = ([0-9]+);')
+if ($continuousBudgetMatch.Count -ne 1) { throw '无法读取本轮实际仪器共同阶段期限' }
+$stageTimeoutMillis = [long]$continuousBudgetMatch[0].Groups[1].Value
 $output = Join-Path $repo ('.local/native-continuous-' + $runId)
 [IO.Directory]::CreateDirectory($output) | Out-Null
 
@@ -68,6 +72,60 @@ function Invoke-Adb {
 function Save-Json([string]$Path, $Value) {
     [IO.File]::WriteAllText($Path, ($Value | ConvertTo-Json -Depth 16), [Text.UTF8Encoding]::new($false))
 }
+
+# CONTINUOUS_POLICY_BEGIN：离线负例提取实际的范围和Fresh操作顺序，不调用设备。
+function Select-ContinuousServices([string]$Value, [string]$Component) {
+    if ($Value -notmatch '^(null|[A-Za-z0-9_.$/:]*)$') { throw '无障碍设置格式不支持安全还原' }
+    if ($Value -eq 'null' -or !$Value) { return '' }
+    $short = $Component.Split('/')[0] + '/.service.MusicAccessibilityService'
+    ($Value.Split(':') | Where-Object { $_ -ne $Component -and $_ -ne $short }) -join ':'
+}
+
+function Assert-ContinuousArtifactScope($PackageReply) {
+    if (@($PackageReply.artifacts).Count -ne 2 -or
+        @($PackageReply.artifacts | Where-Object role -eq 'runtime').Count -ne 1 -or
+        @($PackageReply.artifacts | Where-Object role -eq 'business').Count -ne 1 -or
+        @($PackageReply.artifacts | Where-Object { $_.role -notin @('runtime','business') -or $_.mount }).Count -ne 0) {
+        throw '本轮连续压力只允许runtime+business且无官方挂载；资源压力须单独验收'
+    }
+}
+
+function Set-ContinuousServices([string]$Value) {
+    if ($Value -notmatch '^(null|[A-Za-z0-9_.$/:]*)$') { throw '无障碍设置格式不支持安全还原' }
+    if ($Value -eq 'null') { Invoke-Adb shell settings delete secure enabled_accessibility_services | Out-Null }
+    else { Invoke-Adb shell ("settings put secure enabled_accessibility_services '" + $Value + "'") | Out-Null }
+}
+
+function Wait-ContinuousProcessStopped {
+    $stoppedUntil = [DateTime]::UtcNow.AddSeconds(15)
+    while ($true) {
+        $running = & $Adb -s $Serial shell pidof $package 2>$null
+        $code = $LASTEXITCODE
+        if ($code -in @(0,1) -and !($running -join '').Trim()) { return }
+        if ($code -notin @(0,1)) { throw '无法确认Debug目标进程已停止，拒绝归档' }
+        if ([DateTime]::UtcNow -gt $stoppedUntil) { throw 'Debug进程仍在运行，拒绝移动其热更状态' }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
+function Prepare-ContinuousFresh([string]$OriginalServices) {
+    $others = Select-ContinuousServices $OriginalServices $component
+    Set-ContinuousServices $others
+    Invoke-Adb shell am force-stop $package | Out-Null
+    Wait-ContinuousProcessStopped
+    $sandbox = ((Invoke-Adb shell run-as $package pwd) -join "`n").Trim()
+    if ($sandbox -notmatch '^/data/(user/0|data)/app\.luoxianlv\.debug$') { throw '无法确认测试私有目录' }
+    foreach ($area in @('no_backup/native-update', 'files/native-continuous')) {
+        $exists = & $Adb -s $Serial shell run-as $package test -e $area 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Invoke-Adb shell run-as $package mv $area ($area + '-archive-' + $runId) | Out-Null
+        } elseif ($LASTEXITCODE -ne 1) { throw '无法确认上一轮测试区，拒绝覆盖' }
+    }
+    # 已归档且没有本Debug服务可启动，再更新宿主；旧隔离/预算/证据不会删除。
+    Invoke-Adb install -r $HostApk | Out-Null
+    Invoke-Adb shell run-as $package mkdir -p files/native-continuous | Out-Null
+}
+# CONTINUOUS_POLICY_END
 
 function Read-ApkJson([string]$Name) {
     $zip = [IO.Compression.ZipFile]::OpenRead($HostApk)
@@ -116,6 +174,7 @@ if ((Get-FileHash -LiteralPath $frozenRuntime -Algorithm SHA256).Hash.ToLowerInv
 }
 $basePackage = Join-Path $Fixture 'base.lxhp'
 $base = Invoke-Lxhot @('verify', $basePackage, '--root', $rootKey, '--host-contract', '1')
+Assert-ContinuousArtifactScope $base
 $baseRuntime = @($base.artifacts | Where-Object role -eq 'runtime')
 $baseBusiness = @($base.artifacts | Where-Object role -eq 'business')
 if (!$base.complete -or $base.applicationId -ne $package -or $base.environment -ne 'test' -or
@@ -131,6 +190,7 @@ foreach ($name in $Candidates) {
     if ($name -notmatch '^[A-Za-z0-9._-]+\.lxhp$') { throw '候选必须是 Fixture 内普通 .lxhp 文件名' }
     $path = (Resolve-Path -LiteralPath (Join-Path $Fixture $name)).Path
     $candidate = Invoke-Lxhot @('verify', $path, '--root', $rootKey, '--host-contract', '1')
+    Assert-ContinuousArtifactScope $candidate
     $runtime = @($candidate.artifacts | Where-Object role -eq 'runtime')
     $business = @($candidate.artifacts | Where-Object role -eq 'business')
     if (!$candidate.complete -or $candidate.applicationId -ne $package -or $candidate.environment -ne 'test' -or
@@ -143,32 +203,20 @@ foreach ($name in $Candidates) {
     $packagePaths += $path
 }
 $stages[-1].mode = 'rollback'
-$plan = [ordered]@{ schema=1; runId=$runId; runtime=$baseline.runtime.sha256; baselineSnapshot=$base.snapshotId; stages=$stages }
+$plan = [ordered]@{ schema=1; runId=$runId; runtime=$baseline.runtime.sha256; baselineSnapshot=$base.snapshotId; stageTimeoutMillis=$stageTimeoutMillis; stages=$stages }
 $planPath = Join-Path $output 'plan.json'
 Save-Json $planPath $plan
-$services = (Invoke-Adb shell settings get secure enabled_accessibility_services).Trim()
-$enabled = (Invoke-Adb shell settings get secure accessibility_enabled).Trim()
+$services = ((Invoke-Adb shell settings get secure enabled_accessibility_services) -join "`n").Trim()
+$enabled = ((Invoke-Adb shell settings get secure accessibility_enabled) -join "`n").Trim()
+[void](Select-ContinuousServices $services $component)
+if ($enabled -notin @('null','0','1')) { throw '无障碍启用状态无法安全保存还原' }
 $instrument = $null
 $fallback = $base.snapshotId
 $lastPublished = $null
 $stdout = Join-Path $output 'instrumentation.txt'
 $stderr = Join-Path $output 'instrumentation.stderr.txt'
 try {
-    Invoke-Adb shell am force-stop $package | Out-Null
-    Invoke-Adb install -r $HostApk | Out-Null
-    $sandbox = (Invoke-Adb shell run-as $package pwd).Trim()
-    if ($sandbox -notmatch '^/data/(user/0|data)/app\.luoxianlv\.debug$') { throw '无法确认测试私有目录' }
-    # 新一轮需要内置基线，但旧隔离、预算和故障证据必须保留；不重置为“从未失败”。
-    foreach ($area in @('no_backup/native-update', 'files/native-continuous')) {
-        $exists = & $Adb -s $Serial shell run-as $package test -e $area 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Invoke-Adb shell run-as $package mv $area ($area + '-archive-' + $runId) | Out-Null
-        } elseif ($LASTEXITCODE -ne 1) { throw '无法确认上一轮测试区，拒绝覆盖' }
-    }
-    Invoke-Adb shell run-as $package mkdir -p files/native-continuous | Out-Null
-    $others = if ($services -eq 'null' -or !$services) { '' } else { ($services.Split(':') | Where-Object { $_ -ne $component }) -join ':' }
-    if (!$others) { Invoke-Adb shell settings delete secure enabled_accessibility_services | Out-Null }
-    else { Invoke-Adb shell settings put secure enabled_accessibility_services $others | Out-Null }
+    Prepare-ContinuousFresh $services
     Invoke-Adb install -r $testApk | Out-Null
     Invoke-Adb reverse tcp:18472 tcp:18472 | Out-Null
     Send-File $planPath 'files/native-continuous/plan.json'
@@ -182,7 +230,7 @@ try {
         "$package.test/app.luoxianlv.host.NativeAppInstrumentation")
     $firstPid = $null
     for ($index=0; $index -lt $stages.Count; $index++) {
-        $deadline = [DateTime]::UtcNow.AddSeconds(210)
+        $deadline = [DateTime]::UtcNow.AddSeconds(180)
         do {
             $instrument.Refresh()
             if ($instrument.HasExited) { throw "连续仪器进程提前结束；记录：$stdout" }
@@ -192,7 +240,8 @@ try {
             if ([DateTime]::UtcNow -gt $deadline) { throw '设备没有到达预期连续阶段' }
             Start-Sleep -Milliseconds 250
         } while ($true)
-        if ($state.snapshot -ne $stages[$index].snapshot -or ($firstPid -and $state.pid -ne $firstPid)) { throw '阶段握手的快照或 PID 不符' }
+        if ($state.snapshot -ne $stages[$index].snapshot -or ($firstPid -and $state.pid -ne $firstPid) -or
+            $state.stageTimeoutMillis -ne $stageTimeoutMillis) { throw '阶段握手的快照、PID或实际仪器期限不符' }
         $firstPid = $state.pid
         $status = Invoke-Lxhot @('status', '--application-id', $package, '--environment', 'test', '--server', $origin, '--token-file', $tokenFile)
         $channel = $status.channel
@@ -204,10 +253,32 @@ try {
         $goPath = Join-Path $output ("go-$index.json")
         Save-Json $goPath ([ordered]@{runId=$runId;index=$index;snapshot=$lastPublished})
         Send-File $goPath ("files/native-continuous/go-$index.json")
-        if ($stages[$index].mode -eq 'healthy') { $fallback = $lastPublished }
         Write-Output "已投放连续阶段 $($index+1)/$($stages.Count)，PID $firstPid，模式 $($stages[$index].mode)"
+        $deadline = [DateTime]::UtcNow.AddMilliseconds($stageTimeoutMillis)
+        do {
+            $state = Read-State
+            if ($state -and $state.phase -eq 'failed') { throw "连续设备验收失败；记录：$stdout" }
+            if ($state -and $state.pid -ne $firstPid) { throw '阶段运行时PID改变' }
+            if ($state -and (($state.phase -eq 'passed' -and $state.index -eq $index) -or
+                ($state.phase -eq 'ready' -and $state.index -eq ($index+1)) -or
+                ($state.phase -eq 'complete' -and $index -eq ($stages.Count-1)))) { break }
+            $instrument.Refresh()
+            if ($instrument.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw '连续阶段超过共同总期限或仪器提前退出' }
+            Start-Sleep -Milliseconds 100
+        } while ($true)
+        $partial = ((Invoke-Adb shell run-as $package cat files/native-continuous/report.json) -join "`n") | ConvertFrom-Json
+        if ($partial.runId -ne $runId -or $partial.pid -ne $firstPid -or $partial.stages.Count -le $index) {
+            throw '阶段成功信号没有同run/PID的实际回执'
+        }
+        $row = $partial.stages[$index]
+        if ($row.index -ne $index -or $row.snapshot -ne $lastPublished -or $row.business -ne $stages[$index].business -or
+            $row.stageTimeoutMillis -ne $stageTimeoutMillis -or $row.stageElapsedMillis -gt $stageTimeoutMillis -or
+            ($stages[$index].mode -eq 'healthy' -and $row.observedActiveMillis -lt 60000)) {
+            throw '阶段实际字节、真实60秒观察或总期限不符'
+        }
+        if ($stages[$index].mode -eq 'healthy') { $fallback = $lastPublished }
     }
-    $deadline = [DateTime]::UtcNow.AddSeconds(150)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         $state = Read-State
         if ($state -and $state.phase -eq 'complete') { break }
@@ -218,7 +289,8 @@ try {
     } while ($true)
     if (!$instrument.WaitForExit(15000) -or $instrument.ExitCode -ne 0) { throw '连续 instrumentation 未正常结束' }
     $deviceReport = ((Invoke-Adb shell run-as $package cat files/native-continuous/report.json) -join "`n") | ConvertFrom-Json
-    if (!$deviceReport.passed -or $deviceReport.pid -ne $firstPid -or $deviceReport.stages.Count -ne $stages.Count -or
+    if (!$deviceReport.passed -or $deviceReport.runId -ne $runId -or $deviceReport.pid -ne $firstPid -or
+        $deviceReport.stageTimeoutMillis -ne $stageTimeoutMillis -or $deviceReport.stages.Count -ne $stages.Count -or
         @($deviceReport.stages | Where-Object { $_.mode -eq 'healthy' -and $_.observedActiveMillis -ge 60000 }).Count -ne ($stages.Count-1)) {
         throw '缺少同一 PID 的逐轮真实健康及退役边界报告'
     }
@@ -240,12 +312,11 @@ try {
         if (!$instrument.HasExited) {
             # 只停止本次 ADB 客户端及独立 Debug 应用，避免失败后继续投放或占用设备。
             Stop-Process -Id $instrument.Id -ErrorAction SilentlyContinue
-            Invoke-Adb shell am force-stop $package | Out-Null
         }
     }
+    Invoke-Adb shell am force-stop $package | Out-Null
     Invoke-Adb reverse --remove tcp:18472 | Out-Null
-    if ($services -eq 'null') { Invoke-Adb shell settings delete secure enabled_accessibility_services | Out-Null }
-    else { Invoke-Adb shell settings put secure enabled_accessibility_services $services | Out-Null }
+    Set-ContinuousServices $services
     if ($enabled -eq 'null') { Invoke-Adb shell settings delete secure accessibility_enabled | Out-Null }
     else { Invoke-Adb shell settings put secure accessibility_enabled $enabled | Out-Null }
     Invoke-Adb shell am start -n "$package/app.luoxianlv.MainActivity" | Out-Null

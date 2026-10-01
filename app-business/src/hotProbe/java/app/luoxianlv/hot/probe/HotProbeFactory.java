@@ -16,6 +16,11 @@ public final class HotProbeFactory implements BusinessFactory {
   private final BusinessFactory app = new AppBusinessFactory();
 
   @Override
+  public void bindResources(OfficialResources resources) {
+    app.bindResources(resources);
+  }
+
+  @Override
   public NativePage page(String route) {
     NativePage delegate = app.page(route);
     return route.equals("main") ? new Main(delegate) : delegate;

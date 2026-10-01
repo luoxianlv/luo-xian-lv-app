@@ -26,6 +26,7 @@ import org.json.JSONObject;
 /** 同一普通宿主进程持续观察；外部只投放签名候选，测试不直接下载或激活。 */
 final class NativeContinuousChecks {
   private static final String AREA = "native-continuous";
+  static final long STAGE_TIMEOUT_MILLIS = 330000;
   private static final String BADGE = "app.luoxianlv.hot.probe.HotProbeFactory$NewNativeBadge";
   private final Instrumentation test;
   private final Activity home;
@@ -37,7 +38,8 @@ final class NativeContinuousChecks {
   private final int pid = android.os.Process.myPid();
   private final HostUpdates updates;
   private final ClassLoader sharedRuntime;
-  private Long migrationCompletedAt;
+  private Long migrationRegisteredAt;
+  private long stageDeadline;
 
   /** 在打开任何页面之前停住测试调度，避免已有本机发布抢在阶段握手之前更新。 */
   static void pauseBeforeActivity(Instrumentation test) throws Exception {
@@ -87,6 +89,7 @@ final class NativeContinuousChecks {
     plan = new JSONObject(new String(raw, StandardCharsets.UTF_8));
     check(
         plan.getInt("schema") == 1 && plan.getString("runId").matches("[a-f0-9]{32}"), "连续计划身份无效");
+    check(plan.getLong("stageTimeoutMillis") == STAGE_TIMEOUT_MILLIS, "连续阶段总期限与本轮仪器不匹配");
     var stages = plan.getJSONArray("stages");
     check(stages.length() >= 4 && stages.length() <= 12, "至少三轮健康候选及最后一轮回退");
     Set<String> snapshots = new HashSet<>(), businesses = new HashSet<>();
@@ -110,6 +113,7 @@ final class NativeContinuousChecks {
 
   private void run(String previousServices) throws Exception {
     Bundle[] originalPlayback = new Bundle[1];
+    boolean completed = false;
     var report =
         new JSONObject()
             .put("schema", 1)
@@ -117,6 +121,9 @@ final class NativeContinuousChecks {
             .put("pid", pid)
             .put("productionTouched", false)
             .put("stages", results)
+            .put("stageTimeoutMillis", STAGE_TIMEOUT_MILLIS)
+            .put("scheduleClockModified", false)
+            .put("officialMountedResourceStressVerified", false)
             .put("healthClockModified", false)
             .put("explicitActivationCalledByTest", false)
             .put("classLoaderUnloadingRequired", false);
@@ -131,7 +138,7 @@ final class NativeContinuousChecks {
               : previousServices.contains(component)
                   ? previousServices
                   : previousServices + ":" + component;
-      shell("settings put secure enabled_accessibility_services " + services);
+      shell("settings put secure enabled_accessibility_services '" + services + "'");
       shell("settings put secure accessibility_enabled 1");
       await("连续验收播放会话未连接", 20000, () -> PlaybackBridge.current() != null);
       main(
@@ -143,8 +150,8 @@ final class NativeContinuousChecks {
             PlaybackBridge.current().command("showFloating", hidden);
           });
       await("连续验收没有交接安全点", 30000, () -> onMain(() -> Bootstrap.canAutoActivate() && idle()));
-      migrationCompletedAt = ProcessOnce.completedAt("storage-migration");
-      check(migrationCompletedAt != null, "最新基线没有登记稳定层存储迁移");
+      migrationRegisteredAt = ProcessOnce.completedAt("storage-migration");
+      check(migrationRegisteredAt != null, "最新基线没有登记稳定层存储迁移");
       check(
           Bootstrap.source().prepared.runtimeHash.equals(plan.getString("runtime")), "冻结运行时与宿主不符");
       for (int index = 0; index < plan.getJSONArray("stages").length(); index++) stage(index);
@@ -163,12 +170,14 @@ final class NativeContinuousChecks {
       save("report.json", report);
       checkpoint("complete", plan.getJSONArray("stages").length(), "");
       step("通过：同一 PID 连续三份不同业务 APK 的真实健康确认及第四份整组回退，宿主持有边界成立");
+      completed = true;
     } catch (Throwable failure) {
       report.put("passed", false).put("failureType", failure.getClass().getSimpleName());
       save("report.json", report);
       checkpoint("failed", results.length(), "");
       throw failure;
     } finally {
+      boolean finished = completed;
       main(
           test,
           () -> {
@@ -183,9 +192,11 @@ final class NativeContinuousChecks {
               floating.putBoolean("enabled", originalPlayback[0].getBoolean("floatingEnabled"));
               PlaybackBridge.current().command("showFloating", floating);
             }
-            set(updates, "blocked", false);
-            set(updates, "nextCheck", SystemClock.elapsedRealtime() + 300000);
-            updates.usageChanged();
+            // 失败后不清除真实故障门禁；外部driver停止测试进程并恢复原系统设置。
+            if (finished && idle()) {
+              set(updates, "blocked", false);
+              updates.usageChanged();
+            }
           });
     }
   }
@@ -205,16 +216,17 @@ final class NativeContinuousChecks {
     check(android.os.Process.myPid() == pid, "阶段之间发生了进程重启");
     checkpoint("ready", index, target);
     await("没有收到对应本机发布阶段确认", 180000, () -> go(index, target));
+    long startedAt = SystemClock.elapsedRealtime();
+    stageDeadline = startedAt + STAGE_TIMEOUT_MILLIS;
+    checkpoint("running", index, target);
     main(
         test,
         () -> {
           set(updates, "blocked", false);
-          set(updates, "nextCheck", 0L);
           updates.usageChanged();
         });
-    await(
+    awaitStage(
         "普通入口未自动曝光本轮候选",
-        100000,
         () ->
             onMain(
                 () ->
@@ -232,6 +244,8 @@ final class NativeContinuousChecks {
     var ticket = (ActivationController.Ticket) field(activation, "ticket");
     var health = (HealthWindow) field(ticket, "health");
     check(next.manifest.business.sha256.equals(stage.getString("business")), "来源清单不是计划的业务 APK");
+    check(next.manifest.artifacts.size() == 2 && next.manifest.artifacts.stream().allMatch(value -> value.mount.isEmpty()),
+        "本轮连续检查不接受官方资源挂载，不能冒充资源压力验收");
     check(
         next.classLoader() != previous.prepared.classLoader()
             && next.classLoader().getParent() == sharedRuntime,
@@ -254,21 +268,19 @@ final class NativeContinuousChecks {
                     test.getTargetContext(), "app.luoxianlv.ui.practice.WallpaperPickerActivity")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     try {
-      await(
+      awaitStage(
           "本轮新增窗口未进入候选",
-          15000,
           () -> onMain(() -> Bootstrap.pages().size() == 2 && picker.hasWindowFocus()));
       main(test, () -> assertSources(next.classLoader()));
     } finally {
       main(test, picker::finish);
     }
-    await("新增窗口关闭后首页未恢复焦点", 15000, home::hasWindowFocus);
+    awaitStage("新增窗口关闭后首页未恢复焦点", home::hasWindowFocus);
     if (rollback) {
       check(health.observedMillis() < 60000, "故障注入必须发生在试运行健康确认之前");
       click.accept("设置");
-      await(
+      awaitStage(
           "回退前最新导航尚未保存",
-          10000,
           () ->
               onMain(
                   () ->
@@ -295,9 +307,8 @@ final class NativeContinuousChecks {
                 "故障注入已错过真实试运行窗口");
             mainHost().failActive(new IllegalStateException("测试：连续候选业务失败"));
           });
-      await(
+      awaitStage(
           "本轮故障未完成整组回退",
-          40000,
           () -> onMain(() -> idle() && Bootstrap.source().prepared == previous.prepared));
       check(
           Bootstrap.startupState().journal.state().stable.equals(previousStable)
@@ -328,9 +339,8 @@ final class NativeContinuousChecks {
           .put("expectedRestoredPositionMillis", expectedPosition[0])
           .put("candidateRetired", true);
     } else {
-      await(
+      awaitStage(
           "本轮没有完成真实健康确认及旧代退出",
-          110000,
           () ->
               onMain(
                   () -> idle() && Bootstrap.startupState().journal.state().stable.equals(target)));
@@ -353,14 +363,13 @@ final class NativeContinuousChecks {
         state.revision >= priorRevision && state.phase == ActivationJournal.Phase.STABLE,
         "版本下限或稳定事务错误");
     check(
-        Objects.equals(migrationCompletedAt, ProcessOnce.completedAt("storage-migration")),
+        Objects.equals(migrationRegisteredAt, ProcessOnce.completedAt("storage-migration")),
         "存储迁移在热更时重复执行");
     var outbox =
         new HealthOutbox(
             new File(test.getTargetContext().getNoBackupFilesDir(), "native-update/health"));
-    await(
+    awaitStage(
         "本轮持久健康回执没有完成联网确认",
-        30000,
         () -> {
           try {
             return outbox.batch(100).isEmpty()
@@ -375,8 +384,10 @@ final class NativeContinuousChecks {
           set(updates, "blocked", true);
           updates.usageChanged();
         });
-    await("已退役业务线程仍在重复持有", 5000, NativeContinuousChecks::ownedThreadBound);
+    awaitStage("已退役业务线程仍在重复持有", NativeContinuousChecks::ownedThreadBound);
     row.put("wallMillisSinceExposureObserved", SystemClock.elapsedRealtime() - observedAt)
+        .put("stageElapsedMillis", SystemClock.elapsedRealtime() - startedAt)
+        .put("stageTimeoutMillis", STAGE_TIMEOUT_MILLIS)
         .put("revision", state.revision)
         .put("healthReportAcknowledged", true)
         .put("bounds", bounds());
@@ -387,6 +398,8 @@ final class NativeContinuousChecks {
             .put("runId", plan.getString("runId"))
             .put("pid", pid)
             .put("stages", results));
+    check(SystemClock.elapsedRealtime() <= stageDeadline, "连续阶段超过共同总期限");
+    checkpoint("passed", index, target);
     step("通过：连续阶段 " + (index + 1) + " / " + stage.getString("mode") + " / " + target);
   }
 
@@ -453,7 +466,8 @@ final class NativeContinuousChecks {
             "javaHeapUsedBytes",
             Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())
         .put("nativeHeapAllocatedBytes", android.os.Debug.getNativeHeapAllocatedSize())
-        .put("storageMigrationCompletedAt", migrationCompletedAt);
+        .put("storageMigrationRegisteredAt", migrationRegisteredAt)
+        .put("migrationTimestampRepresentsAsyncCompletion", false);
     return result;
   }
 
@@ -535,6 +549,7 @@ final class NativeContinuousChecks {
             .put("phase", phase)
             .put("index", index)
             .put("snapshot", snapshot)
+            .put("stageTimeoutMillis", STAGE_TIMEOUT_MILLIS)
             .put("pid", pid));
   }
 
@@ -655,6 +670,13 @@ final class NativeContinuousChecks {
       check(SystemClock.elapsedRealtime() < deadline, message);
       SystemClock.sleep(100);
     }
+  }
+
+  private void awaitStage(String message, BooleanSupplier condition) {
+    long remaining = stageDeadline - SystemClock.elapsedRealtime();
+    check(remaining > 0, "连续阶段总期限耗尽：" + message);
+    await(message, remaining, condition);
+    check(SystemClock.elapsedRealtime() <= stageDeadline, "连续阶段超过共同总期限：" + message);
   }
 
   private void step(String message) {
