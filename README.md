@@ -2,7 +2,7 @@
 
 # 落弦律 · Android 客户端
 
-**口琴谱社区 [luoxianlv.com](https://luoxianlv.com) 官方客户端 —— 找到谱子，剩下的交给它。**
+**口琴谱社区 [www.luoxianlv.cn](https://www.luoxianlv.cn) 官方客户端 —— 找到谱子，剩下的交给它。**
 
 [![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![minSdk](https://img.shields.io/badge/minSdk-26-3DDC84?logo=android&logoColor=white)](#)
@@ -53,6 +53,10 @@ cd luo-xian-lv-app
 ```
 
 需要 JDK 17 与 Android SDK 37。Windows 使用 `gradlew.bat`。客户端使用 Kotlin 和 Jetpack Compose。
+
+客户端默认使用 `https://www.luoxianlv.cn`，经 ESA 回源访问 `/api/...`，用于账号、谱库、MIDI 编译和更新检查。本地联调可通过 `-PupdateBaseUrl=http://10.0.2.2:8787` 覆盖；GitHub 发版变量 `UPDATE_BASE_URL` 也应使用官网 CN 地址。
+
+OSS 文件下载继续使用服务端清单返回的签名链接。鼠鼠 OAuth 仍使用已登记的 `https://luoxianlv.com/login/callback`，由 `.com` 的 302 保留参数跳转到 CN 回调页面，再唤回 App；授权和换令牌时的回调地址必须保持一致。
 
 ## 测试
 

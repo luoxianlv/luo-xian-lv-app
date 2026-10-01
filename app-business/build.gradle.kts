@@ -16,7 +16,7 @@ android {
         targetSdk = 37
         versionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 16
         versionName = findProperty("appVersionName") as String? ?: "1.0.9"
-        val origin = findProperty("updateBaseUrl") as String? ?: "https://luoxianlv-api.admilk.cn"
+        val origin = findProperty("updateBaseUrl") as String? ?: "https://www.luoxianlv.cn"
         require(origin.matches(Regex("https?://[A-Za-z0-9.:-]+")))
         val source = findProperty("updateSource") as String? ?: "oss"
         require(source in listOf("oss", "github"))
