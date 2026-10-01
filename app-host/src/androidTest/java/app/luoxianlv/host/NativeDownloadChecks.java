@@ -225,7 +225,7 @@ final class NativeDownloadChecks {
               false,
               deadline,
               45000,
-              frame -> frame.quiet() && home.hasWindowFocus(),
+              frame -> frame.quiet() && mainCondition(runner, home::hasWindowFocus),
               "普通入口没有稳定在线空闲状态");
       observed = initial;
       session.request("arm", now(), deadline.expires, originalId);
@@ -627,6 +627,16 @@ final class NativeDownloadChecks {
     void run() throws Exception;
   }
 
+  private interface Condition {
+    boolean test() throws Exception;
+  }
+
+  private static boolean mainCondition(Instrumentation runner, Condition condition) throws Exception {
+    var result = new java.util.concurrent.atomic.AtomicBoolean();
+    main(runner, () -> result.set(condition.test()));
+    return result.get();
+  }
+
   private static void main(Instrumentation runner, Action action) throws Exception {
     AtomicReference<Throwable> failure = new AtomicReference<>();
     runner.runOnMainSync(
@@ -699,7 +709,7 @@ final class NativeDownloadChecks {
                         Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
         });
     while (now() < until) {
-      if (home.hasWindowFocus() && Bootstrap.foregroundInUse()) return;
+      if (mainCondition(runner, () -> home.hasWindowFocus() && Bootstrap.foregroundInUse())) return;
       SystemClock.sleep(50);
     }
     throw new CheckFailure("未恢复原首页焦点");

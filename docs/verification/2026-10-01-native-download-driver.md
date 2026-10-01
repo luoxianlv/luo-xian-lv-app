@@ -47,4 +47,8 @@ bodyBytesReturnedToProxy仅是上游body向代理Read返回的字节，不代表
 
 随后K2 run `9a0ddce034994901a07aca7a462ef092`与L run `f313fef923844554b861834400c619dd`均报告control.failed；旧driver立即kill使仪器仅留下握手输出，未保存具体设备断言。根任务观察K2真实32字节前缀取消、L真实471字节响应及API健康上报，仍不足以判断helper末尾断言原因，也不能认定生产代码错误。此次仅修诊断/flush，旧run失败身份、partial/cache全部保留；新K3/L2须实际重跑并读取安全根因。
 
-【MCP调用简报】本地限定源码/文档、PowerShell解析及73项policy/mock/本地进程flush、10项独立JVM；子任务无实际CLI/ADB/API/代理、秘密文件读取或push。
+K3的新完整失败输出明确：`IllegalArgumentException: 页面切换必须在主线程`，链为PageSwapHost.inUse→Bootstrap.foregroundInUse→NativeDownloadChecks.restoreHome。旧helper收尾轮询在仪器线程读foregroundInUse；此为测试器线程错误，不是下载取消或生产热更失败证据。修复将focus与foregroundInUse完整条件放在既有runOnMainSync通道读取，初始focus观察也同样处理，未放宽恢复成功条件。其他Bootstrap读取中，foregroundInUse两处均为主线程、businessStopped在frame主线程；source读取volatile组合/停用门禁、startupState为已启动资料，均不遍历PageSwapHost。PracticeBridge的active/ready使用AtomicReference/volatile。
+
+`tools/test-native-download-thread.ps1`限定提取真实当前helper的restoreHome/main/mainCondition及真实Bootstrap.foregroundInUse、PageSwapHost.inUse/requireMain，使用两个独立JVM线程与薄Android类型替身，4项通过：真实b85980d旧源码负对照复现同主线程门禁异常；新源码恢复成功且无跨线程focus读取；关闭页面不得恢复；结束中的home不得放行。没有复制判断分支或修改SDK/production。它只验证线程调度和既有门禁，K4等新对象的实际Android完整验收仍由根任务运行，旧失败partial/cache不清理。
+
+【MCP调用简报】本地限定源码/文档、PowerShell解析及73项policy/mock/本地进程flush、10项独立JVM、4项实际源码线程验证；子任务无实际CLI/ADB/API/代理、秘密文件读取或push。
