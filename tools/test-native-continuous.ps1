@@ -158,8 +158,13 @@ try {
     Invoke-Adb install -r $HostApk | Out-Null
     $sandbox = (Invoke-Adb shell run-as $package pwd).Trim()
     if ($sandbox -notmatch '^/data/(user/0|data)/app\.luoxianlv\.debug$') { throw '无法确认测试私有目录' }
-    # 仅清除此脚本声明的热更测试区，用户谱子和设置不在此路径中。
-    Invoke-Adb shell run-as $package rm -rf no_backup/native-update files/native-continuous | Out-Null
+    # 新一轮需要内置基线，但旧隔离、预算和故障证据必须保留；不重置为“从未失败”。
+    foreach ($area in @('no_backup/native-update', 'files/native-continuous')) {
+        $exists = & $Adb -s $Serial shell run-as $package test -e $area 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Invoke-Adb shell run-as $package mv $area ($area + '-archive-' + $runId) | Out-Null
+        } elseif ($LASTEXITCODE -ne 1) { throw '无法确认上一轮测试区，拒绝覆盖' }
+    }
     Invoke-Adb shell run-as $package mkdir -p files/native-continuous | Out-Null
     $others = if ($services -eq 'null' -or !$services) { '' } else { ($services.Split(':') | Where-Object { $_ -ne $component }) -join ':' }
     if (!$others) { Invoke-Adb shell settings delete secure enabled_accessibility_services | Out-Null }
