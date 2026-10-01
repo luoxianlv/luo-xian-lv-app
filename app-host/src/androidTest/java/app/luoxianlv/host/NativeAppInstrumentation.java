@@ -31,6 +31,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private boolean prepareUserWallpaper;
   private String renderUserWallpaper;
   private boolean schedulerOnly, schedulerPractice, schedulerOffline;
+  private boolean prepareUserScore, verifyUserScore;
   private boolean receiptFault;
   private boolean receiptRecovered;
   private String restartPrepared;
@@ -85,6 +86,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
     schedulerPractice =
         arguments != null && "true".equals(arguments.getString("schedulerPractice"));
     schedulerOffline = arguments != null && "true".equals(arguments.getString("schedulerOffline"));
+    prepareUserScore = arguments != null && "true".equals(arguments.getString("prepareUserScore"));
+    verifyUserScore = arguments != null && "true".equals(arguments.getString("verifyUserScore"));
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
     receiptRecovered = arguments != null && "true".equals(arguments.getString("receiptRecovered"));
     restartPrepared = arguments == null ? null : arguments.getString("restartPrepared");
@@ -387,7 +390,37 @@ public final class NativeAppInstrumentation extends Instrumentation {
         require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
         workRelease.countDown();
       }
-      if (schedulerOnly) {
+      if (prepareUserScore) {
+        var fixture = NativeUserScoreFixture.prepare(this, main);
+        require(
+            fixture.getBoolean("passed") && fixture.getBoolean("selectionRestored"), "真实用户谱准备未完成");
+        report.putString("stream", "通过：生产曲库保存并解析真实用户谱，原选曲、设置及已有曲目保持。\n");
+        success = true;
+      } else if (verifyUserScore) {
+        var verifiedPath =
+            new java.io.File(
+                    getTargetContext().getFilesDir(), "native-user-score-verified-report.json")
+                .toPath();
+        java.nio.file.Files.deleteIfExists(verifiedPath);
+        var path =
+            new java.io.File(
+                getTargetContext().getFilesDir(), "native-user-score-fixture-report.json");
+        require(path.isFile() && path.length() <= 65536, "真实用户谱基线缺失或超限");
+        var before =
+            new org.json.JSONObject(
+                new String(
+                    java.nio.file.Files.readAllBytes(path.toPath()), StandardCharsets.UTF_8));
+        var result = NativeUserScoreFixture.verify(this, main, before);
+        require(
+            result.getBoolean("passed")
+                && result.getBoolean("allUserSongsUnchanged")
+                && result.getBoolean("selectionRestored"),
+            "当前业务没有保持真实用户谱");
+        java.nio.file.Files.write(
+            verifiedPath, result.toString(2).getBytes(StandardCharsets.UTF_8));
+        report.putString("stream", "通过：当前业务重新读取并解析同一用户谱，全部用户曲目、选曲与设置保持。\n");
+        success = true;
+      } else if (schedulerOnly) {
         if (schedulerOffline) NativeSchedulerChecks.offline(this, main);
         else NativeSchedulerChecks.run(this, main, schedulerPractice);
         report.putString("stream", "通过：真实普通宿主调度观察，未注入时钟或更新状态。\n");
