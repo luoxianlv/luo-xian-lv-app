@@ -444,8 +444,9 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
       long epoch = activationEpoch;
       Runnable report =
           () -> {
-            if (!current(epoch) || used == playing) return;
+            if (!current(epoch)) return;
             used = playing;
+            // 同一播放值也可能代表准备边沿；used仍只记录真实演奏，不拿准备时间充健康观察。
             playbackUsageChanged();
           };
       if (Looper.myLooper() == Looper.getMainLooper()) report.run();

@@ -20,7 +20,7 @@
 
 ## 真实可执行检查
 
-`pwsh -NoProfile -File tools/test-update-cancellation.ps1` 在JDK21/Android37本地编译输入执行实际当前核心与HostUpdates。53项通过：20项调度、3项真实Bootstrap优先输入、26项HTTP/在线兼容、4项实际Binding命令检查。26项HTTP包含9项新增取消/阳性/边界测试；没有Gradle、设备或真实API/OSS调用。
+`pwsh -NoProfile -File tools/test-update-cancellation.ps1` 在JDK21/Android37本地编译输入执行实际当前核心与HostUpdates。请求取消阶段原53项通过：20项调度、3项真实Bootstrap优先输入、26项HTTP/在线兼容、4项实际Binding命令检查。26项HTTP包含9项新增取消/阳性/边界测试；没有Gradle、设备或真实API/OSS调用。追加业务边沿通知后的计数见下节。
 
 新增HTTP检查使用随机127.0.0.1端口的真实ServerSocket：
 
@@ -38,6 +38,10 @@
 
 4项独立检查执行当前真实Binding方法：同步命令先写业务状态再通知；异步命令仅在主线程实际执行时通知；迟到epoch与禁用binding既不执行业务也不通知。它们使用平台loop及业务状态替身，未在Android执行真实演奏。生产 `PlaybackSession.command/query` 由Binding在同一主线程调用，准备字段在这个通道无需靠volatile传给worker；worker只读宿主复制后的volatile优先状态。
 
-仍保留1秒轮询覆盖业务内部异步状态和直接调用路径。FloatingControls直接调用业务toggle/play，及业务自身回调中启动准备，不一定经过PlaybackPort.command；本轮没有将这些路径冒称为全部即时事件通知。当前运行音频/手势连续性和实际下载途中用户操作由根任务接着设备验收。
+后续补齐业务实际状态边沿：`PlaybackSession.playing/preparing`仅值改变时调用既有binding.usage，`SongLoadGate`通过可选回调在loading/waiting成对状态完成后通知一次；原无参使用兼容、旧代完成与重复赋值不通知。Binding不再忽略相同playing值，但仍要求当前epoch，used只记录真实演奏。由此FloatingPanel的service::toggle、选曲加载、等待播放、内部截图/修复/显示恢复回调也从真实状态变更即时通知；不再让主要浮窗入口依赖1秒轮询捕获短准备。查询与浮窗refresh不发通知，原1秒轮询保留为兜底。
 
-【MCP调用简报】本地限定源码、公开协议向量、javap与Java/PowerShell测试；53项通过，真实慢body负例促成修复；无生产凭据、Gradle、设备、真实API/OSS、发布或push。
+线程证据：业务命令和Binding查询均在主线程，scoreScope为Dispatchers.Main.immediate，识别与远端修复结果通过主Handler投递，截图结果使用系统main executor。reportUsage另检查实际主线程；属性通过该同步通道传给Bootstrap查询，worker只看宿主volatile状态，不靠未证明的跨线程普通字段可见性。该源码分析不替代OEM的实际调度验收。
+
+`tools/test-playback-preparation-notification.ps1`编译真实SongLoadGate及逐字提取的PlaybackSession setter/reportUsage，8项通过：5项真实Gate（含原3项）与3项实际setter序列。Binding实际Java检查增加同used=false的准备开始/结束通知、查询不通知、迟到usage拒绝，7项通过；连同23项调度和26项HTTP复用检查，共56项。Kotlin提取fixture只替代Binding/Looper，不执行真实业务Context、浮窗点击或Android演奏。当前音频/手势连续性和实际下载途中用户操作由根任务接着设备验收。
+
+【MCP调用简报】本地限定源码、公开协议向量、javap与Java/Kotlin/PowerShell测试；最新56项Java/HTTP及8项Kotlin检查通过，真实慢body负例促成修复；无生产凭据、Gradle、设备、真实API/OSS、发布或push。

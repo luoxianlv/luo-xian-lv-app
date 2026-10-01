@@ -78,7 +78,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     private var timeline = PlaybackTimeline(emptyList(), 120)
     private val scoreScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val songLoad = SongLoadGate()
+    private val songLoad = SongLoadGate(::reportUsage)
     private var songLoadJob: Job? = null
     val loadingSong
         get() = songLoad.loading
@@ -88,13 +88,24 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     var playing = false
         private set(value) {
+            if (field == value) return
             field = value
-            if (::binding.isInitialized) binding.usage(value && active && !closed)
+            reportUsage()
         }
 
     /** 播放前的截图识别尚未完成时为 true。 */
     var preparing = false
-        private set
+        private set(value) {
+            if (field == value) return
+            field = value
+            reportUsage()
+        }
+
+    /** 准备与播放只在实际边沿通知；查询、浮窗刷新和计时循环不会重复触发调度。 */
+    private fun reportUsage() {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "播放状态必须在主线程通知" }
+        if (::binding.isInitialized) binding.usage(playing && active && !closed)
+    }
 
     var error: String? = null
         private set

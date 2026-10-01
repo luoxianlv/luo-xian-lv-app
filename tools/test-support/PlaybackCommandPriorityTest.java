@@ -13,6 +13,7 @@ public final class PlaybackCommandPriorityTest {
   public static final class Service extends NativeAccessibilityService {
     List<String> events;
     boolean preparing;
+    boolean expectedPreparing = true;
 
     @Override
     protected app.luoxianlv.hot.contract.NativePlaybackSession createPlaybackSession() {
@@ -24,7 +25,7 @@ public final class PlaybackCommandPriorityTest {
 
     @Override
     protected void playbackUsageChanged() {
-      assertTrue("必须先执行业务状态变更", preparing);
+      assertEquals("必须先执行业务状态变更", expectedPreparing, preparing);
       events.add("priority");
     }
   }
@@ -40,6 +41,7 @@ public final class PlaybackCommandPriorityTest {
     field.setAccessible(true);
     Service service = (Service) ((Unsafe) field.get(null)).allocateInstance(Service.class);
     service.events = new ArrayList<>();
+    service.expectedPreparing = true;
     set(
         NativeAccessibilityService.class,
         service,
@@ -112,6 +114,42 @@ public final class PlaybackCommandPriorityTest {
     var binding = binding(service);
     binding.enabled = false;
     binding.command("play", null);
+    assertTrue(service.events.isEmpty());
+  }
+
+  @Test
+  public void preparationEdgesNotifyWhileActualPlayingRemainsFalse() throws Exception {
+    var service = service();
+    var binding = binding(service);
+    service.preparing = true;
+    binding.usage(false);
+    assertFalse("准备不能当作实际演奏", binding.used);
+    service.preparing = false;
+    service.expectedPreparing = false;
+    binding.usage(false);
+    assertEquals(List.of("priority", "priority"), service.events);
+    assertFalse(binding.used);
+  }
+
+  @Test
+  public void stateQueriesNeverNotifyPriority() throws Exception {
+    var service = service();
+    var binding = binding(service);
+    binding.query("state");
+    binding.query("state");
+    assertTrue(service.events.isEmpty());
+  }
+
+  @Test
+  public void retiredQueuedUsageCannotNotifyNewGeneration() throws Exception {
+    var service = service();
+    var binding = binding(service);
+    android.os.Looper.class.getMethod("setMain", boolean.class).invoke(null, false);
+    service.preparing = true;
+    binding.usage(false);
+    binding.activationEpoch++;
+    android.os.Looper.class.getMethod("setMain", boolean.class).invoke(null, true);
+    Handler.class.getMethod("drain").invoke(null);
     assertTrue(service.events.isEmpty());
   }
 }
