@@ -30,6 +30,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String rejectedResource, resourceFallback;
   private boolean prepareUserWallpaper;
   private String renderUserWallpaper;
+  private boolean schedulerOnly, schedulerPractice, schedulerOffline;
   private boolean receiptFault;
   private boolean receiptRecovered;
   private String restartPrepared;
@@ -80,6 +81,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
     prepareUserWallpaper =
         arguments != null && "true".equals(arguments.getString("prepareUserWallpaper"));
     renderUserWallpaper = arguments == null ? null : arguments.getString("renderUserWallpaper");
+    schedulerOnly = arguments != null && "true".equals(arguments.getString("schedulerOnly"));
+    schedulerPractice =
+        arguments != null && "true".equals(arguments.getString("schedulerPractice"));
+    schedulerOffline = arguments != null && "true".equals(arguments.getString("schedulerOffline"));
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
     receiptRecovered = arguments != null && "true".equals(arguments.getString("receiptRecovered"));
     restartPrepared = arguments == null ? null : arguments.getString("restartPrepared");
@@ -123,7 +128,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   }
 
   private AccessibilityNodeInfo find(String text) {
-    automation.clearCache();
+    if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache();
     for (var window : automation.getWindows()) {
       var found = find(text, window.getRoot());
       if (found != null) return found;
@@ -142,17 +147,25 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private void dismissFullscreenHint() {
     var title = find("Viewing full screen");
     var button = find("Got it");
+    if (button == null) button = find("GOT IT");
     if (title != null
         && button != null
-        && "com.android.systemui".contentEquals(title.getPackageName())
-        && "com.android.systemui".contentEquals(button.getPackageName()))
+        && ("com.android.systemui".contentEquals(title.getPackageName())
+            || "android".contentEquals(title.getPackageName()))
+        && title.getPackageName().equals(button.getPackageName()))
       require(button.performAction(AccessibilityNodeInfo.ACTION_CLICK), "系统全屏首次提示无法关闭");
   }
 
   private String shell(String command) throws Exception {
     try (var input =
         new ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command))) {
-      return new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
+      var output = new java.io.ByteArrayOutputStream();
+      byte[] buffer = new byte[4096];
+      for (int count; (count = input.read(buffer)) != -1; ) {
+        require(output.size() + count <= 1 << 20, "系统命令输出超限");
+        output.write(buffer, 0, count);
+      }
+      return output.toString(StandardCharsets.UTF_8.name()).trim();
     }
   }
 
@@ -374,7 +387,12 @@ public final class NativeAppInstrumentation extends Instrumentation {
         require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
         workRelease.countDown();
       }
-      if (prepareUserWallpaper) {
+      if (schedulerOnly) {
+        if (schedulerOffline) NativeSchedulerChecks.offline(this, main);
+        else NativeSchedulerChecks.run(this, main, schedulerPractice);
+        report.putString("stream", "通过：真实普通宿主调度观察，未注入时钟或更新状态。\n");
+        success = true;
+      } else if (prepareUserWallpaper) {
         var fixture = NativeUserWallpaperFixture.prepare(this, main);
         require(
             fixture.getInt("fileCount") > 0 && fixture.getBoolean("selectionRestored"),

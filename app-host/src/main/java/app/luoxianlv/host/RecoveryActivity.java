@@ -59,9 +59,9 @@ public final class RecoveryActivity extends Activity {
                 .put("failedPid", failed)
                 .put("businessStarted", Bootstrap.startedForRecoveryCheck())
                 .put("kotlinPresent", kotlinPresent);
-        java.nio.file.Files.writeString(
+        java.nio.file.Files.write(
             new java.io.File(getFilesDir(), "native-recovery-helper-report.json").toPath(),
-            report.toString(2));
+            report.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
       } catch (Exception recording) {
         android.util.Log.w("原生恢复", "测试恢复进程资料未能保存", recording);
       }

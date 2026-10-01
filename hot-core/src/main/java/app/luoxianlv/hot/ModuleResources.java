@@ -12,12 +12,17 @@ import java.io.IOException;
 final class ModuleResources {
   private final Resources packaged;
   private final Object loader;
+  private final File runtime, business;
   private final java.util.Set<Resources> owners =
       java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+  private final java.util.Map<Resources, android.content.res.AssetManager> legacyOwners =
+      new java.util.WeakHashMap<>();
   private boolean closed;
 
   ModuleResources(Resources packaged, File runtime, File business) throws IOException {
     this.packaged = packaged;
+    this.runtime = runtime;
+    this.business = business;
     loader = Build.VERSION.SDK_INT >= 30 && runtime != null ? Api30.load(runtime, business) : null;
   }
 
@@ -31,12 +36,33 @@ final class ModuleResources {
       owners.add(current);
       return new Binding(configured, current, false);
     }
-    // Android 8–10 没有公开的资源加载器；此副本只供单个窗口，读取前同步配置。
-    return new Binding(
-        configured,
-        new Resources(
-            packaged.getAssets(), current.getDisplayMetrics(), current.getConfiguration()),
-        true);
+    // 旧系统的 AssetManager 也保存配置；只复制 Resources 仍会让第二窗口改掉第一窗口的资源选择。
+    var assets = runtime == null ? packaged.getAssets() : legacyAssets(owner);
+    Resources resources =
+        new Resources(assets, current.getDisplayMetrics(), current.getConfiguration());
+    if (runtime != null) legacyOwners.put(resources, assets);
+    return new Binding(configured, resources, true);
+  }
+
+  private android.content.res.AssetManager legacyAssets(Context owner) {
+    android.content.res.AssetManager assets = null;
+    try {
+      assets = android.content.res.AssetManager.class.getDeclaredConstructor().newInstance();
+      var add =
+          android.content.res.AssetManager.class.getDeclaredMethod("addAssetPath", String.class);
+      var paths = new java.util.LinkedHashSet<String>();
+      var info = owner.getApplicationInfo();
+      paths.add(info.sourceDir);
+      if (info.splitSourceDirs != null) java.util.Collections.addAll(paths, info.splitSourceDirs);
+      paths.add(runtime.getAbsolutePath());
+      paths.add(business.getAbsolutePath());
+      for (String path : paths)
+        StrictJson.require(path != null && (Integer) add.invoke(assets, path) != 0, "窗口资源路径未加载");
+      return assets;
+    } catch (ReflectiveOperationException | RuntimeException error) {
+      if (assets != null) assets.close();
+      throw new IllegalStateException("旧系统窗口资源加载失败", error);
+    }
   }
 
   /** 页面租约和后台工作已退出后调用；仅移除本代加载器，不关闭系统共享的 AssetManager。 */
@@ -48,6 +74,8 @@ final class ModuleResources {
       owners.clear();
       Api30.close(loader);
     }
+    for (var assets : legacyOwners.values()) assets.close();
+    legacyOwners.clear();
   }
 
   static final class Binding {
