@@ -3,6 +3,27 @@ import app.luoxianlv.buildlogic.CopyHotConfig
 
 plugins { id("com.android.application") }
 
+// 与旧 :app 及现有 ORG_GRADLE_PROJECT_* 环境变量使用同一组属性。
+val releaseSigningProperties =
+    listOf("releaseStoreFile", "releaseStorePassword", "releaseKeyAlias", "releaseKeyPassword")
+val releaseSigningValues = releaseSigningProperties.associateWith {
+    providers.gradleProperty(it).orNull?.takeIf(String::isNotBlank)
+}
+val hasReleaseSigning = releaseSigningValues.values.all { it != null }
+require(hasReleaseSigning || releaseSigningValues.values.all { it == null }) {
+    "Incomplete release signing properties: " +
+        releaseSigningProperties.filter { releaseSigningValues[it] == null }.joinToString(", ")
+}
+fun nativeSigningFlag(name: String): Boolean {
+    val value = providers.gradleProperty(name).orNull ?: return false
+    require(value == "true" || value == "false") { "$name must be true or false" }
+    return value == "true"
+}
+val useNativeDebugSigning = nativeSigningFlag("useDebugSigning")
+require(!nativeSigningFlag("nativeRequireReleaseSigning") || hasReleaseSigning) {
+    "nativeRequireReleaseSigning requires all four release signing properties"
+}
+
 android {
     namespace = "app.luoxianlv.host"
     compileSdk = 37
@@ -14,12 +35,29 @@ android {
         versionName = findProperty("appVersionName") as String? ?: "1.0.9"
         testInstrumentationRunner = "app.luoxianlv.host.NativeAppInstrumentation"
     }
+    if (hasReleaseSigning) {
+        signingConfigs.create("release") {
+            // 保留旧 :app 的相对路径含义，避免迁移时指向另一份 keystore。
+            storeFile = rootProject.project(":app").file(releaseSigningValues.getValue("releaseStoreFile")!!)
+            storePassword = releaseSigningValues.getValue("releaseStorePassword")
+            keyAlias = releaseSigningValues.getValue("releaseKeyAlias")
+            keyPassword = releaseSigningValues.getValue("releaseKeyPassword")
+        }
+    }
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
-        release { isMinifyEnabled = false }
+        release {
+            isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            } else if (useNativeDebugSigning) {
+                // 仅本地安装验收；正式核验脚本明确拒绝 Android Debug 证书。
+                signingConfig = signingConfigs.getByName("debug")
+            }
+        }
     }
     androidResources.noCompress += "apk"
     androidResources.additionalParameters += listOf("--package-id", "0x80")

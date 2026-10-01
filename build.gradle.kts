@@ -7,3 +7,5 @@ plugins {
     // 实际注册在 app/build.gradle.kts 里通过 AGP 的 Instrumentation API 完成。
     alias(libs.plugins.umeng.apm.plugin) apply false
 }
+
+apply(from = rootProject.file("gradle/native-optimize.gradle.kts"))
