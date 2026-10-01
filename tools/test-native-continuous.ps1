@@ -90,6 +90,83 @@ function Assert-ContinuousArtifactScope($PackageReply) {
     }
 }
 
+function Start-ContinuousInstrumentation {
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $Adb
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+    foreach ($argument in @('-s',$Serial,'shell','am','instrument','-w','-e','continuousPlan',
+            'files/native-continuous/plan.json',"$package.test/app.luoxianlv.host.NativeAppInstrumentation")) {
+        $start.ArgumentList.Add($argument)
+    }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    if (!$process.Start()) { throw '本轮连续仪器ADB客户端未启动' }
+    [pscustomobject]@{Process=$process;Out=$process.StandardOutput.ReadToEndAsync();Err=$process.StandardError.ReadToEndAsync()}
+}
+
+function Wait-ContinuousOutput($Child, [int]$Maximum) {
+    if (!$Child -or $Maximum -lt 0 -or $Maximum -gt 15000) { throw '仪器输出等待必须有界' }
+    $until = [Environment]::TickCount64 + $Maximum
+    if (!$Child.Process.WaitForExit($Maximum)) { return $false }
+    $out = $Child.Out.Wait([int][Math]::Max(0,$until-[Environment]::TickCount64))
+    $err = $Child.Err.Wait([int][Math]::Max(0,$until-[Environment]::TickCount64))
+    $out -and $err
+}
+
+function Save-ContinuousOutput {
+    if ($instrument.Out.IsCompletedSuccessfully) {
+        [IO.File]::WriteAllText($stdout,$instrument.Out.Result,[Text.UTF8Encoding]::new($false))
+    }
+    if ($instrument.Err.IsCompletedSuccessfully) {
+        [IO.File]::WriteAllText($stderr,$instrument.Err.Result,[Text.UTF8Encoding]::new($false))
+    }
+}
+
+function Assert-ContinuousFailureReport($Report, $State) {
+    if ($State.runId -cne $runId -or $State.phase -cne 'failed' -or $State.pid -le 0 -or
+        $Report.schema -ne 1 -or $Report.passed -isnot [bool] -or $Report.passed -or
+        $Report.runId -cne $runId -or $Report.pid -ne $State.pid -or
+        @($Report.failureChain).Count -lt 1 -or @($Report.failureChain).Count -gt 24 -or
+        !$Report.lastStage -or $Report.lastStage.completedStages -ne @($Report.stages).Count) {
+        throw '不是本run/PID的安全连续失败回执'
+    }
+    foreach ($row in $Report.failureChain) {
+        if ($row.relation -cnotin @('root','cause','suppressed') -or $row.type -cnotmatch '^[a-zA-Z0-9_.$]+$' -or
+            $row.message -isnot [string] -or $row.message.Length -gt 512 -or
+            ($row.type -cne 'app.luoxianlv.host.NativeContinuousChecks$CheckFailure' -and $row.message -cne '外部异常详情已隐藏')) {
+            throw '连续失败回执异常链未脱敏或格式无效'
+        }
+    }
+}
+
+function Receive-ContinuousFailure($State) {
+    # failed已对应原子安全回执；runner仍需完成finally/finish，最多8秒刷出原客户端和两条输出流。
+    $flushed = Wait-ContinuousOutput $instrument 8000
+    Save-ContinuousOutput
+    $raw = ((Invoke-Adb shell run-as $package cat files/native-continuous/report.json) -join "`n")
+    $diagnostic = $raw | ConvertFrom-Json
+    Assert-ContinuousFailureReport $diagnostic $State
+    $diagnostic | Add-Member -NotePropertyName driverFailureOutputFlushed -NotePropertyValue $flushed
+    Save-Json (Join-Path $output 'failure-report.json') $diagnostic
+}
+
+function Assert-ContinuousSuccessReport($Report) {
+    if ($Report.passed -isnot [bool] -or !$Report.passed -or !$Report.helperPlaybackStateRestored -or
+        @($Report.PSObject.Properties.Name | Where-Object { $_ -cin @('failureType','failureChain','lastStage') }).Count) {
+        throw '成功连续回执缺少自身收尾或仍含失败诊断'
+    }
+}
+
+function Test-ContinuousHomeResumed([string]$Activities) {
+    # API36实际topResumedActivity=与ResumedActivity:，其他版本mResumedActivity:；仅当前Resumed行。
+    $Activities -cmatch '(?m)^\s*(?:(?:mResumedActivity|topResumedActivity)\s*[:=]|ResumedActivity\s*:)[^\r\n]*[ \t]app\.luoxianlv\.debug/(app\.luoxianlv\.|\.)?MainActivity(?:[ \t}\r]|$)'
+}
+
 function Set-ContinuousServices([string]$Value) {
     if ($Value -notmatch '^(null|[A-Za-z0-9_.$/:]*)$') { throw '无障碍设置格式不支持安全还原' }
     if ($Value -eq 'null') { Invoke-Adb shell settings delete secure enabled_accessibility_services | Out-Null }
@@ -176,8 +253,7 @@ function Restore-ContinuousEnvironment([string]$OriginalServices, [string]$Origi
         $until = [DateTime]::UtcNow.AddSeconds(15)
         do {
             $activity = (Invoke-Adb shell dumpsys activity activities) -join "`n"
-            if ($activity -match '(?m)(mResumedActivity|topResumedActivity):[^\r\n]*app\.luoxianlv\.debug/(app\.luoxianlv\.)?MainActivity\b' -or
-                $activity -match '(?m)(mResumedActivity|topResumedActivity):[^\r\n]*app\.luoxianlv\.debug/\.MainActivity\b') { break }
+            if (Test-ContinuousHomeResumed $activity) { break }
             if ([DateTime]::UtcNow -ge $until) { throw 'Debug首页未恢复为实际Resumed窗口' }
             Start-Sleep -Milliseconds 100
         } while ($true)
@@ -288,17 +364,15 @@ try {
     foreach ($path in $packagePaths) {
         Invoke-Lxhot @('upload', $path, '--root', $rootKey, '--server', $origin, '--token-file', $tokenFile) | Out-Null
     }
-    $instrument = Start-Process -FilePath $Adb -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr -ArgumentList @(
-        '-s', $Serial, 'shell', 'am', 'instrument', '-w', '-e', 'continuousPlan', 'files/native-continuous/plan.json',
-        "$package.test/app.luoxianlv.host.NativeAppInstrumentation")
+    $instrument = Start-ContinuousInstrumentation
     $firstPid = $null
     for ($index=0; $index -lt $stages.Count; $index++) {
         $deadline = [DateTime]::UtcNow.AddSeconds(180)
         do {
-            $instrument.Refresh()
-            if ($instrument.HasExited) { throw "连续仪器进程提前结束；记录：$stdout" }
             $state = Read-State
-            if ($state -and $state.phase -eq 'failed') { throw "连续设备验收失败；记录：$stdout" }
+            if ($state -and $state.phase -eq 'failed') { Receive-ContinuousFailure $state; throw "连续设备验收失败；安全根因：$(Join-Path $output 'failure-report.json')；输出：$stdout" }
+            $instrument.Process.Refresh()
+            if ($instrument.Process.HasExited) { throw "连续仪器进程提前结束；记录：$stdout" }
             if ($state -and $state.phase -eq 'ready' -and $state.index -eq $index) { break }
             if ([DateTime]::UtcNow -gt $deadline) { throw '设备没有到达预期连续阶段' }
             Start-Sleep -Milliseconds 250
@@ -320,13 +394,13 @@ try {
         $deadline = [DateTime]::UtcNow.AddMilliseconds($stageTimeoutMillis)
         do {
             $state = Read-State
-            if ($state -and $state.phase -eq 'failed') { throw "连续设备验收失败；记录：$stdout" }
+            if ($state -and $state.phase -eq 'failed') { Receive-ContinuousFailure $state; throw "连续设备验收失败；安全根因：$(Join-Path $output 'failure-report.json')；输出：$stdout" }
             if ($state -and $state.pid -ne $firstPid) { throw '阶段运行时PID改变' }
             if ($state -and (($state.phase -eq 'passed' -and $state.index -eq $index) -or
                 ($state.phase -eq 'ready' -and $state.index -eq ($index+1)) -or
                 ($state.phase -eq 'complete' -and $index -eq ($stages.Count-1)))) { break }
-            $instrument.Refresh()
-            if ($instrument.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw '连续阶段超过共同总期限或仪器提前退出' }
+            $instrument.Process.Refresh()
+            if ($instrument.Process.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw '连续阶段超过共同总期限或仪器提前退出' }
             Start-Sleep -Milliseconds 100
         } while ($true)
         $partial = ((Invoke-Adb shell run-as $package cat files/native-continuous/report.json) -join "`n") | ConvertFrom-Json
@@ -345,13 +419,15 @@ try {
     do {
         $state = Read-State
         if ($state -and $state.phase -eq 'complete') { break }
-        if ($state -and $state.phase -eq 'failed') { throw "连续设备验收失败；记录：$stdout" }
-        $instrument.Refresh()
-        if ($instrument.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw '连续设备验收未完成最终回退' }
+        if ($state -and $state.phase -eq 'failed') { Receive-ContinuousFailure $state; throw "连续设备验收失败；安全根因：$(Join-Path $output 'failure-report.json')；输出：$stdout" }
+        $instrument.Process.Refresh()
+        if ($instrument.Process.HasExited -or [DateTime]::UtcNow -gt $deadline) { throw '连续设备验收未完成最终回退' }
         Start-Sleep -Milliseconds 250
     } while ($true)
-    if (!$instrument.WaitForExit(15000) -or $instrument.ExitCode -ne 0) { throw '连续 instrumentation 未正常结束' }
+    if (!(Wait-ContinuousOutput $instrument 15000) -or $instrument.Process.ExitCode -ne 0) { throw '连续 instrumentation 未正常结束或输出未刷出' }
+    Save-ContinuousOutput
     $deviceReport = ((Invoke-Adb shell run-as $package cat files/native-continuous/report.json) -join "`n") | ConvertFrom-Json
+    Assert-ContinuousSuccessReport $deviceReport
     if (!$deviceReport.passed -or $deviceReport.runId -ne $runId -or $deviceReport.pid -ne $firstPid -or
         $deviceReport.stageTimeoutMillis -ne $stageTimeoutMillis -or $deviceReport.stages.Count -ne $stages.Count -or
         @($deviceReport.stages | Where-Object { $_.mode -eq 'healthy' -and $_.observedActiveMillis -ge 60000 }).Count -ne ($stages.Count-1)) {
@@ -372,9 +448,11 @@ try {
 } finally {
     if ($instrument) {
         try {
-            $instrument.Refresh()
-            if (!$instrument.HasExited) { Stop-Process -Id $instrument.Id -ErrorAction Stop }
+            $instrument.Process.Refresh()
+            if (!$instrument.Process.HasExited) { Stop-Process -Id $instrument.Process.Id -ErrorAction Stop }
         } catch { $continuousCleanupErrors.Add('停止本轮ADB客户端失败') }
+        try { [void](Wait-ContinuousOutput $instrument 2000); Save-ContinuousOutput }
+        catch { $continuousCleanupErrors.Add('保存本轮仪器输出失败') }
     }
     foreach ($cleanupError in @(Restore-ContinuousEnvironment $services $enabled $originalReverse)) {
         $continuousCleanupErrors.Add($cleanupError)

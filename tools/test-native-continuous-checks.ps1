@@ -59,6 +59,35 @@ Reject-Continuous { Invoke-Adb shell am force-stop $package; Invoke-Adb install 
 $continuousJava = [IO.File]::ReadAllText((Join-Path $continuousApp 'app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'))
 Require-Continuous (!$continuousJava.Contains('"nextCheck"')) 'Diagnostic nextCheck is still injected.'
 Require-Continuous ($continuousJava.Contains('stageTimeoutMillis') -and $continuousJava.Contains('awaitStage')) 'Actual shared stage deadline missing.'
+Require-Continuous ($continuousJava.IndexOf('save("report.json", report); //') -lt $continuousJava.IndexOf('checkpoint("failed"')) 'Failed control can precede atomic failure report.'
+Require-Continuous ($continuousJava.IndexOf('report.put("passed", true)') -gt $continuousJava.IndexOf('if (failure != null)')) 'Success report can precede cleanup failure handling.'
+Require-Continuous ([regex]::Matches($continuousText,'Receive-ContinuousFailure \$state; throw').Count -eq 3) 'A failed handshake can bypass output flush.'
+$goodReport = [pscustomobject]@{schema=1;passed=$false;runId=$runId;pid=123;stages=@();lastStage=[pscustomobject]@{completedStages=0};failureChain=@([pscustomobject]@{relation='root';type='app.luoxianlv.host.NativeContinuousChecks$CheckFailure';message='连续验收没有交接安全点'})}
+$failedState = [pscustomobject]@{runId=$runId;pid=123;phase='failed'}
+Assert-ContinuousFailureReport $goodReport $failedState
+$continuousChecks++
+Reject-Continuous { Assert-ContinuousFailureReport $goodReport ([pscustomobject]@{runId=('b'*32);pid=123;phase='failed'}) }
+Reject-Continuous { Assert-ContinuousFailureReport $goodReport ([pscustomobject]@{runId=$runId;pid=124;phase='failed'}) }
+$externalReport = [pscustomobject]@{schema=1;passed=$false;runId=$runId;pid=123;stages=@();lastStage=[pscustomobject]@{completedStages=0};failureChain=@([pscustomobject]@{relation='cause';type='java.io.IOException';message='https://invalid.local/hidden'})}
+Reject-Continuous { Assert-ContinuousFailureReport $externalReport $failedState }
+Assert-ContinuousSuccessReport ([pscustomobject]@{passed=$true;helperPlaybackStateRestored=$true})
+$continuousChecks++
+Reject-Continuous { Assert-ContinuousSuccessReport ([pscustomobject]@{passed=$true;helperPlaybackStateRestored=$true;failureChain=@()}) }
+Reject-Continuous { Assert-ContinuousSuccessReport ([pscustomobject]@{passed=$true}) }
+foreach($vector in @('  topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    '  ResumedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    ' mResumedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/.MainActivity t144}',
+    ' topResumedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}')) {
+    Require-Continuous (Test-ContinuousHomeResumed $vector) 'Actual resumed format was rejected.'
+}
+foreach($vector in @('  topResumedActivity=ActivityRecord{123 u0 com.other/app.luoxianlv.MainActivity t144}',
+    '  topResumedActivity=ActivityRecord{123 u0 other.app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    '  mPausedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    '  Hist #0: ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    '  topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity$Other t144}',
+    '  topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.ui.practice.WallpaperPickerActivity t144}')) {
+    Require-Continuous (!(Test-ContinuousHomeResumed $vector)) 'Wrong app/page or historical record was accepted.'
+}
 Write-Output ("Continuous driver policies: $continuousChecks passed; fake ADB only, no device/API.")
 
 $continuousProfile = [Environment]::GetFolderPath('UserProfile')
@@ -72,8 +101,28 @@ $continuousFactory = Join-Path $continuousApp 'app-business/src/hotProbe/java/ap
 $continuousHarness = Join-Path $continuousApp 'tools/test-support/NativeProbeResourceBindingChecks.java'
 $continuousHelper = Join-Path $continuousApp 'app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'
 $continuousClasses = Join-Path $continuousScratch 'classes'
-& javac '-J-Duser.language=en' '-J-Dfile.encoding=UTF-8' --release 17 -encoding UTF-8 -cp $continuousClasspath -d $continuousClasses $continuousFactory $continuousHarness $continuousHelper
+$continuousFailureChecks = Join-Path $continuousApp 'tools/test-support/NativeContinuousFailureChecks.java'
+& javac '-J-Duser.language=en' '-J-Dfile.encoding=UTF-8' --release 17 -encoding UTF-8 -cp $continuousClasspath -d $continuousClasses $continuousFactory $continuousHarness $continuousHelper $continuousFailureChecks
 if($LASTEXITCODE -ne 0){throw 'Actual continuous helper/probe did not compile.'}
+& java -cp ($continuousClasses+';'+$continuousClasspath) app.luoxianlv.host.NativeContinuousFailureChecks ([IO.Path]::GetRelativePath($continuousApp,$continuousClasses))
+if($LASTEXITCODE -ne 0){throw 'Actual helper safe failure evidence failed.'}
+
+# 真正本机子进程延迟输出，覆盖failed后两条管道刷出；无ADB/设备或网络。
+$continuousFlushStart = [Diagnostics.ProcessStartInfo]::new()
+$continuousFlushStart.FileName = (Get-Process -Id $PID).Path
+$continuousFlushStart.UseShellExecute=$false; $continuousFlushStart.CreateNoWindow=$true
+$continuousFlushStart.RedirectStandardOutput=$true; $continuousFlushStart.RedirectStandardError=$true
+foreach($argument in @('-NoProfile','-Command','Start-Sleep -Milliseconds 150; [Console]::Out.WriteLine("own delayed diagnostic"); [Console]::Error.WriteLine("own delayed stderr")')){$continuousFlushStart.ArgumentList.Add($argument)}
+$continuousFlushProcess=[Diagnostics.Process]::new();$continuousFlushProcess.StartInfo=$continuousFlushStart
+if(!$continuousFlushProcess.Start()){throw 'Local output fixture failed to start.'}
+$instrument=[pscustomobject]@{Process=$continuousFlushProcess;Out=$continuousFlushProcess.StandardOutput.ReadToEndAsync();Err=$continuousFlushProcess.StandardError.ReadToEndAsync()}
+$stdout=Join-Path $continuousScratch 'fixture-stdout.txt';$stderr=Join-Path $continuousScratch 'fixture-stderr.txt'
+Require-Continuous (Wait-ContinuousOutput $instrument 8000) 'Actual delayed output did not flush.'
+Save-ContinuousOutput
+Require-Continuous (([IO.File]::ReadAllText($stdout)).Contains('own delayed diagnostic')) 'Actual stdout missing.'
+Require-Continuous (([IO.File]::ReadAllText($stderr)).Contains('own delayed stderr')) 'Actual stderr missing.'
+Reject-Continuous { Wait-ContinuousOutput $instrument 15001 }
+Write-Output 'PASS actual local process: delayed stdout/stderr retained after bounded flush; no device/API.'
 & java -cp ($continuousClasses+';'+$continuousClasspath) app.luoxianlv.host.NativeProbeResourceBindingChecks
 if($LASTEXITCODE -ne 0){throw 'Actual compiled delegate did not receive official resource binding.'}
 $continuousFactoryText = [IO.File]::ReadAllText($continuousFactory)

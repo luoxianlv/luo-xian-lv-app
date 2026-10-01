@@ -40,6 +40,8 @@ final class NativeContinuousChecks {
   private final ClassLoader sharedRuntime;
   private Long migrationRegisteredAt;
   private long stageDeadline;
+  private String observationPhase = "initialization", stageSnapshot = "";
+  private int stageIndex = -1;
 
   /** 在打开任何页面之前停住测试调度，避免已有本机发布抢在阶段握手之前更新。 */
   static void pauseBeforeActivity(Instrumentation test) throws Exception {
@@ -114,6 +116,7 @@ final class NativeContinuousChecks {
   private void run(String previousServices) throws Exception {
     Bundle[] originalPlayback = new Bundle[1];
     boolean completed = false;
+    Throwable failure = null;
     var report =
         new JSONObject()
             .put("schema", 1)
@@ -138,8 +141,14 @@ final class NativeContinuousChecks {
               : previousServices.contains(component)
                   ? previousServices
                   : previousServices + ":" + component;
-      shell("settings put secure enabled_accessibility_services '" + services + "'");
+      // UiAutomation按参数执行，无shell；单引号会成为设置值本身，$无需shell转义。
+      shell(accessibilityServicesCommand(services));
       shell("settings put secure accessibility_enabled 1");
+      check(shell("settings get secure enabled_accessibility_services").trim().equals(services),
+          "连续验收无障碍组件列表未精确写入");
+      check(shell("settings get secure accessibility_enabled").trim().equals("1"),
+          "连续验收无障碍启用标志未精确写入");
+      observationPhase = "playback-connect";
       await("连续验收播放会话未连接", 20000, () -> PlaybackBridge.current() != null);
       main(
           test,
@@ -149,7 +158,9 @@ final class NativeContinuousChecks {
             hidden.putBoolean("enabled", false);
             PlaybackBridge.current().command("showFloating", hidden);
           });
+      observationPhase = "handover-safe-point";
       await("连续验收没有交接安全点", 30000, () -> onMain(() -> Bootstrap.canAutoActivate() && idle()));
+      observationPhase = "baseline-contract";
       migrationRegisteredAt = ProcessOnce.completedAt("storage-migration");
       check(migrationRegisteredAt != null, "最新基线没有登记稳定层存储迁移");
       check(
@@ -159,26 +170,21 @@ final class NativeContinuousChecks {
       System.gc();
       System.runFinalization();
       SystemClock.sleep(500);
+      observationPhase = "final-bounds";
       report
           .put("explicitGcForObservation", true)
           .put("retiredLoaderWeakReferences", retiredLoaders.size())
           .put(
               "retiredLoadersObservedAlive",
               retiredLoaders.stream().filter(ref -> ref.get() != null).count())
-          .put("finalBounds", bounds())
-          .put("passed", true);
-      save("report.json", report);
-      checkpoint("complete", plan.getJSONArray("stages").length(), "");
-      step("通过：同一 PID 连续三份不同业务 APK 的真实健康确认及第四份整组回退，宿主持有边界成立");
+          .put("finalBounds", bounds());
       completed = true;
-    } catch (Throwable failure) {
-      report.put("passed", false).put("failureType", failure.getClass().getSimpleName());
-      save("report.json", report);
-      checkpoint("failed", results.length(), "");
-      throw failure;
+    } catch (Throwable invalid) {
+      failure = invalid;
     } finally {
       boolean finished = completed;
-      main(
+      try {
+        main(
           test,
           () -> {
             if (originalPlayback[0] != null && PlaybackBridge.current() != null) {
@@ -198,13 +204,37 @@ final class NativeContinuousChecks {
               updates.usageChanged();
             }
           });
+      } catch (Throwable closing) {
+        var cleanup = new CheckFailure("连续验收自身播放状态收尾失败", closing);
+        if (failure == null) failure = cleanup;
+        else failure.addSuppressed(cleanup);
+      }
     }
+    if (failure != null) {
+      report.put("passed", false).put("failureType", failure.getClass().getSimpleName())
+          .put("failureChain", new JSONArray(safeFailureChain(failure)))
+          .put("lastStage", new JSONObject().put("phase", observationPhase).put("index", stageIndex)
+              .put("snapshot", safeIdentity(stageSnapshot)).put("completedStages", results.length())
+              .put("elapsedRealtimeMillis", SystemClock.elapsedRealtime()).put("stageDeadlineMillis", stageDeadline));
+      failureSelection(report);
+      save("report.json", report); // 先原子保存安全根因，再公开failed，避免driver抢先停止仪器。
+      checkpoint("failed", results.length(), "");
+      // runner会输出throwable栈；只抛固定消息，不把底层URL/路径异常正文交给它。
+      throw new CheckFailure("连续设备验收失败，安全根因已保存在本run回执");
+    }
+    report.put("passed", true).put("helperPlaybackStateRestored", true);
+    save("report.json", report);
+    checkpoint("complete", plan.getJSONArray("stages").length(), "");
+    step("通过：同一 PID 连续三份不同业务 APK 的真实健康确认及第四份整组回退，宿主持有边界成立");
   }
 
   /** 此方法返回后不再强持有旧代际；跨阶段只保存基础字段与加载器弱引用。 */
   private void stage(int index) throws Exception {
     var stage = plan.getJSONArray("stages").getJSONObject(index);
     String target = stage.getString("snapshot");
+    stageIndex = index;
+    stageSnapshot = target;
+    observationPhase = "previous-transaction";
     boolean rollback = stage.getString("mode").equals("rollback");
     await("上一事务未退出", 35000, () -> onMain(this::idle));
     Bootstrap.Source previous = Bootstrap.source();
@@ -375,7 +405,7 @@ final class NativeContinuousChecks {
             return outbox.batch(100).isEmpty()
                 && Bootstrap.startupState().journal.state().outcomes.isEmpty();
           } catch (Exception error) {
-            throw new AssertionError(error);
+            throw new CheckFailure("持久健康回执观察失败", error);
           }
         });
     main(
@@ -434,7 +464,7 @@ final class NativeContinuousChecks {
                 .put("activeResourceProviders", loader.getProviders().size())
                 .put("activeResourceOwners", ((Collection<?>) field(resources, "owners")).size());
           } catch (Exception error) {
-            throw new AssertionError(error);
+            throw new CheckFailure("最终持有边界编码失败", error);
           }
         });
     Class<?> leases =
@@ -537,11 +567,12 @@ final class NativeContinuousChecks {
           && go.getInt("index") == index
           && go.getString("snapshot").equals(snapshot);
     } catch (Exception error) {
-      throw new AssertionError("阶段确认损坏", error);
+      throw new CheckFailure("阶段确认损坏", error);
     }
   }
 
   private void checkpoint(String phase, int index, String snapshot) throws Exception {
+    observationPhase = phase;
     save(
         "state.json",
         new JSONObject()
@@ -563,12 +594,17 @@ final class NativeContinuousChecks {
         StandardCopyOption.REPLACE_EXISTING);
   }
 
-  private void shell(String command) throws Exception {
+  static String accessibilityServicesCommand(String services) {
+    check(services != null && services.matches("[A-Za-z0-9_.$/:]+"), "连续验收无障碍组件值不能安全编码");
+    return "settings put secure enabled_accessibility_services " + services;
+  }
+
+  private String shell(String command) throws Exception {
     try (var input =
         new android.os.ParcelFileDescriptor.AutoCloseInputStream(
             test.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
                 .executeShellCommand(command))) {
-      input.readAllBytes();
+      return new String(input.readAllBytes(), StandardCharsets.UTF_8);
     }
   }
 
@@ -625,7 +661,7 @@ final class NativeContinuousChecks {
       } catch (NoSuchFieldException ignored) {
       }
     }
-    throw new AssertionError("缺少测试测量字段：" + name);
+    throw new CheckFailure("缺少测试测量字段：" + name);
   }
 
   private static Object field(Object owner, String name) {
@@ -633,7 +669,7 @@ final class NativeContinuousChecks {
     try {
       return member(owner, name).get(owner instanceof Class<?> ? null : owner);
     } catch (ReflectiveOperationException error) {
-      throw new AssertionError(error);
+      throw new CheckFailure("测试字段读取失败", error);
     }
   }
 
@@ -641,7 +677,7 @@ final class NativeContinuousChecks {
     try {
       member(owner, name).set(owner instanceof Class<?> ? null : owner, value);
     } catch (ReflectiveOperationException error) {
-      throw new AssertionError(error);
+      throw new CheckFailure("测试字段写入失败", error);
     }
   }
 
@@ -655,7 +691,7 @@ final class NativeContinuousChecks {
             failure.set(error);
           }
         });
-    if (failure.get() != null) throw new AssertionError("连续验收主线程检查失败", failure.get());
+    if (failure.get() != null) throw new CheckFailure("连续验收主线程检查失败", failure.get());
   }
 
   private boolean onMain(BooleanSupplier action) {
@@ -686,6 +722,52 @@ final class NativeContinuousChecks {
   }
 
   private static void check(boolean condition, String message) {
-    if (!condition) throw new AssertionError(message);
+    if (!condition) throw new CheckFailure(message);
+  }
+
+  /** 只保存宿主拥有的标识与日志标量；不调用故障业务，不另阻塞主线程。 */
+  private static void failureSelection(JSONObject report) throws Exception {
+    try {
+      var source = Bootstrap.source().prepared;
+      report.put("source", new JSONObject().put("identity", safeIdentity(source.identity()))
+          .put("runtime", safeIdentity(source.runtimeHash)).put("bundled", source.manifest == null));
+    } catch (Throwable unavailable) {
+      report.put("sourceUnavailable", true);
+    }
+    try {
+      var state = Bootstrap.startupState().journal.state();
+      report.put("journal", new JSONObject().put("phase", state.phase.name())
+          .put("stable", safeIdentity(state.stable)).put("active", safeIdentity(state.active))
+          .put("candidate", safeIdentity(state.candidate)).put("previousStable", safeIdentity(state.previousStable))
+          .put("revision", state.revision).put("trustVersion", state.trustVersion)
+          .put("quarantineCount", state.quarantine.size()).put("outcomesCount", state.outcomes.size()));
+    } catch (Throwable unavailable) {
+      report.put("journalUnavailable", true);
+    }
+  }
+
+  static String safeIdentity(String value) {
+    return value != null && (value.isEmpty() || HotManifest.validHash(value)
+        || value.matches("apk:[a-f0-9]{64}:[a-f0-9]{64}")) ? value : "unavailable";
+  }
+
+  /** helper自身固定断言可见；反射/网络/文件等外部异常只保留类型。 */
+  static final class CheckFailure extends AssertionError {
+    CheckFailure(String message) { super(message); }
+    CheckFailure(String message, Throwable cause) { super(message, cause); }
+  }
+
+  static List<Map<String, Object>> safeFailureChain(Throwable failure) {
+    var rows = new ArrayList<Map<String, Object>>();
+    addFailure(failure, "root", rows, Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>()));
+    return rows;
+  }
+
+  private static void addFailure(Throwable failure, String relation, List<Map<String, Object>> rows, Set<Throwable> seen) {
+    if (failure == null || rows.size() >= 24 || !seen.add(failure)) return;
+    rows.add(Map.of("relation", relation, "type", failure.getClass().getName(), "message",
+        failure instanceof CheckFailure ? Objects.toString(failure.getMessage(), "") : "外部异常详情已隐藏"));
+    addFailure(failure.getCause(), "cause", rows, seen);
+    for (Throwable suppressed : failure.getSuppressed()) addFailure(suppressed, "suppressed", rows, seen);
   }
 }
