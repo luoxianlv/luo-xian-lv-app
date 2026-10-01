@@ -40,6 +40,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
   private volatile String failureCode = "", failedCheck = "", mainFailureClass = "";
   private volatile Observation lastObservation;
   private boolean foregroundStartObserved, foregroundPolicyObserved;
+  private NativeForegroundLogEvents.Result foregroundLogObservation;
   private final AtomicInteger activityCreations = new AtomicInteger();
   private final AtomicInteger activityStarts = new AtomicInteger();
   private final Application.ActivityLifecycleCallbacks activities =
@@ -73,6 +74,9 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       case "未选择预期真实组合" -> "SOURCE_SNAPSHOT_MISMATCH";
       case "未进入预期真实日志阶段" -> "JOURNAL_PHASE_MISMATCH";
       case "未观察到真实服务业务连接或前台策略" -> "SERVICE_NOT_READY";
+      case "本次前台启动出现业务不可用事件" -> "FOREGROUND_BUSINESS_UNAVAILABLE";
+      case "本次前台启动出现主动停止请求" -> "FOREGROUND_EXPLICIT_STOP";
+      case "固定tag前台日志超限" -> "FOREGROUND_LOG_LIMIT";
       case "无障碍会话尚未建立" -> "PLAYBACK_SESSION_MISSING";
       case "无障碍会话未使用已选择业务加载器" -> "PLAYBACK_LOADER_MISMATCH";
       case "原稳定指针与预期不符" -> "STABLE_MISMATCH";
@@ -133,6 +137,30 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
         var input = new ParcelFileDescriptor.AutoCloseInputStream(descriptor)) {
       return new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
     }
+  }
+
+  /** 只读本PID固定tag；原日志不保存、不输出；OOM/无界日志不能变成通过证据。 */
+  private String foregroundLog() throws Exception {
+    try (ParcelFileDescriptor descriptor = automation.executeShellCommand(
+            "logcat -d -v epoch --pid " + android.os.Process.myPid() + " -s 播放服务:I");
+        var input = new ParcelFileDescriptor.AutoCloseInputStream(descriptor)) {
+      var bytes = new java.io.ByteArrayOutputStream();
+      byte[] chunk = new byte[4096];
+      for (int count; (count = input.read(chunk)) != -1;) {
+        require(bytes.size() + count <= NativeForegroundLogEvents.MAX_BYTES, "固定tag前台日志超限");
+        bytes.write(chunk, 0, count);
+      }
+      return StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+          .decode(java.nio.ByteBuffer.wrap(bytes.toByteArray())).toString();
+    }
+  }
+
+  private NativeForegroundLogEvents.Result foregroundEvents(NativeForegroundLogEvents.Cursor cursor) throws Exception {
+    var events = cursor.observe(foregroundLog());
+    foregroundLogObservation = events;
+    require(!events.businessUnavailable, "本次前台启动出现业务不可用事件");
+    require(!events.stopRequestedObserved, "本次前台启动出现主动停止请求");
+    return events;
   }
 
   private void restoreSetting(String name, String value) throws Exception {
@@ -261,6 +289,11 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
         .put("activityCreations", activityCreations.get()).put("activityStarts", activityStarts.get())
         .put("foregroundStartObserved", foregroundStartObserved)
         .put("foregroundPolicyObserved", foregroundPolicyObserved);
+    if (foregroundLogObservation != null) report.put("foregroundLog", new org.json.JSONObject()
+        .put("normalIdleStopped", foregroundLogObservation.normalIdleStopped)
+        .put("businessUnavailable", foregroundLogObservation.businessUnavailable)
+        .put("stopRequestedObserved", foregroundLogObservation.stopRequestedObserved)
+        .put("startId", foregroundLogObservation.startId));
     Observation value = lastObservation;
     report.put("selectionObserved", value != null);
     if (value != null) report.put("selected", new org.json.JSONObject()
@@ -314,6 +347,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
     Application application = (Application) getTargetContext().getApplicationContext();
     String previousServices = null, previousEnabled = null;
     boolean settingsChanged = false, success = false;
+    NativeForegroundLogEvents.Cursor foregroundCursor = null;
     try {
       String consumer = option("consumer", "accessibility");
       require(consumer.equals("accessibility") || consumer.equals("foreground"), "未知服务入口");
@@ -360,8 +394,12 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
         restoreSetting("enabled_accessibility_services", enabled);
         shell("settings put secure accessibility_enabled 1");
       } else {
-        onMain(() -> getTargetContext().startForegroundService(
-            new Intent(getTargetContext(), PlaybackForegroundService.class)));
+        foregroundCursor = new NativeForegroundLogEvents.Cursor(android.os.Process.myPid(), foregroundLog());
+        var cursor = foregroundCursor;
+        onMain(() -> {
+          cursor.startedAt(System.currentTimeMillis());
+          getTargetContext().startForegroundService(new Intent(getTargetContext(), PlaybackForegroundService.class));
+        });
       }
 
       long until = SystemClock.elapsedRealtime() + 90000;
@@ -369,11 +407,13 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       boolean foregroundStarted = false, foregroundPolicyCreated = false;
       stage = "真实来源与服务连接";
       while (SystemClock.elapsedRealtime() < until) {
+        boolean logPair = false;
+        if (foregroundCursor != null) logPair = foregroundEvents(foregroundCursor).normalIdleStopped;
         if (sourceReady()) {
           selected = observe();
           noActivity(selected);
-          foregroundStarted |= selected.foregroundStarted;
-          foregroundPolicyCreated |= selected.foregroundPolicyCreated;
+          foregroundStarted |= selected.foregroundStarted || logPair;
+          foregroundPolicyCreated |= selected.foregroundPolicyCreated || logPair;
           foregroundStartObserved = foregroundStarted;
           foregroundPolicyObserved = foregroundPolicyCreated;
           boolean serviceReady = consumer.equals("accessibility") ? selected.playbackConnected
@@ -381,7 +421,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
           if (serviceReady && expectedSnapshot.equals(selected.snapshot)
               && expectedPhase.equals(selected.phase)) break;
         }
-        SystemClock.sleep(10);
+        SystemClock.sleep(foregroundCursor == null ? 10 : 100);
       }
       require(selected != null, "业务来源始终未准备完成");
       require(expectedSnapshot.equals(selected.snapshot), "未选择预期真实组合");
@@ -407,6 +447,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       long observedBefore = health == null ? 0 : health.observedMillis();
       long started = SystemClock.elapsedRealtime();
       while (SystemClock.elapsedRealtime() - started < observeMillis) {
+        if (foregroundCursor != null) foregroundEvents(foregroundCursor);
         Observation idle = observe();
         noActivity(idle);
         require(!idle.stopped && !idle.playbackUsed, "空闲观察期间业务停止或开始实际播放");
@@ -418,6 +459,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       long observedAfter = health == null ? 0 : health.observedMillis();
       require(observedAfter == observedBefore, "无页面且未播放的服务仍累计了健康时间");
       Observation end = observe();
+      if (foregroundCursor != null) foregroundEvents(foregroundCursor);
       require(end.revision >= minimumRevision && end.trustVersion >= minimumTrust, "版本或信任下限下降");
       require(end.revision >= selected.revision && end.trustVersion >= selected.trustVersion, "本次观察回滚了版本下限");
       report.put("passed", true).put("productionTouched", false)
@@ -433,6 +475,15 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
           .put("idleObservationMillis", SystemClock.elapsedRealtime() - started)
           .put("healthBeforeMillis", observedBefore).put("healthAfterMillis", observedAfter)
           .put("healthyPromotionChecked", false).put("stateInjected", false);
+      if (foregroundCursor != null) report.put("foregroundEvidence", new org.json.JSONObject()
+          .put("fixedTag", "播放服务").put("pidFiltered", true).put("startupCursorUsed", true)
+          .put("normalIdleStoppedViaEvents", foregroundLogObservation.normalIdleStopped)
+          .put("liveStartSampled", selected.foregroundStarted)
+          .put("livePolicySampled", selected.foregroundPolicyCreated)
+          .put("startId", foregroundLogObservation.startId).put("enterEpochMillis", foregroundLogObservation.enterAt)
+          .put("stopEpochMillis", foregroundLogObservation.stopAt).put("businessUnavailableObserved", false)
+          .put("stopRequestedObserved", false).put("sustainedForegroundVerified", false)
+          .put("actualPlaybackVerified", false).put("rawLogsReported", false));
       success = true;
       result.putString("stream", "通过：真实服务无 Activity 冷启动、来源与待重启选择符合预期，空闲服务未累计健康时间。\n");
     } catch (Throwable error) {
