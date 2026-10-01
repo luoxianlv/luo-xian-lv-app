@@ -12,4 +12,3 @@ half4 main(float2 xy) {
     float2 direction=delta/max(distance,0.001);
     return background.eval(xy-direction*bend);
 }
-

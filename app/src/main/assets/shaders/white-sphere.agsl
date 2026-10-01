@@ -43,4 +43,3 @@ half4 main(float2 xy) {
     float alpha=coverage*opacity;
     return half4(half3(clamp(value,0.0,1.0)*alpha),half(alpha));
 }
-
