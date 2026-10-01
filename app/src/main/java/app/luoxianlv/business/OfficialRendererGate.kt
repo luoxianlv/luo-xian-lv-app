@@ -1,12 +1,19 @@
 package app.luoxianlv.business
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.graphics.Color
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.webkit.*
 import android.widget.FrameLayout
+import app.luoxianlv.business.ui.findActivity
 import app.luoxianlv.hot.contract.OfficialAssets
 import app.luoxianlv.hot.contract.OfficialResources
 import java.io.ByteArrayInputStream
@@ -19,7 +26,7 @@ internal object OfficialRendererGate {
     private var jsPassed = false
     private var visualPassed = false
     private var failure: Throwable? = null
-    private data class Waiter(val visual: Boolean, val parent: ViewGroup?, val complete: (Throwable?) -> Unit)
+    private data class Waiter(val visual: Boolean, val parent: ViewGroup?, val activity: Activity?, val complete: (Throwable?) -> Unit)
     private val waiters = linkedMapOf<Any, Waiter>()
     private val failures = linkedMapOf<Any, (Throwable?) -> Unit>()
 
@@ -38,20 +45,22 @@ internal object OfficialRendererGate {
             complete(null); return AutoCloseable {}
         }
         failure?.let { complete(it); return AutoCloseable {} }
+        val activity = context.findActivity()
+        require(!visual || (activity != null && parent === activity.window.decorView)) { "官方渲染可见检查缺少实际Activity Decor" }
         val token = Any(); failures[token] = complete
         if ((visual && visualPassed) || (!visual && jsPassed)) complete(null)
         else {
-            waiters[token] = Waiter(visual, parent, complete)
+            waiters[token] = Waiter(visual, parent, activity, complete)
             try {
                 if (job == null) job = Check(context)
-                if (parent != null) job?.attach(parent)
                 job?.start()
+                job?.refreshWindow()
             } catch (error: Throwable) { finish(false, false, error) }
         }
         return AutoCloseable {
             waiters.remove(token); failures.remove(token)
             if (waiters.isEmpty()) { job?.close(); job = null }
-            else waiters.values.firstOrNull { it.visual && it.parent != null }?.parent?.let { job?.attach(it) }
+            else job?.refreshWindow()
         }
     }
     private fun finish(js: Boolean, visual: Boolean, error: Throwable? = null) {
@@ -64,7 +73,7 @@ internal object OfficialRendererGate {
             jsPassed = jsPassed || js; visualPassed = visualPassed || visual
             val notify = waiters.entries.filter { if (it.value.visual) visualPassed else jsPassed }
             notify.forEach { waiters.remove(it.key) }
-            if (waiters.isEmpty()) { job?.close(); job = null }
+            if (waiters.isEmpty()) { job?.close(); job = null } else job?.refreshWindow()
             notify.forEach { it.value.complete(null) }
         }
     }
@@ -78,7 +87,7 @@ internal object OfficialRendererGate {
         private val handler = Handler(Looper.getMainLooper())
         private val lease = checkNotNull(BusinessJobs.gate.retain()) { "官方资源检查代际已退役" }
         private val browser = try {
-            WebView(context).also { value ->
+            CheckWebView(context).also { value ->
                 try { value.apply {
                     alpha = .01f; setBackgroundColor(Color.TRANSPARENT)
                     isFocusable = false; isClickable = false
@@ -97,8 +106,23 @@ internal object OfficialRendererGate {
         private var jsReady = false
         private var visualRequested = false
         private var visualEpoch = 0L
-        private val timeout = Runnable { if (!closed) finish(false, false, IllegalStateException("官方渲染器首帧检查超时")) }
+        private val deadline = RendererValidationBudget(12000)
+        private var refreshing = false
+        private val parents = linkedMapOf<ViewGroup, ParentWatch>()
+        private val stopped = java.util.WeakHashMap<Activity, Boolean>()
+        private var lifecycleApplication: Application? = null
+        private val lifecycle = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, state: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) { stopped[activity] = false; refreshWindow() }
+            override fun onActivityResumed(activity: Activity) { stopped[activity] = false; refreshWindow() }
+            override fun onActivityPaused(activity: Activity) { refreshWindow() }
+            override fun onActivityStopped(activity: Activity) { stopped[activity] = true; refreshWindow() }
+            override fun onActivityDestroyed(activity: Activity) { stopped[activity] = true; refreshWindow() }
+            override fun onActivitySaveInstanceState(activity: Activity, state: Bundle) {}
+        }
+        private val timeout = Runnable { if (!closed) updateDeadline() }
         init {
+            browser.stateChanged = { refreshWindow() }
             browser.webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?) = true
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse {
@@ -131,7 +155,7 @@ internal object OfficialRendererGate {
                 override fun onReceivedTitle(view: WebView?, title: String?) {
                     if (closed) return
                     if (title == "wallpaper:error") finish(false, false, IllegalStateException("官方渲染器固定项目运行失败"))
-                    if (title == "wallpaper:ready") { jsReady = true; requestVisual(); finish(true, false) }
+                    if (title == "wallpaper:ready") { jsReady = true; refreshWindow(); if (!closed) finish(true, false) }
                 }
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                     if (!closed && message.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
@@ -141,34 +165,131 @@ internal object OfficialRendererGate {
                 }
             }
         }
-        fun attach(parent: ViewGroup) {
-            if (closed) return
-            if (browser.parent !== parent) {
-                (browser.parent as? ViewGroup)?.removeView(browser); parent.addView(browser)
-                visualEpoch++; visualRequested = false
-            }
-            requestVisual()
-        }
         fun start() {
             if (closed || started) return
-            started = true; handler.postDelayed(timeout, 12000)
+            started = true
             browser.loadUrl("https://practice.invalid/index.html")
+            refreshWindow()
+        }
+        private fun displayable(parent: ViewGroup): Boolean {
+            val activity = waiters.values.firstOrNull { it.visual && it.parent === parent }?.activity ?: return false
+            return parent.isAttachedToWindow && parent.windowVisibility == View.VISIBLE && parent.isShown &&
+                !activity.isFinishing && !activity.isDestroyed && stopped[activity] != true
+        }
+        private fun displayableBrowser(): Boolean = (browser.parent as? ViewGroup)?.let {
+            displayable(it) && browser.isAttachedToWindow && browser.windowVisibility == View.VISIBLE && browser.isShown
+        } == true
+
+        // 只观察当前等待者的实际 Decor；单个临时 lifecycle observer 在 close/无visual等待时注销。
+        fun refreshWindow() {
+            if (closed || refreshing) return
+            refreshing = true
+            try {
+                val requested = waiters.values.filter { it.visual }.mapNotNull { it.parent }.toSet()
+                parents.keys.filter { it !in requested }.toList().forEach { parents.remove(it)?.close() }
+                requested.forEach { parent ->
+                    if (parent !in parents) parents[parent] = ParentWatch(parent) { refreshWindow() }
+                    if (lifecycleApplication == null) waiters.values.firstOrNull { it.parent === parent }?.activity?.application?.let {
+                        lifecycleApplication = it; it.registerActivityLifecycleCallbacks(lifecycle)
+                    }
+                }
+                if (requested.isEmpty()) {
+                    lifecycleApplication?.unregisterActivityLifecycleCallbacks(lifecycle); lifecycleApplication = null
+                    stopped.clear()
+                    if (browser.parent != null) {
+                        (browser.parent as? ViewGroup)?.removeView(browser)
+                        visualEpoch++; visualRequested = false
+                        browser.onResume() // 仅此实例的JS-only检查；不调用影响全进程WebView的resumeTimers。
+                    }
+                } else {
+                    val current = browser.parent as? ViewGroup
+                    val parent = requested.firstOrNull { displayable(it) } ?: current?.takeIf { it in requested } ?: requested.first()
+                    if (browser.parent !== parent) {
+                        (browser.parent as? ViewGroup)?.removeView(browser); parent.addView(browser)
+                        visualEpoch++; visualRequested = false
+                    }
+                    if (!displayableBrowser() && visualRequested) { visualEpoch++; visualRequested = false }
+                }
+                updateDeadline()
+                requestVisual()
+            } finally { refreshing = false }
+        }
+        private fun updateDeadline() {
+            handler.removeCallbacks(timeout)
+            if (closed || !started) return
+            val visual = waiters.values.any { it.visual }
+            val remaining = deadline.update(SystemClock.uptimeMillis(), !visual || displayableBrowser()) ?: return
+            if (remaining == 0L) finish(false, false, IllegalStateException("官方渲染器有效验证时间超时"))
+            else handler.postDelayed(timeout, remaining)
         }
         private fun requestVisual() {
-            if (closed || !jsReady || browser.parent == null || visualRequested) return
+            if (closed || !jsReady || !displayableBrowser() || visualRequested) return
             visualRequested = true
             val epoch = visualEpoch
             browser.postVisualStateCallback(1, object : WebView.VisualStateCallback() {
-                override fun onComplete(requestId: Long) { if (!closed && visualEpoch == epoch) finish(true, true) }
+                override fun onComplete(requestId: Long) {
+                    if (closed || visualEpoch != epoch) return
+                    updateDeadline()
+                    if (closed) return
+                    if (displayableBrowser()) finish(true, true)
+                    else { visualEpoch++; visualRequested = false; refreshWindow() }
+                }
             })
         }
         override fun close() {
             if (closed) return; closed = true
+            deadline.close(); browser.stateChanged = null
             handler.removeCallbacksAndMessages(null)
             try {
-                browser.stopLoading(); (browser.parent as? ViewGroup)?.removeView(browser)
-                browser.webChromeClient = null; browser.webViewClient = WebViewClient(); browser.destroy()
+                val application = lifecycleApplication; lifecycleApplication = null
+                runCatching { application?.unregisterActivityLifecycleCallbacks(lifecycle) }
+                parents.values.forEach { watch -> runCatching { watch.close() } }; parents.clear(); stopped.clear()
+                runCatching { browser.stopLoading() }
+                runCatching { (browser.parent as? ViewGroup)?.removeView(browser) }
+                try { browser.webChromeClient = null; browser.webViewClient = WebViewClient() } finally { browser.destroy() }
             } finally { lease.close() }
         }
     }
+
+    private class CheckWebView(context: Context) : WebView(context) {
+        var stateChanged: (() -> Unit)? = null
+        override fun onAttachedToWindow() { super.onAttachedToWindow(); stateChanged?.invoke() }
+        override fun onDetachedFromWindow() { super.onDetachedFromWindow(); stateChanged?.invoke() }
+        override fun onWindowVisibilityChanged(visibility: Int) { super.onWindowVisibilityChanged(visibility); stateChanged?.invoke() }
+        override fun onVisibilityChanged(changedView: View, visibility: Int) { super.onVisibilityChanged(changedView, visibility); stateChanged?.invoke() }
+    }
+
+    private class ParentWatch(private val parent: ViewGroup, changed: () -> Unit) : AutoCloseable {
+        private val tree = parent.viewTreeObserver
+        private val layout = ViewTreeObserver.OnGlobalLayoutListener { changed() }
+        private val focus = ViewTreeObserver.OnWindowFocusChangeListener { changed() }
+        private val attach = object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) { changed() }
+            override fun onViewDetachedFromWindow(view: View) { changed() }
+        }
+        init { parent.addOnAttachStateChangeListener(attach); tree.addOnGlobalLayoutListener(layout); tree.addOnWindowFocusChangeListener(focus) }
+        override fun close() {
+            parent.removeOnAttachStateChangeListener(attach)
+            listOf(tree, parent.viewTreeObserver).distinct().filter { it.isAlive }.forEach {
+                it.removeOnGlobalLayoutListener(layout); it.removeOnWindowFocusChangeListener(focus)
+            }
+        }
+    }
 }
+
+// RENDERER_BUDGET_BEGIN：独立测试直接提取本段实际预算状态，不依赖Android或伪造ready。
+internal class RendererValidationBudget(private val limitMs: Long) {
+    private var spent = 0L
+    private var activeAt: Long? = null
+    private var closed = false
+    init { require(limitMs > 0) }
+    fun update(now: Long, eligible: Boolean): Long? {
+        if (closed) return null
+        require(now >= 0)
+        activeAt?.let { at -> if (now >= at) spent += minOf(limitMs - spent, now - at) }
+        activeAt = if (eligible) maxOf(now, activeAt ?: now) else null
+        return if (eligible) limitMs - spent else null
+    }
+    fun close() { closed = true; activeAt = null }
+}
+// RENDERER_BUDGET_END
