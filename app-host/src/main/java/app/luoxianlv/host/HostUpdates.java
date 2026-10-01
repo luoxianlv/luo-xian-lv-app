@@ -28,10 +28,14 @@ final class HostUpdates {
   private final ScheduledExecutorService worker =
       Executors.newSingleThreadScheduledExecutor(
           task -> {
-            Thread thread = new Thread(() -> {
-              android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
-              task.run();
-            }, "native-update");
+            Thread thread =
+                new Thread(
+                    () -> {
+                      android.os.Process.setThreadPriority(
+                          android.os.Process.THREAD_PRIORITY_BACKGROUND);
+                      task.run();
+                    },
+                    "native-update");
             thread.setDaemon(true);
             return thread;
           });
@@ -43,6 +47,8 @@ final class HostUpdates {
   private volatile boolean active, blocked, online, priorityWork;
   private boolean busy;
   private volatile Throwable stoppedCleanupFailure;
+  private volatile UpdateCancellation requestCancellation;
+  private volatile UpdateCancellation lastRequest;
   private long preparedAt, nextCheck = -1; // 仅供宿主诊断；实际期限由 UpdateSchedule 唯一维护。
   private volatile UpdateClient.PreparedUpdate pending;
   private GroupActivation group;
@@ -278,6 +284,7 @@ final class HostUpdates {
     blocked = true;
     active = false;
     nextCheck = -1;
+    cancelRequest();
     // 只停止调度；已准备候选的主线程转交必须继续执行取消/释放和后台 abort。
     // 清空整个 Handler 会删除刚入队的 activate，遗失资源租约与 PREPARING 收尾。
     main.removeCallbacks(pulse);
@@ -285,25 +292,31 @@ final class HostUpdates {
     var callback = networkCallback;
     networkCallback = null;
     if (callback != null && connectivity != null) {
-      try { connectivity.unregisterNetworkCallback(callback); }
-      catch (RuntimeException ignored) { /* 已撤销的系统回调不阻止本地故障停用。 */ }
+      try {
+        connectivity.unregisterNetworkCallback(callback);
+      } catch (RuntimeException ignored) {
+        /* 已撤销的系统回调不阻止本地故障停用。 */
+      }
     }
   }
 
   /** 先排空授权worker的转交，再让主线程取消候选；恢复落盘排在其abort之后。 */
-  void afterStopped(Runnable persistRecovery, java.util.function.Consumer<Throwable> rejectRecovery) {
+  void afterStopped(
+      Runnable persistRecovery, java.util.function.Consumer<Throwable> rejectRecovery) {
     requireMain();
     if (!blocked || active) throw new IllegalStateException("故障恢复必须先停止调度");
     java.util.Objects.requireNonNull(persistRecovery);
     java.util.Objects.requireNonNull(rejectRecovery);
     worker.execute(
-        () -> main.post(
-            () -> worker.execute(
-                () -> {
-                  Throwable failure = stoppedCleanupFailure;
-                  if (failure == null) persistRecovery.run();
-                  else rejectRecovery.accept(failure);
-                })));
+        () ->
+            main.post(
+                () ->
+                    worker.execute(
+                        () -> {
+                          Throwable failure = stoppedCleanupFailure;
+                          if (failure == null) persistRecovery.run();
+                          else rejectRecovery.accept(failure);
+                        })));
   }
 
   private synchronized void stoppedCleanupFailed(Throwable failure) {
@@ -356,15 +369,26 @@ final class HostUpdates {
             BundledBaseline.objects(application));
     connectivity = application.getSystemService(ConnectivityManager.class);
     if (connectivity != null) {
-      networkCallback = new ConnectivityManager.NetworkCallback() {
-        @Override public void onAvailable(Network network) { networkChanged(); }
-        @Override public void onLost(Network network) { networkChanged(); }
-        @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
-          networkChanged();
-        }
-      };
-      try { connectivity.registerDefaultNetworkCallback(networkCallback, main); }
-      catch (RuntimeException unavailable) {
+      networkCallback =
+          new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+              networkChanged();
+            }
+
+            @Override
+            public void onLost(Network network) {
+              networkChanged();
+            }
+
+            @Override
+            public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
+              networkChanged();
+            }
+          };
+      try {
+        connectivity.registerDefaultNetworkCallback(networkCallback, main);
+      } catch (RuntimeException unavailable) {
         networkCallback = null;
         Log.w("原生宿主", "网络监听不可用，保留当前版本并等待前台生命周期重新检查");
       }
@@ -386,7 +410,9 @@ final class HostUpdates {
           && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
           && (state.config.environment.equals("test")
               || capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
-    } catch (RuntimeException unavailable) { return false; }
+    } catch (RuntimeException unavailable) {
+      return false;
+    }
   }
 
   private void availability() {
@@ -396,6 +422,7 @@ final class HostUpdates {
     active = foreground || playback;
     online = connected();
     priorityWork = Bootstrap.playbackPreparing();
+    if (cancelled()) cancelRequest();
     schedule.availability(foreground, playback, online, priorityWork);
     long delay = schedule.delayMillis();
     nextCheck = delay < 0 ? -1 : SystemClock.elapsedRealtime() + delay;
@@ -425,7 +452,10 @@ final class HostUpdates {
 
   private void tick() {
     requireMain();
-    if (blocked) { active = false; return; }
+    if (blocked) {
+      active = false;
+      return;
+    }
     availability();
     if (!active || blocked) return;
     long now = SystemClock.elapsedRealtime();
@@ -448,7 +478,26 @@ final class HostUpdates {
     main.postDelayed(pulse, USAGE_PROBE);
   }
 
-  private boolean cancelled() { return !active || blocked || !online || priorityWork; }
+  private boolean cancelled() {
+    return !active || blocked || !online || priorityWork;
+  }
+
+  private void cancelRequest() {
+    UpdateCancellation token = requestCancellation;
+    if (token != null) token.cancel();
+  }
+
+  /** worker唯一持有本轮网络操作；主线程只取消句柄，不读取/关闭阻塞流。 */
+  private UpdateCancellation beginRequest() {
+    UpdateCancellation token = new UpdateCancellation(this::cancelled);
+    requestCancellation = token;
+    return token;
+  }
+
+  private void finishRequest(UpdateCancellation token) {
+    lastRequest = token;
+    if (requestCancellation == token) requestCancellation = null;
+  }
 
   private long schema() {
     var manifest = Bootstrap.source().prepared.manifest;
@@ -465,12 +514,15 @@ final class HostUpdates {
   }
 
   private void prepare() {
+    UpdateCancellation token = new UpdateCancellation(this::cancelled);
     try {
-      if (cancelled()) throw new java.io.InterruptedIOException("更新已让位于播放或生命周期");
+      requestCancellation = token;
+      token.check();
       collectIdleContent();
-      if (cancelled()) throw new java.io.InterruptedIOException("更新已让位于播放或生命周期");
-      flush();
-      var candidate = client.prepare(schema(), this::metered, this::cancelled);
+      token.check();
+      flush(token);
+      var candidate = client.prepare(schema(), this::metered, token);
+      token.check();
       var current = Bootstrap.source().prepared;
       boolean restart =
           candidate != null
@@ -481,6 +533,11 @@ final class HostUpdates {
       main.post(
           () -> {
             busy = false;
+            if (token.isCancelled()) {
+              schedule.cancelled();
+              usageChanged();
+              return;
+            }
             schedule.finish(true, 0);
             pending = null;
             if (candidate != null && !restart) {
@@ -491,6 +548,8 @@ final class HostUpdates {
           });
     } catch (Throwable failure) {
       retry(failure);
+    } finally {
+      finishRequest(token);
     }
   }
 
@@ -533,15 +592,16 @@ final class HostUpdates {
 
   private void authorize(UpdateClient.PreparedUpdate candidate) {
     ActivationController.Ticket ticket = null;
+    UpdateCancellation token = new UpdateCancellation(this::cancelled);
     try {
-      ticket =
-          client.authorize(
-              candidate, schema(), android.os.Process.myPid(), this::cancelled);
+      requestCancellation = token;
+      token.check();
+      ticket = client.authorize(candidate, schema(), android.os.Process.myPid(), token);
       outbox.append(ticket.attemptId, "prepared", "whole_group_prepared");
       NativeLoader.Prepared prepared =
           state.loader.prepare(candidate.snapshot, state.journal.state());
       var authorized = ticket;
-      main.post(() -> activate(candidate, authorized, prepared));
+      main.post(() -> activate(candidate, authorized, prepared, token));
     } catch (Throwable failure) {
       if (ticket != null) {
         try {
@@ -555,6 +615,8 @@ final class HostUpdates {
         }
       }
       retry(failure);
+    } finally {
+      finishRequest(token);
     }
   }
 
@@ -562,8 +624,16 @@ final class HostUpdates {
       UpdateClient.PreparedUpdate candidate,
       ActivationController.Ticket ticket,
       NativeLoader.Prepared prepared) {
+    activate(candidate, ticket, prepared, null);
+  }
+
+  private void activate(
+      UpdateClient.PreparedUpdate candidate,
+      ActivationController.Ticket ticket,
+      NativeLoader.Prepared prepared,
+      UpdateCancellation token) {
     requireMain();
-    if (cancelled() || !Bootstrap.canAutoActivate()) {
+    if ((token != null && token.isCancelled()) || cancelled() || !Bootstrap.canAutoActivate()) {
       try {
         prepared.closeCallbacks();
       } catch (Throwable closing) {
@@ -680,12 +750,22 @@ final class HostUpdates {
   }
 
   private void flush() throws Exception {
+    UpdateCancellation token = beginRequest();
+    try {
+      flush(token);
+    } finally {
+      finishRequest(token);
+    }
+  }
+
+  private void flush(UpdateCancellation token) throws Exception {
     compactHistory();
     OutcomeRecovery.reconcile(state.journal, outbox);
-    if (cancelled() || !(state.config.testHealthReports || Bootstrap.diagnosticsAllowed())) return;
+    token.check();
+    if (!(state.config.testHealthReports || Bootstrap.diagnosticsAllowed())) return;
     var batch = outbox.batch(100);
     if (batch.isEmpty()) return;
-    var reply = api.report(batch, true);
+    var reply = api.report(batch, true, token);
     // 接口已接收的幂等回执可能早于后来收到的修订；仍可确认事件，但不能回退渠道下限。
     if (reply.revision >= state.journal.state().revision)
       controller.observe(reply.revision, null, null, reply.serverTime);
@@ -702,8 +782,7 @@ final class HostUpdates {
     main.post(
         () -> {
           busy = false;
-          if (cancelled() && failure instanceof java.io.InterruptedIOException)
-            schedule.cancelled();
+          if (failure instanceof UpdateCancellation.Cancelled) schedule.cancelled();
           else if (failure instanceof DownloadBudget.Deferred
               || failure instanceof ContentCollector.Deferred
               || failure instanceof PreparationSpace.Deferred) schedule.deferred();
@@ -715,7 +794,8 @@ final class HostUpdates {
 
   static long retryAfterMillis(Throwable failure) {
     long retry = 0;
-    var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+    var seen =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
     for (Throwable value = failure; value != null && seen.add(value); value = value.getCause()) {
       if (value instanceof HotApiClient.Failure apiFailure)
         retry = Math.max(retry, apiFailure.retryAfterMillis);

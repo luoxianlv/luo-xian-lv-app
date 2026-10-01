@@ -1,7 +1,6 @@
 package app.luoxianlv.hot;
 
 import java.io.File;
-import java.io.InterruptedIOException;
 import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.util.Collections;
@@ -139,8 +138,9 @@ public final class UpdateClient {
   /** 返回 null 表示当前无需准备；计费网络超限、取消和网络失败均保留原稳定版本。 */
   public synchronized PreparedUpdate prepare(
       long stateSchema, BooleanSupplier metered, BooleanSupplier cancelled) throws Exception {
-    cancellation(cancelled);
-    HotApiClient.Decision decision = api.check(journal.state().active, stateSchema);
+    UpdateCancellation token = UpdateCancellation.from(cancelled);
+    token.check();
+    HotApiClient.Decision decision = api.check(journal.state().active, stateSchema, token);
     accept(decision);
     if (!decision.hasCandidate()) return null;
     SignedSnapshot candidate = decision.verify(policy(decision));
@@ -149,7 +149,7 @@ public final class UpdateClient {
     Map<String, Long> missing = new LinkedHashMap<>();
     Map<String, File> obtained = new HashMap<>();
     for (Map.Entry<String, Long> object : candidate.manifest.objects.entrySet()) {
-      cancellation(cancelled);
+      token.check();
       if (store.containsVerified(object.getKey(), object.getValue())) continue;
       File installed = local.find(object.getKey(), object.getValue());
       if (installed == null) missing.put(object.getKey(), object.getValue());
@@ -165,7 +165,7 @@ public final class UpdateClient {
     // 连接第一个对象前检查整组；对象下载器在切网和预留预算时继续检查。
     budget.admit(candidate.manifest.contentId, remaining.getAsLong(), metered.getAsBoolean());
     for (Map.Entry<String, Long> object : missing.entrySet()) {
-      cancellation(cancelled);
+      token.check();
       obtained.put(
           object.getKey(),
           downloads.download(
@@ -174,12 +174,13 @@ public final class UpdateClient {
               object.getValue(),
               api.object(candidate, object.getKey()),
               metered,
-              cancelled,
+              token,
               remaining));
     }
-    cancellation(cancelled);
+    token.check();
     space.beforeCommit(store, candidate.manifest, obtained, NativeLoader.residentRuntimeHash());
     ContentStore.Snapshot snapshot = store.prepare(new DownloadedSnapshot(candidate, obtained));
+    token.check();
     downloads.committed(store, snapshot);
     return new PreparedUpdate(snapshot, decision.kind.equals("recover"));
   }
@@ -188,8 +189,9 @@ public final class UpdateClient {
   public synchronized ActivationController.Ticket authorize(
       PreparedUpdate prepared, long stateSchema, int processId, BooleanSupplier cancelled)
       throws Exception {
-    cancellation(cancelled);
-    HotApiClient.Decision latest = api.check(journal.state().active, stateSchema);
+    UpdateCancellation token = UpdateCancellation.from(cancelled);
+    token.check();
+    HotApiClient.Decision latest = api.check(journal.state().active, stateSchema, token);
     accept(latest);
     StrictJson.require(
         latest.hasCandidate() && latest.snapshotId.equals(prepared.snapshot.manifest.snapshotId),
@@ -198,7 +200,7 @@ public final class UpdateClient {
     requireReadable(current.manifest, stateSchema);
     quarantine.requireAllowed(current.manifest, api.hostContract);
     store.verifySnapshotObjects(prepared.snapshot);
-    cancellation(cancelled);
+    token.check();
     byte[] nonce = new byte[32];
     new SecureRandom().nextBytes(nonce);
     ActivationPermit.Request request =
@@ -210,8 +212,8 @@ public final class UpdateClient {
             latest.revision,
             elapsed.getAsLong(),
             current.manifest);
-    HotApiClient.PermitReply reply = api.activate(request, stateSchema);
-    cancellation(cancelled);
+    HotApiClient.PermitReply reply = api.activate(request, stateSchema, token);
+    token.check();
     TrustStore.Record authority = trust.current();
     StrictJson.require(authority != null, "缺少当前根授权");
     ActivationPermit permit =
@@ -265,10 +267,5 @@ public final class UpdateClient {
 
   private static void requireReadable(HotManifest manifest, long schema) {
     StrictJson.require(schema >= manifest.stateMin && schema <= manifest.stateMax, "候选无法读取当前数据格式");
-  }
-
-  private static void cancellation(BooleanSupplier cancelled) throws InterruptedIOException {
-    if (cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
-      throw new InterruptedIOException("更新已让位于播放或取消");
   }
 }

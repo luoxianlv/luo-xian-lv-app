@@ -19,7 +19,9 @@ public final class HttpObjectSource implements ObjectDownloader.Source {
   private final GrantFactory grantFactory;
 
   @FunctionalInterface
-  interface GrantFactory { HttpObjectSource obtain() throws Exception; }
+  interface GrantFactory {
+    HttpObjectSource obtain(UpdateCancellation cancellation) throws Exception;
+  }
 
   /** 每次连接先取同源授权；续传或重试不会复用已过期的 OSS 短期 URL。 */
   static HttpObjectSource withFreshGrant(long size, GrantFactory factory) {
@@ -65,26 +67,54 @@ public final class HttpObjectSource implements ObjectDownloader.Source {
 
   @Override
   public ObjectDownloader.Response open(long offset) throws Exception {
+    return open(offset, UpdateCancellation.none());
+  }
+
+  @Override
+  public ObjectDownloader.Response open(long offset, UpdateCancellation cancellation)
+      throws Exception {
+    long started = System.nanoTime();
+    while (true) {
+      try {
+        return openOnce(offset, cancellation);
+      } catch (SocketTimeoutException waiting) {
+        cancellation.check();
+        if (System.nanoTime() - started >= 15_000_000_000L)
+          throw new SocketTimeoutException("对象下载响应等待超时");
+      }
+    }
+  }
+
+  private ObjectDownloader.Response openOnce(long offset, UpdateCancellation cancellation)
+      throws Exception {
+    cancellation.check();
     StrictJson.require(offset >= 0 && offset < size, "下载偏移量无效");
     if (grantFactory != null) {
-      HttpObjectSource selected = grantFactory.obtain();
-      StrictJson.require(selected != null && selected.grantFactory == null && selected.size == size, "下载授权未绑定目标大小");
-      return selected.open(offset);
+      HttpObjectSource selected = grantFactory.obtain(cancellation);
+      StrictJson.require(
+          selected != null && selected.grantFactory == null && selected.size == size,
+          "下载授权未绑定目标大小");
+      return selected.open(offset, cancellation);
     }
     // 模拟器可能设置了开发代理；本机测试服务器不能被代理到宿主机的另一个回环端口。
     HttpURLConnection connection = connect(url, localConnection);
+    UpdateCancellation.Registration owned = cancellation.register(connection::disconnect);
     try {
       connection.setInstanceFollowRedirects(false);
       connection.setConnectTimeout(10000);
-      connection.setReadTimeout(15000);
+      connection.setReadTimeout(500);
       connection.setUseCaches(false);
       connection.setRequestProperty("Accept-Encoding", "identity");
       if (!credential.isEmpty())
         connection.setRequestProperty("Authorization", "Bearer " + credential);
       if (offset > 0) connection.setRequestProperty("Range", "bytes=" + offset + "-");
+      cancellation.check();
+      cancellation.objectOpened();
       int status = connection.getResponseCode();
+      cancellation.check();
       if (status != 200 && status != 206)
         throw new Failure(status, retryAfter(connection.getHeaderField("Retry-After")));
+      StrictJson.require(connection.getHeaderField("Transfer-Encoding") == null, "对象下载只接受明确长度的响应体");
       StrictJson.require(
           connection.getHeaderField("Content-Encoding") == null
               || connection.getHeaderField("Content-Encoding").equalsIgnoreCase("identity"),
@@ -111,35 +141,65 @@ public final class HttpObjectSource implements ObjectDownloader.Source {
 
             @Override
             public int read(byte[] bytes, int from, int count) throws IOException {
+              cancellation.check();
               deadline();
               int n;
-              try { n = in.read(bytes, from, count); }
-              catch (SocketTimeoutException timeout) { throw new SocketTimeoutException("对象下载读取超时"); }
-              catch (IOException interrupted) { throw new IOException("对象下载读取中断"); }
+              try {
+                n = in.read(bytes, from, count);
+              } catch (SocketTimeoutException timeout) {
+                cancellation.check();
+                throw new SocketTimeoutException("对象下载读取超时");
+              } catch (IOException interrupted) {
+                cancellation.check();
+                throw new IOException("对象下载读取中断");
+              }
+              cancellation.objectRead(n);
               deadline();
               return n;
             }
 
             @Override
             public int read() throws IOException {
+              cancellation.check();
               deadline();
               int n;
-              try { n = in.read(); }
-              catch (SocketTimeoutException timeout) { throw new SocketTimeoutException("对象下载读取超时"); }
-              catch (IOException interrupted) { throw new IOException("对象下载读取中断"); }
+              try {
+                n = in.read();
+              } catch (SocketTimeoutException timeout) {
+                cancellation.check();
+                throw new SocketTimeoutException("对象下载读取超时");
+              } catch (IOException interrupted) {
+                cancellation.check();
+                throw new IOException("对象下载读取中断");
+              }
+              cancellation.objectRead(n < 0 ? 0 : 1);
               deadline();
               return n;
             }
           };
-      return new ObjectDownloader.Response(start, total, length, bounded, connection::disconnect);
+      return new ObjectDownloader.Response(
+          start,
+          total,
+          length,
+          bounded,
+          () -> {
+            try {
+              connection.disconnect();
+            } finally {
+              owned.close();
+            }
+          });
     } catch (Exception failure) {
+      owned.close();
       connection.disconnect();
+      cancellation.check();
       if (failure instanceof Failure) throw failure;
       if (failure instanceof IllegalArgumentException) throw failure;
       if (failure instanceof SocketTimeoutException) throw new SocketTimeoutException("对象下载连接超时");
       // HTTP 实现的原始异常可能包含完整签名 URL；不作为 cause 保留。
       throw new IOException("对象下载响应或连接无效");
     } catch (Error failure) {
+      owned.close();
       connection.disconnect();
       throw failure;
     }
@@ -168,7 +228,9 @@ public final class HttpObjectSource implements ObjectDownloader.Source {
           (localTest && isLocal(url.getHost())
               ? url.toURL().openConnection(java.net.Proxy.NO_PROXY)
               : url.toURL().openConnection());
-    } catch (IOException invalid) { throw new IOException("下载连接无法创建"); }
+    } catch (IOException invalid) {
+      throw new IOException("下载连接无法创建");
+    }
   }
 
   private static boolean isLocal(String host) {

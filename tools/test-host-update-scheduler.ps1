@@ -55,6 +55,7 @@ public final class SystemClock {
 $log = Save-Source 'Log.java' @'
 package android.util;
 public final class Log {
+  public static final int WARN=5,ERROR=6;
   public static int w(String tag,String message) { return 0; }
   public static int w(String tag,String message,Throwable error) { return 0; }
   public static int e(String tag,String message,Throwable error) { return 0; }
@@ -134,6 +135,10 @@ $scheduleTest = Join-Path $repoRoot 'hot-core/src/test/java/app/luoxianlv/hot/Up
 $hostSource = Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/HostUpdates.java'
 $test = Join-Path $repoRoot 'tools/test-support/HostUpdateSchedulerTest.java'
 function Run-Checks([string]$name,[string[]]$inputs,[string[]]$tests) {
+    $sharedSources = @('UpdateCancellation','HotApiClient','HttpObjectSource','ObjectDownloader','UpdateClient') | ForEach-Object {
+        Join-Path $repoRoot ("hot-core/src/main/java/app/luoxianlv/hot/$_.java")
+    }
+    $inputs = @($sharedSources + $inputs | Select-Object -Unique)
     $classes = Join-Path $runRoot $name
     New-Item -ItemType Directory -Path $classes | Out-Null
     $arguments = @('-encoding','UTF-8','--release','17','-classpath',$baseClasspath,'-d',$classes) + $inputs

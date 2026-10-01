@@ -301,13 +301,16 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     private int gestures;
     private int captures;
 
-    @Override public void contentFailed(Throwable failure) {
-      Runnable report = () -> {
-        if (session == null) return;
-        if (handover != null && handover.failed(this, failure)) return;
-        if (current()) NativeAccessibilityService.this.failed(this, failure);
-      };
-      if (Looper.myLooper() == Looper.getMainLooper()) report.run(); else main.post(report);
+    @Override
+    public void contentFailed(Throwable failure) {
+      Runnable report =
+          () -> {
+            if (session == null) return;
+            if (handover != null && handover.failed(this, failure)) return;
+            if (current()) NativeAccessibilityService.this.failed(this, failure);
+          };
+      if (Looper.myLooper() == Looper.getMainLooper()) report.run();
+      else main.post(report);
     }
 
     boolean released() {
@@ -367,9 +370,17 @@ public abstract class NativeAccessibilityService extends AccessibilityService {
     public void command(String action, Bundle arguments) {
       long epoch = activationEpoch;
       Bundle data = PlaybackValues.copy(arguments);
-      if (Looper.myLooper() == Looper.getMainLooper())
-        invoke(epoch, () -> session.command(action, data));
-      else main.post(() -> invoke(epoch, () -> session.command(action, data)));
+      Runnable command =
+          () ->
+              invoke(
+                  epoch,
+                  () -> {
+                    session.command(action, data);
+                    // 同一主线程先完成业务状态变更，再通知宿主；迟到或退役命令不会取消新代更新。
+                    if (current(epoch)) playbackUsageChanged();
+                  });
+      if (Looper.myLooper() == Looper.getMainLooper()) command.run();
+      else main.post(command);
     }
 
     @Override

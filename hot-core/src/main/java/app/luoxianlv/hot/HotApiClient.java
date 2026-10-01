@@ -174,17 +174,28 @@ public final class HotApiClient {
 
   /** 关闭诊断时连安装登记也不触发；Debug 只允许显式测试启用。 */
   public ReportReply report(java.util.List<HealthEvent> events, boolean enabled) throws Exception {
+    return report(events, enabled, UpdateCancellation.none());
+  }
+
+  public ReportReply report(
+      java.util.List<HealthEvent> events, boolean enabled, UpdateCancellation cancellation)
+      throws Exception {
     if (!enabled) return null;
     StrictJson.require(!events.isEmpty() && events.size() <= 100, "健康回报批次大小无效");
     java.util.List<Map<String, Object>> records = new java.util.ArrayList<>();
     for (HealthEvent event : events) records.add(event.fields());
     Map<String, Object> request = JsonWire.fields("events", records);
     String key = "events-" + HotSignatures.hash(JsonWire.encode(request));
-    register();
-    return new ReportReply(post("/events", request, key, true));
+    register(cancellation);
+    return new ReportReply(post("/events", request, key, true, cancellation));
   }
 
   public synchronized void register() throws Exception {
+    register(UpdateCancellation.none());
+  }
+
+  public synchronized void register(UpdateCancellation cancellation) throws Exception {
+    cancellation.check();
     if (registered) return;
     Response response =
         post(
@@ -203,7 +214,8 @@ public final class HotApiClient {
                 "hostIdentity",
                 hostIdentity),
             "register-" + installation.id + "-" + hostIdentity.substring(0, 16),
-            false);
+            false,
+            cancellation);
     response.value.only("installationId", "credentialFormat", "scope");
     StrictJson.require(
         response.value.string("installationId").equals(installation.id)
@@ -213,22 +225,34 @@ public final class HotApiClient {
   }
 
   public Decision check(String currentSnapshot, long stateSchema) throws Exception {
+    return check(currentSnapshot, stateSchema, UpdateCancellation.none());
+  }
+
+  public Decision check(String currentSnapshot, long stateSchema, UpdateCancellation cancellation)
+      throws Exception {
     StrictJson.require(
         (currentSnapshot.isEmpty() || HotManifest.validHash(currentSnapshot))
             && stateSchema > 0
             && stateSchema <= Integer.MAX_VALUE,
         "当前快照或状态格式无效");
-    register();
+    register(cancellation);
     return new Decision(
         post(
             "/check",
             JsonWire.fields(
                 "currentSnapshotId", currentSnapshot, "currentStateSchema", stateSchema),
             "",
-            true));
+            true,
+            cancellation));
   }
 
   public PermitReply activate(ActivationPermit.Request request, long stateSchema) throws Exception {
+    return activate(request, stateSchema, UpdateCancellation.none());
+  }
+
+  public PermitReply activate(
+      ActivationPermit.Request request, long stateSchema, UpdateCancellation cancellation)
+      throws Exception {
     StrictJson.require(
         request.installationId.equals(installation.id)
             && request.hostIdentity.equals(hostIdentity)
@@ -236,7 +260,7 @@ public final class HotApiClient {
             && stateSchema > 0
             && stateSchema <= Integer.MAX_VALUE,
         "许可请求不属于当前宿主");
-    register();
+    register(cancellation);
     return new PermitReply(
         post(
             "/activate",
@@ -250,48 +274,95 @@ public final class HotApiClient {
                 "currentStateSchema",
                 stateSchema),
             "activate-" + request.nonce,
-            true));
+            true,
+            cancellation));
   }
 
   public HttpObjectSource object(SignedSnapshot candidate, String hash) {
     Long size = candidate.manifest.objects.get(hash);
     StrictJson.require(size != null && HotManifest.validHash(hash), "对象不属于签名清单");
     String snapshot = candidate.manifest.snapshotId;
-    return HttpObjectSource.withFreshGrant(size, () -> {
-      register();
-      Response response = post("/objects/" + hash + "/grant",
-          JsonWire.fields("snapshotId", snapshot), "", true);
-      var grant = response.value.only("transport", "method", "url", "headers", "sha256", "size", "expiresAt");
-      grant.object("headers").only();
-      long expires = grant.number("expiresAt");
-      StrictJson.require(grant.string("method").equals("GET") && grant.string("sha256").equals(hash)
-          && grant.number("size") == size && expires > response.time.getEpochSecond()
-          && expires <= response.time.getEpochSecond() + 600, "下载授权的对象、方法或有效期无效");
-      URI url;
-      try { url = URI.create(grant.string("url")); }
-      catch (IllegalArgumentException malformed) { throw new IOException("下载授权地址格式无效"); }
-      String transport = grant.string("transport");
-      if (transport.equals("oss")) {
-        StrictJson.require(url.isAbsolute(), "OSS 下载授权必须提供完整地址");
-        return new HttpObjectSource(url, size, null, "", localTest);
-      }
-      StrictJson.require(transport.equals("local-test"), "下载授权存储后端不支持");
-      URI expected = origin.resolve("/api/hot/v2/objects/" + hash + "?snapshotId=" + snapshot);
-      StrictJson.require(origin.resolve(url).equals(expected), "本地测试下载授权必须绑定 API 同源对象路径");
-      return new HttpObjectSource(expected, size, origin, installation.credential(), localTest);
-    });
+    return HttpObjectSource.withFreshGrant(
+        size,
+        cancellation -> {
+          register(cancellation);
+          Response response =
+              post(
+                  "/objects/" + hash + "/grant",
+                  JsonWire.fields("snapshotId", snapshot),
+                  "",
+                  true,
+                  cancellation);
+          var grant =
+              response.value.only(
+                  "transport", "method", "url", "headers", "sha256", "size", "expiresAt");
+          grant.object("headers").only();
+          long expires = grant.number("expiresAt");
+          StrictJson.require(
+              grant.string("method").equals("GET")
+                  && grant.string("sha256").equals(hash)
+                  && grant.number("size") == size
+                  && expires > response.time.getEpochSecond()
+                  && expires <= response.time.getEpochSecond() + 600,
+              "下载授权的对象、方法或有效期无效");
+          URI url;
+          try {
+            url = URI.create(grant.string("url"));
+          } catch (IllegalArgumentException malformed) {
+            throw new IOException("下载授权地址格式无效");
+          }
+          String transport = grant.string("transport");
+          if (transport.equals("oss")) {
+            StrictJson.require(url.isAbsolute(), "OSS 下载授权必须提供完整地址");
+            return new HttpObjectSource(url, size, null, "", localTest);
+          }
+          StrictJson.require(transport.equals("local-test"), "下载授权存储后端不支持");
+          URI expected = origin.resolve("/api/hot/v2/objects/" + hash + "?snapshotId=" + snapshot);
+          StrictJson.require(origin.resolve(url).equals(expected), "本地测试下载授权必须绑定 API 同源对象路径");
+          return new HttpObjectSource(expected, size, origin, installation.credential(), localTest);
+        });
   }
 
   Response post(String route, Map<String, ?> body, String idempotency, boolean authenticated)
       throws Exception {
+    return post(route, body, idempotency, authenticated, UpdateCancellation.none());
+  }
+
+  Response post(
+      String route,
+      Map<String, ?> body,
+      String idempotency,
+      boolean authenticated,
+      UpdateCancellation cancellation)
+      throws Exception {
+    long started = System.nanoTime();
+    while (true) {
+      try {
+        return postOnce(route, body, idempotency, authenticated, cancellation);
+      } catch (java.net.SocketTimeoutException waiting) {
+        cancellation.check();
+        if (System.nanoTime() - started >= readTimeout * 1_000_000L)
+          throw new java.net.SocketTimeoutException("API 响应等待超时");
+      }
+    }
+  }
+
+  private Response postOnce(
+      String route,
+      Map<String, ?> body,
+      String idempotency,
+      boolean authenticated,
+      UpdateCancellation cancellation)
+      throws Exception {
+    cancellation.check();
     byte[] raw = JsonWire.encode(body);
     HttpURLConnection connection =
         HttpObjectSource.connect(origin.resolve("/api/hot/v2" + route), localTest);
-    try {
+    try (UpdateCancellation.Registration owned = cancellation.register(connection::disconnect)) {
       connection.setInstanceFollowRedirects(false);
       connection.setUseCaches(false);
       connection.setConnectTimeout(connectTimeout);
-      connection.setReadTimeout(readTimeout);
+      connection.setReadTimeout(Math.min(500, readTimeout));
       connection.setRequestMethod("POST");
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(raw.length);
@@ -301,17 +372,21 @@ public final class HotApiClient {
         connection.setRequestProperty("Authorization", "Bearer " + installation.credential());
       if (!idempotency.isEmpty()) connection.setRequestProperty("Idempotency-Key", idempotency);
       try (OutputStream output = connection.getOutputStream()) {
+        cancellation.check();
         output.write(raw);
       }
       int status = connection.getResponseCode();
+      cancellation.check();
       if (status < 200 || status >= 300) {
         String code = "request_failed";
         try (InputStream input = connection.getErrorStream()) {
           if (input != null) {
-            String parsed = StrictJson.envelope(read(input, 65536)).string("code");
+            String parsed =
+                StrictJson.envelope(read(input, 65536, 30000, cancellation, false)).string("code");
             if (parsed.matches("[a-z_]{1,64}")) code = parsed;
           }
         } catch (Exception ignored) {
+          cancellation.check();
           /* 代理或网关可能不返回协议 JSON，保留安全的通用错误码。 */
         }
         throw new Failure(
@@ -322,23 +397,46 @@ public final class HotApiClient {
       Instant serverTime = Instant.ofEpochSecond(Long.parseLong(stamp));
       try (InputStream input = connection.getInputStream()) {
         return new Response(
-            StrictJson.envelope(read(input, 5 * StrictJson.MAX_BYTES, readTimeout)), serverTime);
+            StrictJson.envelope(
+                read(
+                    input,
+                    5 * StrictJson.MAX_BYTES,
+                    readTimeout,
+                    cancellation,
+                    connection.getHeaderField("Transfer-Encoding") == null
+                        && connection.getHeaderFieldLong("Content-Length", -1) >= 0)),
+            serverTime);
       }
+    } catch (Exception failure) {
+      cancellation.check();
+      throw failure;
     } finally {
       connection.disconnect();
     }
   }
 
-  private static byte[] read(InputStream input, int limit) throws Exception {
-    return read(input, limit, 30000);
-  }
-
-  private static byte[] read(InputStream input, int limit, int timeoutMillis) throws Exception {
+  private static byte[] read(
+      InputStream input,
+      int limit,
+      int timeoutMillis,
+      UpdateCancellation cancellation,
+      boolean fixedLength)
+      throws Exception {
     long start = System.nanoTime();
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     byte[] buffer = new byte[8192];
     int n;
-    while ((n = input.read(buffer)) != -1) {
+    while (true) {
+      cancellation.check();
+      try {
+        n = input.read(buffer);
+      } catch (java.net.SocketTimeoutException waiting) {
+        cancellation.check();
+        if (!fixedLength || System.nanoTime() - start > timeoutMillis * 1_000_000L) throw waiting;
+        continue;
+      }
+      cancellation.check();
+      if (n == -1) break;
       StrictJson.require(n > 0 && output.size() + n <= limit, "API 响应大小无效");
       if (System.nanoTime() - start > timeoutMillis * 1_000_000L)
         throw new java.net.SocketTimeoutException("API 响应等待超时");
