@@ -181,6 +181,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
     boolean factoryLoaderMatches, playbackLoaderMatches;
     boolean playbackServicePresent, playbackBindingPresent, playbackServiceConnected;
     String businessLoaderType = "", factoryLoaderType = "", playbackLoaderType = "";
+    java.util.Set<String> quarantine = java.util.Set.of();
     int pages, windows;
     ClassLoader businessLoader;
     Object playbackSession;
@@ -222,6 +223,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
           value.phase = journal.phase.name();
           value.revision = journal.revision;
           value.trustVersion = journal.trustVersion;
+          value.quarantine = journal.quarantine;
         }
         var port = PlaybackBridge.current();
         value.playbackConnected = port instanceof AccessibilityBinding binding && binding.current();
@@ -353,7 +355,9 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       require(consumer.equals("accessibility") || consumer.equals("foreground"), "未知服务入口");
       String expectedSnapshot = snapshotOption("expectedSnapshot", "apk");
       String expectedPhase = option("expectedPhase", "STABLE");
-      require(expectedPhase.equals("STABLE") || expectedPhase.equals("TRIAL"), "未知预期阶段");
+      String matrixRunId = option("matrixRunId", "");
+      require(expectedPhase.equals("STABLE") || expectedPhase.equals("TRIAL")
+          || !matrixRunId.isEmpty() && expectedPhase.equals("PREPARING"), "未知预期阶段");
       require(!expectedPhase.equals("TRIAL") || arguments.containsKey("expectedStable"), "试运行必须明确原稳定组合");
       String expectedStable = snapshotOption("expectedStable", option("expectedSnapshot", "apk"));
       String pendingOption = option("expectedPending", "none");
@@ -366,6 +370,14 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       long previousPid = numberOption("previousPid", 0, Integer.MAX_VALUE);
       String expectedRuntime = option("expectedRuntime", "");
       require(expectedRuntime.isEmpty() || HotManifest.validHash(expectedRuntime), "运行时参数无效");
+      NativeServiceMatrixPlan matrix = null;
+      if (!matrixRunId.isEmpty()) {
+        matrix = new NativeServiceMatrixPlan(matrixRunId, option("matrixCase", ""), consumer,
+            option("matrixTarget", ""), expectedStable, option("sourceRuntime", ""), option("targetRuntime", ""));
+        matrix.expected(expectedSnapshot, expectedStable, expectedPending, expectedRuntime, expectedPhase);
+        report.put("matrixRunId", matrix.runId).put("matrixCase", matrix.scenario)
+            .put("matrixTarget", matrix.target).put("wallClockStartedEpochMillis", System.currentTimeMillis());
+      }
       report.put("expected", new org.json.JSONObject().put("consumer", consumer)
           .put("snapshot", diagnosticHash(expectedSnapshot, true))
           .put("stable", diagnosticHash(expectedStable, true))
@@ -436,10 +448,20 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       require(expectedPending.equals(selected.pending), "待重启缓存选择与预期不符");
       require(expectedRuntime.isEmpty() || expectedRuntime.equals(selected.runtime), "未选择预期运行时");
       require(selected.runtime.equals(NativeLoader.residentRuntimeHash()), "实际常驻运行时与所选来源不符");
-      if (expectedPhase.equals("TRIAL")) {
+      if (expectedPhase.equals("TRIAL") || expectedPhase.equals("PREPARING")) {
         require(expectedSnapshot.equals(selected.candidate) && selected.health != null,
             "试运行没有真实候选与健康窗口");
       } else require(selected.candidate.isEmpty(), "稳定启动仍残留候选事务");
+      boolean markerLoaded = false;
+      if (matrix != null) {
+        var state = Bootstrap.startupState();
+        require(state != null, "矩阵缺少真实启动资料");
+        var cached = state.store.snapshot(matrix.target);
+        state.store.verifySnapshotObjects(cached);
+        require(cached.manifest.runtime.sha256.equals(matrix.targetRuntime), "矩阵缓存运行时与签名目标不同");
+        markerLoaded = matrix.marker(selected.businessLoader);
+        require(!selected.quarantine.contains(matrix.target), "矩阵目标在开始时已隔离");
+      }
 
       stage = "服务空闲健康观察";
       require(!selected.playbackUsed, "空闲验收已有实际播放，应使用独立真实播放矩阵");
@@ -462,6 +484,15 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       if (foregroundCursor != null) foregroundEvents(foregroundCursor);
       require(end.revision >= minimumRevision && end.trustVersion >= minimumTrust, "版本或信任下限下降");
       require(end.revision >= selected.revision && end.trustVersion >= selected.trustVersion, "本次观察回滚了版本下限");
+      if (matrix != null) {
+        require(end.quarantine.equals(selected.quarantine), "空闲矩阵改变了隔离记录");
+        report.put("newRuntimeMarkerLoaded", markerLoaded).put("cachedTargetVerified", true)
+            .put("sameRuntimeParent", markerLoaded).put("quarantineUnchanged", true)
+            .put("candidateIsolated", end.quarantine.contains(matrix.target))
+            .put("wallClockEndedEpochMillis", System.currentTimeMillis())
+            .put("grantAcquiredDirectly", false).put("clockInjected", false)
+            .put("healthInjected", false).put("scenarioConditionProvenByInstrument", false);
+      }
       report.put("passed", true).put("productionTouched", false)
           .put("consumer", consumer).put("pid", android.os.Process.myPid())
           .put("activityCreations", activityCreations.get()).put("activityStarts", activityStarts.get())
