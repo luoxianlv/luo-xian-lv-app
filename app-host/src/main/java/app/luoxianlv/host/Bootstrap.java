@@ -198,14 +198,7 @@ public final class Bootstrap {
     }
     Source selected = source;
     stopBusiness(error);
-    var recovery =
-        Executors.newSingleThreadExecutor(
-            task -> {
-              Thread thread = new Thread(task, "native-recovery");
-              thread.setDaemon(true);
-              return thread;
-            });
-    recovery.execute(
+    Runnable persistRecovery =
         () -> {
           try {
             if (startup != null
@@ -221,10 +214,29 @@ public final class Bootstrap {
             MAIN.post(() -> recoveryPersisted(true));
           } catch (Throwable persistence) {
             Log.e("原生宿主", "故障恢复选择未能保存，不能重启执行旧候选", persistence);
-          } finally {
-            recovery.shutdown();
           }
-        });
+        };
+    if (updates != null) {
+      // 先经更新线程与主线程双向屏障释放未曝光候选、取消许可，再保存稳定业务故障。
+      updates.afterStopped(
+          persistRecovery, cleanup -> Log.e("原生宿主", "未曝光候选尚未安全退出，不能开放恢复入口", cleanup));
+    } else {
+      var recovery =
+          Executors.newSingleThreadExecutor(
+              task -> {
+                Thread thread = new Thread(task, "native-recovery");
+                thread.setDaemon(true);
+                return thread;
+              });
+      recovery.execute(
+          () -> {
+            try {
+              persistRecovery.run();
+            } finally {
+              recovery.shutdown();
+            }
+          });
+    }
   }
 
   /** 先撤掉输入与前台策略，再关闭业务实例；持久恢复确认由调用方后台完成。 */
@@ -538,19 +550,19 @@ public final class Bootstrap {
         process = null;
         if (startup != null && prepared.manifest != null) {
           worker.execute(
-            () -> {
-              try {
-                startup.journal.stableContentFailed(
-                    prepared.manifest, startup.quarantine, startup.config.hostContract);
-                MAIN.post(() -> recoveryPersisted(true));
-              } catch (Throwable recoveryFailure) {
-                error.addSuppressed(recoveryFailure);
-                updateBlocked = true;
-              } finally {
-                MAIN.post(Bootstrap::complete);
-                worker.shutdown();
-              }
-            });
+              () -> {
+                try {
+                  startup.journal.stableContentFailed(
+                      prepared.manifest, startup.quarantine, startup.config.hostContract);
+                  MAIN.post(() -> recoveryPersisted(true));
+                } catch (Throwable recoveryFailure) {
+                  error.addSuppressed(recoveryFailure);
+                  updateBlocked = true;
+                } finally {
+                  MAIN.post(Bootstrap::complete);
+                  worker.shutdown();
+                }
+              });
           return;
         }
         // 安装包组合没有热更稳定选择需要回退，用户仍通过独立新进程重试。
