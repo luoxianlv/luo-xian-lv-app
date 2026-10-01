@@ -122,6 +122,53 @@ public final class NativeDownloadPlanTest {
                   JsonWire.encode(fields("cancellation", prefix)), runId));
   }
 
+  private Map<String, Object> budgetFields(String mode) {
+    var value = fields(mode, 16384);
+    long second = (10L << 20) + (mode.equals("budget-limit") ? 1 : 0);
+    value.put("expectedObjects", List.of(JsonWire.fields("sha256", hash, "size", 10L << 20),
+        JsonWire.fields("sha256", "e".repeat(64), "size", second)));
+    value.put("expectedMissingBytes", (10L << 20) + second);
+    return value;
+  }
+
+  @Test public void actualBudgetPlansRequireTwoObjectsAndExactWholeCandidateBoundary() {
+    assertEquals(20L << 20, new NativeDownloadChecks.Plan(JsonWire.encode(budgetFields("budget-retry")), runId).missing);
+    assertEquals((20L << 20) + 1, new NativeDownloadChecks.Plan(JsonWire.encode(budgetFields("budget-limit")), runId).missing);
+    var wrong = budgetFields("budget-retry"); wrong.put("mode", "budget-limit");
+    assertThrows(Throwable.class, () -> new NativeDownloadChecks.Plan(JsonWire.encode(wrong), runId));
+    var one = fields("budget-retry", 32);
+    one.put("expectedObjects", List.of(JsonWire.fields("sha256", hash, "size", 20L << 20)));
+    one.put("expectedMissingBytes", 20L << 20);
+    assertThrows(Throwable.class, () -> new NativeDownloadChecks.Plan(JsonWire.encode(one), runId));
+  }
+
+  @Test public void cacheRepairNeedsTwoUniqueSmallObjects() {
+    assertThrows(Throwable.class, () -> new NativeDownloadChecks.Plan(JsonWire.encode(fields("cache-repair", 32)), runId));
+    var value = fields("cache-repair", 32);
+    value.put("expectedObjects", List.of(JsonWire.fields("sha256", hash, "size", 554), JsonWire.fields("sha256", "e".repeat(64), "size", 700)));
+    value.put("expectedMissingBytes", 1254);
+    assertEquals(2, new NativeDownloadChecks.Plan(JsonWire.encode(value), runId).objects.size());
+  }
+
+  @Test public void actualUnmeteredAckRequiresCurrentRunAndRecognizedPhase() throws Exception {
+    Path files=temporary.newFolder().toPath(); Path directory=planDirectory(files,budgetFields("budget-retry"));
+    var session=NativeDownloadChecks.Session.open(files,runId);
+    Files.write(directory.resolve("ack.json"), JsonWire.encode(JsonWire.fields("schema",1,"runId",runId,"phase","unmetered")));
+    assertTrue(session.acknowledged("unmetered"));
+    Files.write(directory.resolve("ack.json"), JsonWire.encode(JsonWire.fields("schema",1,"runId","f".repeat(32),"phase","unmetered")));
+    assertFalse(session.acknowledged("unmetered"));
+    Files.write(directory.resolve("ack.json"), JsonWire.encode(JsonWire.fields("schema",1,"runId",runId,"phase","metered")));
+    assertThrows(Throwable.class, () -> session.acknowledged("unmetered"));
+  }
+
+  @Test public void persistedReservationDefersSameWholeCandidateRetryEvenWithRetainedPrefix() throws Exception {
+    var budget=new app.luoxianlv.hot.DownloadBudget(temporary.newFolder());
+    budget.admit(hash,20L<<20,true); budget.reserve(hash,1<<20);
+    assertThrows(app.luoxianlv.hot.DownloadBudget.Deferred.class, () -> budget.admit(hash,(20L<<20)-16384,true));
+    budget.admit(hash,(20L<<20)-16384,false);
+    assertEquals(1L<<20,budget.used(hash));
+  }
+
   @Test
   public void staleRunAndExistingHandshakeAreNeverReusedOrRemoved() throws Exception {
     Path files = temporary.newFolder().toPath();

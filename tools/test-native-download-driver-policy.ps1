@@ -101,7 +101,7 @@ $metrics.requests[1].snapshotId=$target;$metrics.slowObjectSha='e'*64;Reject {As
 $report=[pscustomobject]@{passed=$true;runId=$runId;mode='delta';targetSnapshotId=$target;initialSourceIdentity=$source;expectedMissingBytes=554;
     homeRestored=$true;stageClosed=$true;clockInjected=$false;updateStateInjected=$false;explicitCheckCalled=$false;
     explicitActivationCalled=$false;healthInjected=$false;objectReadBytes=554;
-    action=[pscustomobject]@{exactMissingBytesObserved=$true;naturalHealthyJournalObserved=$true;naturalActivationObserved=$true}}
+    action=[pscustomobject]@{exactMissingBytesObserved=$true;naturalHealthyJournalObserved=$true;naturalActivationObserved=$true;stable=[pscustomobject]@{observedActiveMillis=60000}}}
 Assert-DownloadReport $report $runId 'delta' $target $source 554;$checks++
 $report.action.naturalHealthyJournalObserved=$false;Reject {Assert-DownloadReport $report $runId 'delta' $target $source 554} 'TRIAL不能报告同次健康'
 $report.action.naturalHealthyJournalObserved=$true;$report.objectReadBytes=2097152;Reject {Assert-DownloadReport $report $runId 'delta' $target $source 554} '预算预留不能冒充正文read'
@@ -143,3 +143,22 @@ try {
 Reject {Wait-DownloadFailureOutput $null 8001} 'flush不能超8秒或使用非本轮仪器'
 Check ($sourceText.Contains('Receive-DownloadFailure')-and $sourceText.Contains('instrumentation-stderr.txt')-and $sourceText.Contains('failure-report.json')) '失败分支须保留双管道和安全报告'
 Write-Output "实际driver纯policy/mock检查：$checks 通过；未执行CLI/ADB/API/代理/凭据读取。"
+
+Check ((Get-DownloadMeteredPolicy "AndroidWifi;none`nAndroidWifi;none`n")-ceq'none') '真实重复none策略行应可准确保存'
+Check ((Get-DownloadMeteredRestore 'none')-ceq'undefined') 'none必须用实际支持undefined恢复'
+Reject {Get-DownloadMeteredPolicy "AndroidWifi;none`nAndroidWifi;true"} '矛盾策略不能猜测原值'
+Reject {Get-DownloadMeteredPolicy 'OtherWifi;false'} '非本机已知WiFi不能接管'
+Reject {Get-DownloadMeteredRestore 'unknown'} '未知策略不能变成false'
+$budgetVerified=[pscustomobject]@{snapshotId=$target;applicationId='app.luoxianlv.debug';environment='test';activation='live';mode='full';complete=$true;
+    artifacts=@([pscustomobject]@{sha256=$slow;size=10485760;role='resources'},[pscustomobject]@{sha256=('e'*64);size=10485760;role='resources'})}
+$budgetTemplate=[pscustomobject]@{targetSnapshotId=$target;sourceIdentity=$source;mode='budget-retry';slowObjectSha=$slow;prefixBytes=16384;expectedMissingBytes=20971520;
+    expectedObjects=@([pscustomobject]@{sha256=$slow;size=10485760},[pscustomobject]@{sha256=('e'*64);size=10485760})}
+Assert-DownloadCandidate $budgetVerified $budgetTemplate 'budget-retry';$checks++
+Reject {Assert-DownloadCandidate $budgetVerified $budgetTemplate 'budget-limit'} '21MiB门禁不能用20MiB样本冒充'
+$budgetTemplate.mode='budget-limit';$budgetTemplate.expectedMissingBytes=20971521;$budgetTemplate.expectedObjects[1].size=10485761;$budgetVerified.artifacts[1].size=10485761
+Assert-DownloadCandidate $budgetVerified $budgetTemplate 'budget-limit';$checks++
+$budgetVerified.complete=$false;Reject {Assert-DownloadCandidate $budgetVerified $budgetTemplate 'budget-limit'} '预算候选必须是签名完整包'
+Check ($sourceText.Contains("if(`$Mode-eq'cancellation'){Restore-DownloadChannel;Release-DownloadProxy}")-and
+    $sourceText.Contains("'resumed_captured'")) '预算取消不得沿旧路径回滚或提前释放'
+Check ($sourceText.IndexOf('if($meteredOwned){')-lt $sourceText.LastIndexOf('Write-Output "通过')) '计费策略必须在成功报告前还原'
+Write-Output "缓存/整候选新增policy累计：$checks 通过；未执行系统设置、CLI、设备或API。"

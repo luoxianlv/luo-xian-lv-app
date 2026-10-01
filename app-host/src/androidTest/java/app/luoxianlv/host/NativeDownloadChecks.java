@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import app.luoxianlv.hot.*;
 import app.luoxianlv.hot.contract.PracticeBridge;
+import java.io.File;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -49,7 +50,7 @@ final class NativeDownloadChecks {
       target = value.string("targetSnapshotId");
       slow = value.string("slowObjectSha");
       source = value.optionalString("sourceIdentity");
-      require(mode.equals("cancellation") || mode.equals("delta"), "仅支持取消或小资源delta");
+      require(Set.of("cancellation", "delta", "cache-repair", "budget-limit", "budget-retry").contains(mode), "下载检查模式无效");
       require(
           HotManifest.validHash(target)
               && HotManifest.validHash(slow)
@@ -66,7 +67,7 @@ final class NativeDownloadChecks {
         require(
             HotManifest.validHash(hash)
                 && size > 0
-                && size <= (1 << 20)
+                && size <= (budgetMode() ? DownloadBudget.LIMIT : 1 << 20)
                 && expected.put(hash, size) == null,
             "资源对象重复、过大或格式无效");
         total = Math.addExact(total, size);
@@ -74,14 +75,18 @@ final class NativeDownloadChecks {
       missing = value.number("expectedMissingBytes");
       prefix = value.number("prefixBytes");
       require(
-          total == missing && total <= (2 << 20) && expected.containsKey(slow), "缺失资源总量/慢对象不匹配");
+          total == missing && total <= (budgetMode() ? DownloadBudget.LIMIT + 1 : 2 << 20) && expected.containsKey(slow), "缺失资源总量/慢对象不匹配");
+      if (mode.equals("cache-repair")) require(expected.size() == 2, "缓存修复必须包含两个独立资源对象");
+      if (budgetMode()) require(expected.size() == 2 && total == DownloadBudget.LIMIT + (mode.equals("budget-limit") ? 1 : 0), "预算fixture须为两个资源对象及准确20MiB边界");
       require(
-          prefix >= (mode.equals("cancellation") ? 1 : 0)
+          prefix >= (mode.equals("cancellation") || mode.equals("budget-retry") ? 1 : 0)
               && prefix < expected.get(slow)
               && prefix <= 32768,
           "慢对象前缀无效或已是完整对象");
       objects = Collections.unmodifiableMap(expected);
     }
+
+    boolean budgetMode() { return mode.equals("budget-limit") || mode.equals("budget-retry"); }
   }
 
   static final class Session {
@@ -118,7 +123,7 @@ final class NativeDownloadChecks {
 
     void request(String phase, long at, long expires, String source) throws Exception {
       require(
-          Set.of("arm", "request_captured", "cancelled", "complete", "failed").contains(phase),
+          Set.of("arm", "request_captured", "cancelled", "unmeter", "resumed_captured", "complete", "failed").contains(phase),
           "下载控制阶段无效");
       require(source != null && source.matches("[a-z0-9:]+"), "下载来源身份不可编码");
       String content =
@@ -145,13 +150,13 @@ final class NativeDownloadChecks {
     }
 
     boolean acknowledged(String phase) throws Exception {
-      require(phase.equals("armed") || phase.equals("released"), "下载ACK阶段无效");
+      require(Set.of("armed", "released", "unmetered").contains(phase), "下载ACK阶段无效");
       safe();
       if (!Files.exists(ack, LinkOption.NOFOLLOW_LINKS)) return false;
       var value = StrictJson.object(read(ack, 4096)).only("schema", "runId", "phase");
       require(
           value.number("schema") == 1
-              && Set.of("armed", "released").contains(value.string("phase")),
+              && Set.of("armed", "released", "unmetered").contains(value.string("phase")),
           "下载ACK格式无效");
       return value.string("runId").equals(plan.runId) && value.string("phase").equals(phase);
     }
@@ -195,6 +200,7 @@ final class NativeDownloadChecks {
     Object updates = field(Bootstrap.class, null, "updates");
     Object client = field(updates.getClass(), updates, "client");
     ObjectDownloader downloads = (ObjectDownloader) field(client.getClass(), client, "downloads");
+    DownloadBudget budget = (DownloadBudget) field(client.getClass(), client, "budget");
     Bootstrap.Source original = Bootstrap.source();
     String originalId = original.prepared.identity();
     require(plan.source.isEmpty() || plan.source.equals(originalId), "计划来源不是实际当前组合");
@@ -205,6 +211,9 @@ final class NativeDownloadChecks {
             && initialSelection.phase == ActivationJournal.Phase.STABLE,
         "字节验收必须从真实稳定热更来源开始");
     for (var expected : plan.objects.entrySet()) {
+      if (plan.mode.equals("cache-repair") || plan.budgetMode()) require(
+          !Files.exists(startup.store.objectFile(expected.getKey()).toPath(), LinkOption.NOFOLLOW_LINKS),
+          "专用测试对象已存在，保留旧故障字节并拒绝重新seed");
       require(
           !startup.store.containsVerified(expected.getKey(), expected.getValue()), "计划对象已有内部准确副本");
       require(
@@ -216,6 +225,12 @@ final class NativeDownloadChecks {
     Throwable failure = null;
     Frame observed = null;
     try {
+      SignedSnapshot fixture = null;
+      JSONObject cacheFault = null;
+      if (plan.mode.equals("cache-repair") || plan.budgetMode()) {
+        fixture = fixture(session, startup, original);
+        if (plan.mode.equals("cache-repair")) cacheFault = seedCacheFault(session, startup.store, fixture);
+      }
       Frame initial =
           waitFrame(
               runner,
@@ -225,12 +240,33 @@ final class NativeDownloadChecks {
               false,
               deadline,
               45000,
-              frame -> frame.quiet() && mainCondition(runner, home::hasWindowFocus),
+              frame -> frame.quiet() && (!plan.budgetMode() || frame.metered) && mainCondition(runner, home::hasWindowFocus),
               "普通入口没有稳定在线空闲状态");
       observed = initial;
+      if (plan.budgetMode()) require(initial.metered, "预算验收必须来自系统实际计费网络");
       session.request("arm", now(), deadline.expires, originalId);
       status(runner, "下载握手：files/native-download-checks/" + runId + "/control.json");
       awaitAck(session, "armed", deadline, 45000);
+      JSONObject budgetEvidence = new JSONObject();
+      if (plan.mode.equals("budget-limit")) {
+        Frame deferred = deferred(runner, updates, original, plan, initial, deadline);
+        observed = deferred;
+        require(budget.used(fixture.manifest.contentId) == 0, "整候选拒绝之前已预留对象流量");
+        initialSelection.requireSameSelection(new Selection(startup.journal.state()));
+        budgetEvidence.put("wholeCandidateDeferred", deferred.json()).put("usedBeforeUnmetered", 0)
+            .put("objectConnectionsBeforeUnmetered", deferred.last.objectRequests());
+        require(deferred.last.objectBytes() == 0, "整候选超限仍读取了对象正文");
+        for (var entry : plan.objects.entrySet()) require(!Files.exists(downloads.partial(entry.getKey()).toPath(), LinkOption.NOFOLLOW_LINKS)
+            && !startup.store.containsVerified(entry.getKey(), entry.getValue()), "整候选超限仍写入了对象或断点");
+        result = new JSONObject().put("passed", true).put("runId", runId).put("mode", plan.mode)
+            .put("pid", android.os.Process.myPid()).put("initialSourceIdentity", originalId)
+            .put("targetSnapshotId", plan.target).put("expectedMissingBytes", plan.missing)
+            .put("objectReadBytes", 0).put("objectConnectionAttempts", 0).put("budget", budgetEvidence)
+            .put("systemMeteredNetworkTested", true).put("action", new JSONObject().put("selectionUnchanged", true))
+            .put("productionTouched", false).put("clockInjected", false).put("updateStateInjected", false)
+            .put("explicitCheckCalled", false).put("explicitActivationCalled", false).put("healthInjected", false);
+      }
+      if (!plan.mode.equals("budget-limit")) {
       UpdateCancellation[] captured = new UpdateCancellation[1];
       Frame inflight =
           waitFrame(
@@ -263,9 +299,16 @@ final class NativeDownloadChecks {
       require(token != null && !token.isCancelled(), "捕获到的操作已经取消");
       byte[] prefix = read(downloads.partial(plan.slow).toPath(), 32768);
       require(prefix.length == plan.prefix, "慢对象前缀在捕获期间改变");
+      if (cacheFault != null) {
+        byte[] damaged = read(session.directory.resolve("damaged.bin"), 1 << 20);
+        require(Arrays.equals(damaged, read(startup.store.objectFile(plan.slow).toPath(), 1 << 20)), "损坏缓存在网络补取前已被移除或改变");
+        cacheFault.put("damagedBytesPresentDuringNetworkRead", true);
+      }
       session.request("request_captured", now(), deadline.expires, originalId);
       JSONObject action = new JSONObject();
-      if (plan.mode.equals("cancellation")) {
+      long resumedRequests = 0;
+      long totalObjectReadBytes = -1;
+      if (plan.mode.equals("cancellation") || plan.mode.equals("budget-retry")) {
         long launched = now();
         stage =
             runner.startActivitySync(
@@ -320,6 +363,44 @@ final class NativeDownloadChecks {
             .put("selectionUnchanged", true)
             .put("journalBefore", initialSelection.json())
             .put("journalAfter", after.json());
+        if (plan.mode.equals("budget-retry")) {
+          long spent = budget.used(fixture.manifest.contentId);
+          require(spent >= DownloadBudget.RESERVATION && plan.missing - prefix.length > DownloadBudget.LIMIT - spent,
+              "实际中断预留没有使整候选重试超过剩余额度");
+          Activity closing = stage;
+          main(runner, closing::finish);
+          long closeUntil = now() + deadline.remaining(15000);
+          while ((!closing.isDestroyed() || PracticeBridge.active()) && now() < closeUntil) SystemClock.sleep(50);
+          require(closing.isDestroyed() && !PracticeBridge.active(), "预算重试前自己的演练场未退出");
+          stage = null;
+          restoreHome(runner, target, home, closeUntil);
+          Frame retried = deferred(runner, updates, original, plan, stopped, deadline);
+          observed = retried;
+          require(budget.used(fixture.manifest.contentId) == spent
+              && Arrays.equals(prefix, read(downloads.partial(plan.slow).toPath(), 32768)), "重试重新准入未保留账本或原前缀");
+          initialSelection.requireSameSelection(new Selection(startup.journal.state()));
+          budgetEvidence.put("exact20MiBInitiallyAdmitted", inflight.metered)
+              .put("usedAfterCancellation", spent).put("retryDeferred", retried.json())
+              .put("retryObjectConnections", retried.last.objectRequests());
+          session.request("unmeter", now(), deadline.expires, originalId);
+          awaitAck(session, "unmetered", deadline, 30000);
+          Frame resumed = waitFrame(runner, updates, original, plan.target, false, deadline, 90000,
+              value -> !value.metered && value.current != null && value.current != token
+                  && value.current.objectRequests() > 0 && value.busy, "非计费网络未自然重试同一候选");
+          UpdateCancellation resumedToken = resumed.current;
+          session.request("resumed_captured", now(), deadline.expires, originalId);
+          awaitAck(session, "released", deadline, 30000);
+          Frame stable = healthy(runner, updates, original, plan, startup, deadline);
+          observed = stable;
+          require(token.objectBytes() + resumedToken.objectBytes() == plan.missing
+              && budget.used(fixture.manifest.contentId) == spent, "重试实际读取量或持久预留变化错误");
+          action.put("naturalActivationObserved", true).put("exactMissingBytesObserved", true)
+              .put("naturalHealthyJournalObserved", true).put("stable", stable.json());
+          budgetEvidence.put("unmeteredResume", resumed.json()).put("finalUsed", spent)
+              .put("resumedObjectReadBytes", resumedToken.objectBytes());
+          resumedRequests = resumedToken.objectRequests();
+          totalObjectReadBytes = token.objectBytes() + resumedToken.objectBytes();
+        }
       } else {
         awaitAck(session, "released", deadline, 30000);
         Frame finished =
@@ -351,21 +432,7 @@ final class NativeDownloadChecks {
                   && startup.store.containsVerified(expected.getKey(), expected.getValue()),
               "目标对象归属、大小或内部hash验证失败");
         }
-        Frame stable =
-            waitFrame(
-                runner,
-                updates,
-                original,
-                plan.target,
-                true,
-                deadline,
-                90000,
-                value ->
-                    value.identity.equals(plan.target)
-                        && value.quiet()
-                        && startup.journal.state().phase == ActivationJournal.Phase.STABLE
-                        && startup.journal.state().stable.equals(plan.target),
-                "自然健康观察未完成，不能在TRIAL结束仪器");
+        Frame stable = healthy(runner, updates, original, plan, startup, deadline);
         observed = stable;
         main(
             runner,
@@ -388,7 +455,7 @@ final class NativeDownloadChecks {
               .put("targetSnapshotId", plan.target)
               .put("expectedMissingBytes", plan.missing)
               .put("objectReadBytes", token.objectBytes())
-              .put("objectConnectionAttempts", token.objectRequests())
+              .put("objectConnectionAttempts", token.objectRequests() + resumedRequests)
               .put("objectBytesAreBudgetReservation", false)
               .put("serverRequestCountProven", false)
               .put("initial", initial.json())
@@ -400,6 +467,19 @@ final class NativeDownloadChecks {
               .put("explicitCheckCalled", false)
               .put("explicitActivationCalled", false)
               .put("healthInjected", false);
+      if (cacheFault != null) {
+        String missingHash = cacheFault.getString("missingObjectSha");
+        require(HotSignatures.hash(read(session.directory.resolve("original-damaged.bin"), 1 << 20)).equals(plan.slow)
+            && HotSignatures.hash(read(session.directory.resolve("missing.bin"), 1 << 20)).equals(missingHash)
+            && HotSignatures.hash(read(session.directory.resolve("damaged.bin"), 1 << 20)).equals(cacheFault.getString("damagedBytesSha")),
+            "本轮原始/损坏备份字节没有完整保留");
+        String metadataHash = HotSignatures.hash(read(new File(startup.store.snapshot(plan.target).directory, "manifest.json").toPath(), StrictJson.MAX_BYTES));
+        require(metadataHash.equals(cacheFault.getString("initialSnapshotMetadataSha")), "本轮原目标清单字节改变");
+        result.put("cacheRepair", cacheFault.put("targetSnapshotMetadataHashUnchanged", true).put("faultBackupsPreserved", true));
+      }
+      if (plan.budgetMode()) result.put("budget", budgetEvidence).put("systemMeteredNetworkTested", true);
+      if (plan.mode.equals("budget-retry")) result.put("objectReadBytes", totalObjectReadBytes);
+      }
     } catch (Throwable invalid) {
       failure = invalid;
     } finally {
@@ -420,7 +500,7 @@ final class NativeDownloadChecks {
         deadline.complete();
         if (failure == null) {
           require(result != null, "下载观察缺少回执");
-          if (plan.mode.equals("cancellation")) {
+          if (plan.mode.equals("cancellation") || plan.mode.equals("budget-limit")) {
             require(Bootstrap.source() == original, "收尾时原来源已改变");
             initialSelection.requireSameSelection(new Selection(startup.journal.state()));
           }
@@ -507,10 +587,88 @@ final class NativeDownloadChecks {
     }
   }
 
+  private static SignedSnapshot fixture(Session session, HostStartup startup, Bootstrap.Source original) throws Exception {
+    Path path = session.directory.resolve("candidate.lxhp");
+    require(!Files.isSymbolicLink(path) && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+        && Files.size(path) <= (64L << 20), "需要本run普通完整签名fixture，至多64MiB");
+    var authority = startup.trust.current();
+    var policy = new HotPackage.Policy(startup.config.root, "app.luoxianlv.debug", "test",
+        startup.config.hostContract, Math.max(1, startup.journal.state().trustVersion), java.time.Instant.now(),
+        startup.config.mounts, authority == null ? null : authority.document(), authority == null ? null : authority.signature());
+    try (var archive = new HotPackage(path.toFile(), policy)) {
+      var manifest = archive.manifest;
+      require(manifest.snapshotId.equals(session.plan.target) && archive.baseline().isEmpty()
+          && archive.included.equals(manifest.objects.keySet()), "fixture不是本轮签名完整目标");
+      var prior = original.prepared.manifest;
+      require(prior != null && prior.runtime.sha256.equals(manifest.runtime.sha256)
+          && prior.business.sha256.equals(manifest.business.sha256), "fixture不能更换当前运行时或业务");
+      var extra = new LinkedHashSet<String>();
+      for (var artifact : manifest.artifacts) if (!prior.objects.containsKey(artifact.sha256)) {
+        require(artifact.role.equals("resources") || artifact.role.equals("config"), "fixture新增对象不是官方资源");
+        extra.add(artifact.sha256);
+      }
+      require(extra.equals(session.plan.objects.keySet()) && extra.iterator().next().equals(session.plan.slow),
+          "本轮缺失对象须准确覆盖目标新资源，慢对象须首先下载");
+      for (var entry : session.plan.objects.entrySet()) require(entry.getValue().equals(manifest.objects.get(entry.getKey())), "fixture对象大小与计划不符");
+      if (session.plan.mode.equals("cache-repair")) startup.store.prepare(archive); // 仅本轮未运行目标的准备，不激活。
+      return archive.metadata();
+    }
+  }
+
+  private static JSONObject seedCacheFault(Session session, ContentStore store, SignedSnapshot fixture) throws Exception {
+    String damagedHash = session.plan.slow;
+    String missingHash = session.plan.objects.keySet().stream().filter(hash -> !hash.equals(damagedHash)).findFirst().orElseThrow();
+    Path damaged = store.objectFile(damagedHash).toPath(), missing = store.objectFile(missingHash).toPath();
+    byte[] original = read(damaged, 1 << 20), bad = original.clone();
+    require(original.length > 0 && HotSignatures.hash(original).equals(damagedHash), "fixture原资源字节不匹配");
+    bad[0] ^= 1;
+    Files.move(missing, session.directory.resolve("missing.bin"), StandardCopyOption.ATOMIC_MOVE);
+    Files.move(damaged, session.directory.resolve("original-damaged.bin"), StandardCopyOption.ATOMIC_MOVE);
+    Files.write(session.directory.resolve("damaged.bin"), bad, StandardOpenOption.CREATE_NEW);
+    Files.write(damaged, bad, StandardOpenOption.CREATE_NEW);
+    require(damaged.toFile().setReadOnly() && !store.containsVerified(damagedHash, original.length)
+        && !store.containsVerified(missingHash, session.plan.objects.get(missingHash)), "未形成真实只读坏缓存/缺失对象");
+    require(store.snapshot(fixture.manifest.snapshotId).manifest.snapshotId.equals(session.plan.target), "损坏操作改变目标清单");
+    return new JSONObject().put("damagedObjectSha", damagedHash).put("missingObjectSha", missingHash)
+        .put("damagedBytesSha", HotSignatures.hash(bad)).put("fixtureSeededWithoutActivation", true)
+        .put("snapshotMetadataPreserved", true).put("ownNewObjectsOnly", true).put("initialSnapshotMetadataSha",
+            HotSignatures.hash(read(new File(store.snapshot(session.plan.target).directory, "manifest.json").toPath(), StrictJson.MAX_BYTES)));
+  }
+
+  private static Frame deferred(Instrumentation runner, Object updates, Bootstrap.Source original, Plan plan,
+      Frame before, NativeNetworkChecks.Deadline deadline) throws Exception {
+    return waitFrame(runner, updates, original, plan.target, false, deadline, 90000,
+        value -> value.metered && value.quiet() && value.lastStart > before.lastStart && value.last != null
+            && value.last != before.last && value.last.objectRequests() == 0 && value.failures == 0,
+        "实际计费网络下没有自然整候选Deferred/重试重新准入");
+  }
+
+  private static Frame healthy(Instrumentation runner, Object updates, Bootstrap.Source original, Plan plan,
+      HostStartup startup, NativeNetworkChecks.Deadline deadline) throws Exception {
+    waitFrame(runner, updates, original, plan.target, true, deadline, 90000,
+        value -> value.identity.equals(plan.target) && value.observing, "目标没有进入实际自然观察窗口");
+    AtomicReference<HealthWindow> window = new AtomicReference<>();
+    main(runner, () -> {
+      Object group = field(updates.getClass(), updates, "group");
+      require(group != null, "实际资源试运行已经结束，缺少健康窗口证据");
+      Object ticket = field(group.getClass(), group, "ticket");
+      window.set((HealthWindow) field(ticket.getClass(), ticket, "health"));
+    });
+    Frame stable = waitFrame(runner, updates, original, plan.target, true, deadline, 90000,
+        value -> value.identity.equals(plan.target) && value.quiet()
+            && startup.journal.state().phase == ActivationJournal.Phase.STABLE
+            && startup.journal.state().stable.equals(plan.target), "自然健康观察未完成，不能在TRIAL结束仪器");
+    require(window.get().observedMillis() >= 60000, "资源候选没有60秒实际有效健康时间");
+    startup.store.verifySnapshotObjects(startup.store.snapshot(plan.target));
+    stable.observedActiveMillis = window.get().observedMillis();
+    return stable;
+  }
+
   private static final class Frame {
     long at, lastStart, due;
     int failures;
-    boolean active, online, priority, busy, inFlight, pending, observing;
+    boolean active, online, priority, busy, inFlight, pending, observing, metered;
+    long observedActiveMillis;
     String identity;
     UpdateCancellation current, last;
 
@@ -538,6 +696,7 @@ final class NativeDownloadChecks {
           .put("inFlight", inFlight)
           .put("pending", pending)
           .put("observing", observing)
+          .put("systemMetered", metered).put("observedActiveMillis", observedActiveMillis)
           .put("sourceIdentity", identity);
     }
   }
@@ -606,6 +765,8 @@ final class NativeDownloadChecks {
               (UpdateCancellation) field(updates.getClass(), updates, "requestCancellation");
           value.last = (UpdateCancellation) field(updates.getClass(), updates, "lastRequest");
           value.identity = identity;
+          var connectivity = runner.getTargetContext().getSystemService(android.net.ConnectivityManager.class);
+          value.metered = connectivity == null || connectivity.isActiveNetworkMetered();
           result.set(value);
         });
     return result.get();
