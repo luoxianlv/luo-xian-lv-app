@@ -16,8 +16,23 @@ import java.util.zip.ZipFile;
 /** 本地独立 javac 工具：直接读取 SDK classfile 与 APK DEX，不启动 Gradle。 */
 public final class NativeSdkAudit {
   record Api(Set<String> classes, Set<String> exports) {}
+  record Difference(String reason, String identity, String sdk, String dex) {}
 
   public static void main(String[] args) throws Exception {
+    if (args.length == 3 && args[0].equals("--diagnose")) {
+      var sdk = readSdk(Path.of(args[2]));
+      var apk = NativeApkContents.read(Path.of(args[1]));
+      var differences = differences(sdk, apk.classes, apk.exports);
+      var records = new java.util.ArrayList<String>();
+      for (var difference : differences)
+        records.add("{\"reason\":" + json(difference.reason) + ",\"identity\":" + json(difference.identity)
+            + ",\"sdk\":" + json(difference.sdk) + ",\"dex\":" + json(difference.dex) + "}");
+      System.out.println("{\"verification\":\"diagnostic-only-not-pass\",\"apkHash\":\"" + apk.sha256
+          + "\",\"sdkHash\":\"" + NativeApkContents.hash(Path.of(args[2]))
+          + "\",\"sdkClasses\":" + sdk.classes.size() + ",\"sdkExports\":" + sdk.exports.size()
+          + ",\"differenceCount\":" + differences.size() + ",\"differences\":[" + String.join(",", records) + "]}");
+      return;
+    }
     if (args.length < 2 || args.length > 4)
       throw new IllegalArgumentException("Usage: NativeSdkAudit host|runtime apk sdk [mapping], or business apk host-sdk-hash");
     boolean business = args[0].equals("business");
@@ -138,8 +153,17 @@ public final class NativeSdkAudit {
   }
 
   static void verify(Api sdk, Set<String> dexClasses, Set<String> dexExports) throws Exception {
+    var differences = differences(sdk, dexClasses, dexExports);
+    if (!differences.isEmpty()) {
+      var first = differences.get(0);
+      throw new IOException(first.reason + ": " + first.identity + " [SDK=" + first.sdk + "; DEX=" + first.dex + "]");
+    }
+  }
+
+  static java.util.List<Difference> differences(Api sdk, Set<String> dexClasses, Set<String> dexExports) throws Exception {
+    var result = new java.util.ArrayList<Difference>();
     for (String type : sdk.classes)
-      require(dexClasses.contains(type), "SDK type missing/renamed in DEX: " + type);
+      if (!dexClasses.contains(type)) result.add(new Difference("SDK type missing/renamed in DEX", type, type, ""));
     var actual = new java.util.HashMap<String, String>();
     for (String line : dexExports) {
       String[] parts = line.split("\\|", -1);
@@ -150,23 +174,35 @@ public final class NativeSdkAudit {
       String[] expected = line.split("\\|", -1);
       String identity = identity(expected);
       String found = actual.get(identity);
-      require(found != null, "SDK export missing/renamed in DEX: " + identity);
+      if (found == null) {
+        result.add(new Difference("SDK export missing/renamed in DEX", identity, line, ""));
+        continue;
+      }
       String[] emitted = found.split("\\|", -1);
       int from = Integer.parseInt(expected[2]), to = Integer.parseInt(emitted[2]);
       // DEX constructor/synchronized/desugaring flags differ from JVM flags. Compare linkage-relevant bits.
-      require((to & 1) != 0 || ((from & 1) == 0 && (to & 4) != 0), "SDK export visibility narrowed: " + identity);
+      if (!((to & 1) != 0 || ((from & 1) == 0 && (to & 4) != 0)))
+        result.add(new Difference("SDK export visibility narrowed", identity, line, found));
       // 动态业务仍可能继承、override、写字段或实例化；优化器看不到这些后续调用。
-      require((from & 0x10) != 0 || (to & 0x10) == 0, "SDK export became final: " + identity);
+      if (!((from & 0x10) != 0 || (to & 0x10) == 0))
+        result.add(new Difference("SDK export became final", identity, line, found));
       if (!expected[0].equals("F"))
-        require((from & 0x400) != 0 || (to & 0x400) == 0, "SDK export became abstract: " + identity);
+        if (!((from & 0x400) != 0 || (to & 0x400) == 0))
+          result.add(new Difference("SDK export became abstract", identity, line, found));
       if (expected[0].equals("C")) {
-        require((from & 0x6200) == (to & 0x6200), "SDK class kind changed: " + identity);
-        require(expected[3].equals(emitted[3]) && expected[4].equals(emitted[4]),
-            "SDK parent/interfaces changed: " + identity);
+        if ((from & 0x6200) != (to & 0x6200)) result.add(new Difference("SDK class kind changed", identity, line, found));
+        if (!expected[3].equals(emitted[3]) || !expected[4].equals(emitted[4]))
+          result.add(new Difference("SDK parent/interfaces changed", identity, line, found));
       } else {
-        require((from & 8) == (to & 8), "SDK member static/instance shape changed: " + identity);
+        if ((from & 8) != (to & 8)) result.add(new Difference("SDK member static/instance shape changed", identity, line, found));
       }
     }
+    return result;
+  }
+
+  private static String json(String value) {
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"")
+        .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t") + "\"";
   }
 
   private static String identity(String[] parts) throws IOException {

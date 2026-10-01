@@ -1,6 +1,7 @@
 # 当前 runtime-sdk.jar 导出全部编译类型与依赖；没有可安全裁剪/改名的子集。
-# allowoptimization 只开放实现优化；不开放 allowshrinking/allowobfuscation。
--keep,allowoptimization,includedescriptorclasses class ** { *; }
+# 实际 R8 9.1.31 的 allowoptimization 已删改直接接口/成员声明并新增 final；
+# 后续热更业务不在 R8 的闭世界分析中，整个 SDK 必须 strict keep。
+-keep,includedescriptorclasses class ** { *; }
 -keepattributes Signature,InnerClasses,EnclosingMethod,Exceptions,MethodParameters,*Annotation*,AnnotationDefault,SourceFile,LineNumberTable
 -repackageclasses 'app.luoxianlv.runtime.r8'
 

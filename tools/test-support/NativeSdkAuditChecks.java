@@ -73,6 +73,24 @@ public final class NativeSdkAuditChecks {
     var duplicates = new TreeSet<>(actual);
     duplicates.add(method.replace("|1|", "|9|"));
     expectReject(() -> NativeSdkAudit.verify(sdk, sdk.classes(), duplicates), "duplicate DEX identity");
+    // 实际 R8 v2：即使父链仍实现某接口，也必须保持 SDK 的精确 direct interfaces。
+    var hierarchySdk = new NativeSdkAudit.Api(Set.of("Ltest/Parent;", "Ltest/Child;"), Set.of(
+        "C|Ltest/Parent;|1|Ljava/lang/Object;|Ljava/lang/Runnable;",
+        "C|Ltest/Child;|1|Ltest/Parent;|Ljava/lang/Runnable;"));
+    var removedRedundant = Set.of(
+        "C|Ltest/Parent;|1|Ljava/lang/Object;|Ljava/lang/Runnable;",
+        "C|Ltest/Child;|1|Ltest/Parent;|");
+    expectReject(() -> NativeSdkAudit.verify(hierarchySdk, hierarchySdk.classes(), removedRedundant), "removed redundant direct interface");
+    var multiChanged = new TreeSet<>(actual);
+    multiChanged.remove(method);
+    multiChanged.remove(field);
+    multiChanged.add(field.replace("|1|", "|17|"));
+    var diagnostics = NativeSdkAudit.differences(sdk, sdk.classes(), multiChanged);
+    require(diagnostics.size() == 2
+        && diagnostics.stream().anyMatch(d -> d.reason().equals("SDK export missing/renamed in DEX") && d.identity().endsWith("bar(I)V"))
+        && diagnostics.stream().anyMatch(d -> d.reason().equals("SDK export became final") && d.identity().endsWith("value:I")),
+        "All diagnostic differences must share the strict verifier's rules");
+    checks++;
     var directory = Files.createTempDirectory("native-marker-checks-");
     var markerZip = directory.resolve("public-marker.zip");
     String expected = "a".repeat(64);
