@@ -31,7 +31,8 @@ if ($probeManifest.manifest.instrumentation.targetPackage -ne 'app.luoxianlv.rel
     $probeManifest.manifest.instrumentation.name -ne 'app.luoxianlv.host.NativeReleaseInstrumentation' -or
     @($probeManifest.manifest.instrumentation).Count -ne 1) { throw 'Probe runner/target manifest is not isolated.' }
 [xml]$profileManifest = [System.IO.File]::ReadAllText((Join-Path $probeRoot 'app-host/src/releaseProbe/AndroidManifest.xml'))
-if ($profileManifest.manifest.application.debuggable -ne 'false' -or $profileManifest.manifest.application.testOnly -ne 'true') {
+if ($profileManifest.manifest.application.HasAttribute('debuggable', 'http://schemas.android.com/apk/res/android') -or
+    $profileManifest.manifest.application.testOnly -ne 'true' -or -not $probeScript.Contains('isDebuggable = false')) {
     throw 'Probe manifest is not a non-debuggable testOnly package.'
 }
 foreach ($requiredDsl in @('android.testBuildType = "release"', 'applicationIdSuffix = ".releaseprobe"',
