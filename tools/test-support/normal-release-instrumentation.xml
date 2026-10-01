@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.luoxianlv.normalrelease.test">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="37" />
+    <application android:label="Local normal Release acceptance" android:testOnly="true" android:debuggable="false" />
+    <instrumentation android:name="app.luoxianlv.tools.NativeNormalReleaseInstrumentation" android:targetPackage="app.luoxianlv" android:handleProfiling="false" android:functionalTest="true" />
+</manifest>
