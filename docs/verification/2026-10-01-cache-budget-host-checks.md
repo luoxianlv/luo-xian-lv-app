@@ -57,3 +57,9 @@ driver保持只允许emulator-5554、Debug/test/API127.0.0.1:18472及CLI/.local�
 随后budget-limit在instrument启动前因netpolicy setter exit255被driver拒绝，旧run前缀`f098a4d8`仍作为失败保留，未写对象或partial。根真实复现set true exit255但两AndroidWifi行均true，restore undefined exit255且均none。仅这个setter改为直接Invoke-DownloadCommand接受0/255，其后getter仍strict0且必须精确读回目标值；helper实际CM计费条件不变。其他ADB不放宽。解析也拒绝同SSID未知/非法大小写值，不能凭另一条合法行推断一致。
 
 setter修复实际PowerShell解析/纯policy及提取实际setter函数mock检查累计97项通过：255正确true/undefined读回可继续，255错误/矛盾/未知/非目标行、0错误读回和1/254均拒绝。没有操作设备或系统设置，不把mock当预算通过。当前cache-repair设备已PASS；budget-limit与budget-retry仍待根重跑，不能以setter已产生副作用或raw ZIP大小补写为验收成功。生产可复现缺陷本轮尚未发现。
+
+随后根budget-limit run `19ddfe600e8945c6a320a3cf54f6db28`、PID4715设备主体已通过：实际计费true、20971521字节整候选Deferred、对象连接/正文/预留均0、Source不变。整体driver仍失败，因为finally的am start沿通用ADB5秒窗口超时；旧run没有包装成driver通过。根随后单独恢复命令退出0，并实读Main当前Resumed、PID4919，AndroidWifi恢复none、reverse为空；该事后恢复不能倒推旧driver成功。
+
+仅首页冷启动命令改用专属10秒上限，仍由共同300秒剩余裁剪；其退出必须0，setter的255例外不能扩给首页。之后用通用strict0/5秒ADB读取dumpsys，要求API36 topResumedActivity=或ResumedActivity:及旧版mResumedActivity[:=]精确指向Debug Main；History、Paused、其他App/页面或MainActivity名称前缀均不能过。全部收尾和共同期限仍通过后才写driverHomeRestored=true及最终成功报告。生产、Java、阶段、预算与健康门禁未改，不能据此声称冷启动像素/渲染验收。
+
+此次实际PowerShell解析/提取实际首页函数mock检查累计113项通过：6000ms冷启动模型在旧5000ms窗口明确失败，新10000ms且先Paused后真实Resumed才通过；伪History直到共同期限仍拒绝，其他页面/包/类前缀及启动exit255拒绝。该模型不注入设备时钟或模拟设备成功。Root新budget-limit完整driver与budget-retry仍待重跑；旧失败、对象缓存、断点、项目和run目录均保留。

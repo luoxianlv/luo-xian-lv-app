@@ -103,6 +103,10 @@ function Assert-DownloadMeteredMutation([int]$Code,[string]$Value,[string]$Actua
     $expected=if($Value-ceq'undefined'){'none'}else{$Value}
     if($Actual-cne$expected){throw '本机计费策略实际读回不符'}
 }
+function Test-DownloadHomeResumed([string]$Activities) {
+    # 与continuous使用同一精确Resumed格式；不能用History/Paused或其他包的同名页面作证。
+    $Activities -cmatch '(?m)^\s*(?:(?:mResumedActivity|topResumedActivity)\s*[:=]|ResumedActivity\s*:)[^\r\n]*[ \t]app\.luoxianlv\.debug/(app\.luoxianlv\.|\.)?MainActivity(?:[ \t}\r]|$)'
+}
 function Assert-DownloadOwnedChannel($Channel, $Ownership) {
     if (!$Ownership -or !$Ownership.id -or !$Channel.current -or
         $Channel.current.id -cne $Ownership.id -or $Channel.current.snapshotId -cne $Ownership.target -or
@@ -312,6 +316,17 @@ function Set-DownloadMeteredPolicy([string]$Value) {
     if($mutation.Code-notin@(0,255)){throw '本机计费setter执行失败'}
     $actual=Get-DownloadMeteredPolicy (Invoke-DownloadAdb @('shell','cmd','netpolicy','list','wifi-networks'))
     Assert-DownloadMeteredMutation $mutation.Code $Value $actual
+}
+function Restore-DownloadHome {
+    # 只有冷启动首页命令可等10s；Invoke-DownloadCommand仍裁到共同300s剩余，其他ADB保持5s。
+    $started=Invoke-DownloadCommand $Adb @('-s',$Serial,'shell','am','start','-n',"$package/app.luoxianlv.MainActivity") 10000
+    if($started.Code-ne0){throw '恢复APP首页命令失败'}
+    do {
+        $activities=Invoke-DownloadAdb @('shell','dumpsys','activity','activities')
+        if(Test-DownloadHomeResumed $activities){return}
+        [void](Get-DownloadRemaining 1000)
+        Start-Sleep -Milliseconds 100
+    } while($true)
 }
 function Read-DownloadChannel {
     $status = Invoke-DownloadLxhot @('status','--application-id',$package,'--environment','test','--server',$origin,'--token-file',$tokenFile)
@@ -525,7 +540,7 @@ finally {
         catch {$cleanupErrors.Add('还原原AndroidWifi计费策略未确认')}
     }
     if ($instrument) {
-        try { Invoke-DownloadAdb @('shell','am','start','-n',"$package/app.luoxianlv.MainActivity") | Out-Null }
+        try { Restore-DownloadHome }
         catch { $cleanupErrors.Add('恢复APP首页失败') }
         Save-DownloadInstrumentationOutput
     }
@@ -539,6 +554,7 @@ $report | Add-Member -NotePropertyName gatewayBytesAreTcpDelivery -NotePropertyV
 $report | Add-Member -NotePropertyName driverReverseRemoved -NotePropertyValue $true
 $report | Add-Member -NotePropertyName driverGatewayStopped -NotePropertyValue $true
 $report | Add-Member -NotePropertyName driverWaitLimitMs -NotePropertyValue 300000
+$report | Add-Member -NotePropertyName driverHomeRestored -NotePropertyValue $true
 if($meteredOwned){$report|Add-Member -NotePropertyName driverOriginalMeteredPolicy -NotePropertyValue $meteredPolicy
     $report|Add-Member -NotePropertyName driverOriginalMeteredPolicyRestored -NotePropertyValue $true}
 Save-DownloadJson (Join-Path $output 'report.json') $report

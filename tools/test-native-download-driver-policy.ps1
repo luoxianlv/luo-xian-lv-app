@@ -191,3 +191,45 @@ $meteredCode=0;Set-DownloadMeteredPolicy 'true';$checks++
 $meteredRows='AndroidWifi;none';Reject {Set-DownloadMeteredPolicy 'true'} '退出0也不能绕过实际读回'
 Check ($sourceText.Contains("if (`$reply.Code -ne 0)")-and !$sourceText.Contains('if ($reply.Code -notin @(0,255))')) '其他ADB必须仍仅接受exit0'
 Write-Output "计费setter新增累计：$checks 通过；实际setter函数+mock返回，无设备设置或网络操作。"
+
+foreach($row in @(' topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    ' ResumedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    ' mResumedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/.MainActivity t144}')){
+    Check (Test-DownloadHomeResumed $row) '真实API36/旧版当前Main格式必须支持'
+}
+foreach($row in @(' Hist #0: ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    ' mPausedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    ' topResumedActivity=ActivityRecord{123 u0 other.app.luoxianlv.debug/app.luoxianlv.MainActivity t144}',
+    ' topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity$Inner t144}',
+    ' topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivityPreview t144}',
+    ' topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.ui.practice.PracticeActivity t144}')){
+    Check (!(Test-DownloadHomeResumed $row)) 'History/Paused/包或页面前缀不能冒充当前Main'
+}
+$homeNode=$setterAst.Find({param($node)$node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'Restore-DownloadHome'},$true)
+if(!$homeNode){throw '实际home收尾函数缺失'}
+Invoke-Expression $homeNode.Extent.Text
+$package='app.luoxianlv.debug';$script:homeCommandCode=0;$script:homeColdMillis=6000;$script:homeReadIndex=0;$script:homeBudgetPolls=0
+$script:homeRows=@(' mPausedActivity: ActivityRecord{123 u0 app.luoxianlv.debug/.MainActivity t144}',
+    ' topResumedActivity=ActivityRecord{123 u0 app.luoxianlv.debug/app.luoxianlv.MainActivity t144}')
+$script:homeTrace=[Collections.Generic.List[string]]::new()
+function Invoke-DownloadCommand([string]$Executable,[string[]]$Arguments,[int]$Maximum){
+    $homeTrace.Add(($Arguments-join' ')+' / '+$Maximum)
+    if($Maximum-lt$homeColdMillis){throw 'mock cold start exceeds command window'}
+    [pscustomobject]@{Code=$script:homeCommandCode;Output=''}
+}
+function Invoke-DownloadAdb([string[]]$Arguments){
+    $homeTrace.Add(($Arguments-join' '))
+    $index=[Math]::Min($script:homeReadIndex,$homeRows.Count-1);$script:homeReadIndex++
+    $homeRows[$index]
+}
+function Get-DownloadRemaining([int]$Maximum){$script:homeBudgetPolls++;if($homeBudgetPolls-ge2){throw 'mock shared deadline expired'};$Maximum}
+Restore-DownloadHome;$checks++
+Check ($homeTrace[0]-ceq'-s emulator-5554 shell am start -n app.luoxianlv.debug/app.luoxianlv.MainActivity / 10000'-and$homeReadIndex-eq2) '慢冷启动须获10s且继续等待实际Main'
+# 原5秒窗口在相同慢冷启动模型明确失败；不模拟真实设备时间或Activity成功。
+Reject {Invoke-DownloadCommand $Adb @('-s',$Serial,'shell','am','start','-n',"$package/app.luoxianlv.MainActivity") 5000} '旧5s冷启动负例必须失败'
+$homeRows=@(' Hist #0: ActivityRecord{123 u0 app.luoxianlv.debug/.MainActivity t144}');$homeBudgetPolls=0
+Reject {Restore-DownloadHome} 'am start exit0但只有History须在共同期限拒绝'
+$homeCommandCode=255;Reject {Restore-DownloadHome} '255例外只属于netpolicy，不允许home启动'
+Check ($sourceText.Contains('$reply = Invoke-DownloadCommand $Adb (@(''-s'',$Serial) + $Arguments) 5000')) '全局ADB5s不应改变'
+Check ($sourceText.LastIndexOf('driverHomeRestored')-gt$sourceText.IndexOf('if ($cleanupErrors.Count)')) '完整home核验应在成功保存之前门禁'
+Write-Output "首页收尾新增累计：$checks 通过；实际函数+mock冷启动预算/Resumed向量，无设备操作。"
