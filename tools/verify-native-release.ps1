@@ -248,6 +248,8 @@ try {
     Write-AtomicNativeReport $ReportOutput (($result | ConvertTo-Json -Depth 30) + "`n")
     Write-Output "Native release artifact audit passed. Signature: $signatureStatus. releaseReady=$($result.releaseReady)"
     Write-Output $ReportOutput
+    # CompileOnly允许未签名；不能把签名探测的退出码遗留成整项编译核验失败。
+    $global:LASTEXITCODE = 0
 } catch {
     $verificationFailure = $_
     if ($canWriteReport) {
