@@ -20,7 +20,7 @@
 - 演练场 `PracticeBridge.ready()`、窗口焦点和当前业务加载器中的真实 `PracticeBackdrop` 就绪；私有 `project` 的 canonical 路径确实等于 UUID 根。
 - `renderState=ready`、`prepared=true`、真实 WebView 标题为 `wallpaper:ready`，预览 ImageView 的 drawable 已清空；`static/error`、空项目或只有 `prepared` 均失败。
 - WebView 已附着、可见、alpha≥0.99、尺寸非零，并完成自己的 `postVisualStateCallback`。helper 不调用 `evaluateJavascript`，不注入 title 或 ready。
-- `UiAutomation.takeScreenshot` 的实际合成帧中，WebView 可见区域有至少 1% 的采样像素匹配 fixture 的固定 `#30485c` 背景，RGB 各容差 8。按屏幕坐标裁剪，并保存 PNG/hash/宽高/匹配计数。该颜色检查还必须结合上面的项目根、真实 ready 和预览清空，不能单独用预览颜色放行。
+- `UiAutomation.takeScreenshot` 的实际合成帧按 WebView 屏幕坐标裁剪。键盘会覆盖 alpha=130 的 `(6,8,7)` 暗底，因此 `#30485c` 的合成期望为 `(27,39,49)`；仅采样上下各 16% 区域以避开控件后的渐变，RGB 各容差 8，匹配至少 1%。保存 PNG/hash/宽高/匹配计数，失败也保留诊断帧。该检查仍须结合项目根、真实 ready 和预览清空，不能单独用预览颜色放行。
 - 全部用户项目文件树未变；恢复原选择后，实际 Activity 已 destroyed，`PracticeBridge.active()` 为 false。清理失败不会生成成功回执。
 
 正常返回 `JSONObject`；回执在应用 `files/native-user-wallpaper-render-report.json`，帧在 `files/native-user-wallpaper-render.png`。主要字段包括 `projectId/projectPath/projectHash/files`、`backdropProjectPath/renderState/prepared/practiceReady/webTitle/webVisualStateCallback/previewCleared/visibleFrame`、`selectionRestored/stageClosed/allUserProjectsUnchanged`。`visibleFrame` 含路径、SHA256、字节数、尺寸和像素采样统计。失败抛 `AssertionError`，原因保留为 cause/suppressed；会尝试恢复选择并关闭自己启动的 stage。开始时清除自己上轮回执和帧；中途保存的 PNG 可以是失败诊断，只有 JSON 的 `passed=true` 且清理字段齐全才是成功。
@@ -29,6 +29,6 @@
 
 ## 当前验证状态
 
-新增 render 代码已用 Android SDK 37 与当前宿主/core/contract 编译输出离线 `javac --release 17 -encoding UTF-8` 编译通过；已用真实业务 Kotlin 编译输出的 `javap -p` 对照所用 store/Entry/Backdrop 方法和字段。没有运行共享 Gradle、设备、API 或渠道操作。render 的最终设备结果由根代理接线后执行，当前不得把源码检查当作已成功播放。
+新增 render 代码经独立 javac 与真实 Kotlin descriptor 核验后，由根代理构建 Debug 仪器并在 API 36.1 模拟器执行。首次像素检查错误地使用原背景色，实际截图已显示项目 HTML；修正为现有键盘遮罩的合成期望后通过，未修改应用渲染或放宽首帧门禁。PID 15500 使用稳定 D，项目仍为原 UUID、4 文件 487 字节；首帧 4192 ms，22800 个边缘采样中 22602 个匹配。原选择恢复、演练场关闭、全用户项目树不变。实际 JSON 位于 CLI 仓库 `docs/verification/nonempty-wallpaper-render.json`。这仅证明该离线 web fixture 的可见首帧，不证明连续动画、音频或任意工坊兼容。
 
 共同 Debug 门禁、主线程包装、选择恢复和原子回执写入复用单一小函数；反射仅用于测试读取当前业务代际，保持测试 APK 不引入 Kotlin/Compose，避免掩盖原生三层类加载边界。

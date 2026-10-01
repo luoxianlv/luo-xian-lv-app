@@ -28,6 +28,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private String automaticSnapshot;
   private String resourceSnapshot;
   private String rejectedResource, resourceFallback;
+  private boolean prepareUserWallpaper;
+  private String renderUserWallpaper;
   private boolean receiptFault;
   private boolean receiptRecovered;
   private String restartPrepared;
@@ -75,6 +77,9 @@ public final class NativeAppInstrumentation extends Instrumentation {
     resourceSnapshot = arguments == null ? null : arguments.getString("resourceSnapshot");
     rejectedResource = arguments == null ? null : arguments.getString("rejectedResource");
     resourceFallback = arguments == null ? null : arguments.getString("resourceFallback");
+    prepareUserWallpaper =
+        arguments != null && "true".equals(arguments.getString("prepareUserWallpaper"));
+    renderUserWallpaper = arguments == null ? null : arguments.getString("renderUserWallpaper");
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
     receiptRecovered = arguments != null && "true".equals(arguments.getString("receiptRecovered"));
     restartPrepared = arguments == null ? null : arguments.getString("restartPrepared");
@@ -369,7 +374,23 @@ public final class NativeAppInstrumentation extends Instrumentation {
         require(Bootstrap.source() == source && !heldProcess.canReplace(), "旧工作尚未完成就切换代际");
         workRelease.countDown();
       }
-      if (compiledContractOnly) {
+      if (prepareUserWallpaper) {
+        var fixture = NativeUserWallpaperFixture.prepare(this, main);
+        require(
+            fixture.getInt("fileCount") > 0 && fixture.getBoolean("selectionRestored"),
+            "用户项目准备未完成");
+        report.putString("stream", "通过：生产导入器建立非空外部用户壁纸项目，原选择与既有项目保持。\n");
+        success = true;
+      } else if (renderUserWallpaper != null) {
+        var result = NativeUserWallpaperFixture.render(this, main, renderUserWallpaper);
+        require(
+            result.getBoolean("passed")
+                && result.getBoolean("selectionRestored")
+                && result.getBoolean("allUserProjectsUnchanged"),
+            "用户壁纸实际首帧或清理检查未完成");
+        report.putString("stream", "通过：非空用户壁纸在真实演练场显示首帧，原选择与项目文件保持。\n");
+        success = true;
+      } else if (compiledContractOnly) {
         NativeCompiledContractChecks.run(this);
         report.putString("stream", "通过：签名有效但编译 SDK 错误的候选在加载前拒绝，当前业务与运行时保持。\n");
         success = true;

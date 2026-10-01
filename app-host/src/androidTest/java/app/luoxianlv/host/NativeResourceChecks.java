@@ -30,7 +30,9 @@ final class NativeResourceChecks {
             && HotManifest.validHash(bad)
             && HotManifest.validHash(stable),
         "仅允许本机资源回退验收");
-    String userBefore = userWallpaperFingerprint(runner.getTargetContext());
+    UserTree userBefore = userWallpaperFingerprint(runner.getTargetContext());
+    require(userBefore.files() > 0 && userBefore.bytes() > 0, "必须先导入真实非空用户项目再验证保留");
+    require(!state.journal.state().quarantine.contains(bad), "目标已被隔离，不能把重复观察当作新故障回退");
     await(
         "损坏渲染资源未隔离并恢复稳定版本",
         90000,
@@ -67,7 +69,9 @@ final class NativeResourceChecks {
             .put("pid", android.os.Process.myPid())
             .put("quarantined", current.quarantine.contains(bad))
             .put("visibleStableFrame", true)
-            .put("userWallpaperFingerprint", userBefore)
+            .put("userWallpaperFingerprint", userBefore.fingerprint())
+            .put("userWallpaperFiles", userBefore.files())
+            .put("userWallpaperBytes", userBefore.bytes())
             .put("userWallpaperUnchanged", true)
             .put("explicitActivationCalled", false)
             .put("revision", current.revision)
@@ -78,30 +82,54 @@ final class NativeResourceChecks {
         report.toString(2).getBytes(StandardCharsets.UTF_8));
   }
 
-  private static String userWallpaperFingerprint(Context context) throws Exception {
+  private record UserTree(String fingerprint, int files, long bytes) {}
+
+  private static UserTree userWallpaperFingerprint(Context context) throws Exception {
     var digest = java.security.MessageDigest.getInstance("SHA-256");
+    int countFiles = 0;
+    long countBytes = 0;
     File external = context.getExternalFilesDir("wallpapers");
     File[] roots =
         external == null
             ? new File[] {new File(context.getFilesDir(), "wallpapers")}
             : new File[] {external, new File(context.getFilesDir(), "wallpapers")};
-    for (File root : roots) {
+    for (int index = 0; index < roots.length; index++) {
+      File root = roots[index];
       if (!root.exists()) continue;
+      require(!Files.isSymbolicLink(root.toPath()), "用户壁纸根目录包含链接");
       try (var paths = Files.walk(root.toPath())) {
         for (var path : paths.sorted().toList()) {
           require(!Files.isSymbolicLink(path), "用户壁纸包含链接，不能跟随");
           if (!Files.isRegularFile(path)) continue;
-          digest.update(root.toPath().relativize(path).toString().getBytes(StandardCharsets.UTF_8));
-          digest.update((byte) 0);
+          byte[] relative =
+              root.toPath().relativize(path).toString().getBytes(StandardCharsets.UTF_8);
+          long length = Files.size(path);
+          digest.update(
+              ByteBuffer.allocate(16)
+                  .putInt(index)
+                  .putInt(relative.length)
+                  .putLong(length)
+                  .array());
+          digest.update(relative);
+          var fileDigest = java.security.MessageDigest.getInstance("SHA-256");
+          long read = 0;
           try (var input = Files.newInputStream(path)) {
             byte[] buffer = new byte[32768];
             int count;
-            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+            while ((count = input.read(buffer)) != -1) {
+              fileDigest.update(buffer, 0, count);
+              read += count;
+            }
           }
+          require(read == length, "用户壁纸在核验期间改变");
+          digest.update(fileDigest.digest());
+          countFiles++;
+          countBytes = Math.addExact(countBytes, length);
         }
       }
     }
-    return java.util.Base64.getEncoder().encodeToString(digest.digest());
+    return new UserTree(
+        java.util.Base64.getEncoder().encodeToString(digest.digest()), countFiles, countBytes);
   }
 
   private static void require(boolean value, String message) {
