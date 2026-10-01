@@ -162,3 +162,32 @@ Check ($sourceText.Contains("if(`$Mode-eq'cancellation'){Restore-DownloadChannel
     $sourceText.Contains("'resumed_captured'")) '预算取消不得沿旧路径回滚或提前释放'
 Check ($sourceText.IndexOf('if($meteredOwned){')-lt $sourceText.LastIndexOf('Write-Output "通过')) '计费策略必须在成功报告前还原'
 Write-Output "缓存/整候选新增policy累计：$checks 通过；未执行系统设置、CLI、设备或API。"
+
+# 调实际setter，仅命令/只读返回为替身；255不能绕过严格策略读回，也不改变其他ADB的strict0。
+$setterAst=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$null,[ref]$null)
+$setterNode=$setterAst.Find({param($node)$node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'Set-DownloadMeteredPolicy'},$true)
+if(!$setterNode){throw '实际metered setter缺失'}
+Invoke-Expression $setterNode.Extent.Text
+$Serial='emulator-5554';$Adb='fake-adb';$script:meteredCode=255;$script:meteredRows="AndroidWifi;true`nAndroidWifi;true"
+$script:meteredTrace=[Collections.Generic.List[string]]::new()
+function Invoke-DownloadCommand([string]$Executable,[string[]]$Arguments,[int]$Maximum){
+    $meteredTrace.Add(($Arguments-join' '))
+    [pscustomobject]@{Code=$script:meteredCode;Output='ignored-safe-local-output'}
+}
+function Invoke-DownloadAdb([string[]]$Arguments){$meteredTrace.Add(($Arguments-join' '));$script:meteredRows}
+Set-DownloadMeteredPolicy 'true';$checks++
+Check ($meteredTrace[0]-ceq'-s emulator-5554 shell cmd netpolicy set metered-network AndroidWifi true'-and
+    $meteredTrace[1]-ceq'shell cmd netpolicy list wifi-networks') '255路径必须执行精确本机setter并真实读回'
+$meteredRows="AndroidWifi;none`nAndroidWifi;none"
+Set-DownloadMeteredPolicy 'undefined';$checks++
+$meteredRows='AndroidWifi;false';Reject {Set-DownloadMeteredPolicy 'true'} '255但读回错误不得通过'
+$meteredRows="AndroidWifi;true`nAndroidWifi;none";Reject {Set-DownloadMeteredPolicy 'true'} '255但读回矛盾不得通过'
+$meteredRows='OtherWifi;true';Reject {Set-DownloadMeteredPolicy 'true'} '255但非AndroidWifi不得通过'
+$meteredRows="AndroidWifi;true`nAndroidWifi;unknown";Reject {Set-DownloadMeteredPolicy 'true'} '不能忽略同SSID未知策略行'
+$meteredRows="AndroidWifi;none`nAndroidWifi;TRUE";Reject {Set-DownloadMeteredPolicy 'undefined'} '不能忽略同SSID非法大小写值'
+$meteredCode=1;$meteredRows='AndroidWifi;true';Reject {Set-DownloadMeteredPolicy 'true'} '退出1即使读回true也不得通过'
+$meteredCode=254;Reject {Set-DownloadMeteredPolicy 'true'} '不得放宽其他退出码'
+$meteredCode=0;Set-DownloadMeteredPolicy 'true';$checks++
+$meteredRows='AndroidWifi;none';Reject {Set-DownloadMeteredPolicy 'true'} '退出0也不能绕过实际读回'
+Check ($sourceText.Contains("if (`$reply.Code -ne 0)")-and !$sourceText.Contains('if ($reply.Code -notin @(0,255))')) '其他ADB必须仍仅接受exit0'
+Write-Output "计费setter新增累计：$checks 通过；实际setter函数+mock返回，无设备设置或网络操作。"

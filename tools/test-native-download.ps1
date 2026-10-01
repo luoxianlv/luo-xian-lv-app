@@ -89,6 +89,7 @@ function Assert-DownloadControl($Control, [string]$RunId, [string]$Mode, [string
 function Get-DownloadMeteredPolicy([string]$Raw) {
     $values=@()
     foreach($line in $Raw -split '\r?\n') {
+        if($line.Trim().StartsWith('AndroidWifi;',[StringComparison]::Ordinal)-and $line.Trim()-cnotmatch '^AndroidWifi;(none|true|false)$'){throw 'AndroidWifi策略行包含未知值，拒绝推断'}
         if($line.Trim()-cmatch '^AndroidWifi;(none|true|false)$'){$values+= $Matches[1]}
     }
     if(!$values.Count-or @($values|Select-Object -Unique).Count-ne1){throw '无法准确保存本机AndroidWifi原计费策略'}
@@ -96,6 +97,11 @@ function Get-DownloadMeteredPolicy([string]$Raw) {
 }
 function Get-DownloadMeteredRestore([string]$Original) {
     switch -CaseSensitive ($Original) {'none' {'undefined'} 'true' {'true'} 'false' {'false'} default {throw '原计费策略无法还原'}}
+}
+function Assert-DownloadMeteredMutation([int]$Code,[string]$Value,[string]$Actual) {
+    if($Code-notin@(0,255)-or $Value-cnotin@('true','false','undefined')){throw '本机计费setter退出码或值无效'}
+    $expected=if($Value-ceq'undefined'){'none'}else{$Value}
+    if($Actual-cne$expected){throw '本机计费策略实际读回不符'}
 }
 function Assert-DownloadOwnedChannel($Channel, $Ownership) {
     if (!$Ownership -or !$Ownership.id -or !$Channel.current -or
@@ -301,10 +307,11 @@ function Release-DownloadProxy {
 }
 function Set-DownloadMeteredPolicy([string]$Value) {
     if($Value-cnotin@('true','false','undefined')){throw '本机计费策略值无效'}
-    Invoke-DownloadAdb @('shell','cmd','netpolicy','set','metered-network','AndroidWifi',$Value)|Out-Null
+    # 本AVD已实测setter写入后仍exit255；只允许此命令0/255，读回与helper实际CM门禁继续必需。
+    $mutation=Invoke-DownloadCommand $Adb @('-s',$Serial,'shell','cmd','netpolicy','set','metered-network','AndroidWifi',$Value) 5000
+    if($mutation.Code-notin@(0,255)){throw '本机计费setter执行失败'}
     $actual=Get-DownloadMeteredPolicy (Invoke-DownloadAdb @('shell','cmd','netpolicy','list','wifi-networks'))
-    $expected=if($Value-eq'undefined'){'none'}else{$Value}
-    if($actual-cne$expected){throw '本机计费策略实际读回不符'}
+    Assert-DownloadMeteredMutation $mutation.Code $Value $actual
 }
 function Read-DownloadChannel {
     $status = Invoke-DownloadLxhot @('status','--application-id',$package,'--environment','test','--server',$origin,'--token-file',$tokenFile)

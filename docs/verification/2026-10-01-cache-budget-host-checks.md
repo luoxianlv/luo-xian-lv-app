@@ -52,4 +52,8 @@ driver保持只允许emulator-5554、Debug/test/API127.0.0.1:18472及CLI/.local�
 
 `tools/test-native-cache-budget-checks.ps1`通过实际helper独立javac、14项JUnit（0 skip）、84项真实driver纯policy/mock/本地输出flush检查。新检查覆盖准确20MiB/20MiB+1整候选、两个对象及完整包约束、持久预留重新准入、合法unmetered ACK/旧run拒绝、none重复行/undefined恢复及矛盾策略拒绝。既有取消/delta报告和CLI发布归属负例仍通过。mock不冒充Android下载、计费边沿、首帧或设备成功。
 
-生产可复现缺陷本轮尚未发现。真正cache-repair、budget-limit、budget-retry结果仍待根设备执行；收到原始设备回执和收尾证据之后才可补为验收通过。
+根实际cache-repair已通过：run `1f2bdde9a59a47e69976a42b2be8d322`、PID1939，普通宿主读取8192字节、2次对象连接，补缺与等长损坏对象都重新验证；有效健康60911ms，故障备份/清单原始hash保留，首页/窗口、reverse和代理完整收尾。公开回执为CLI `docs/verification/native-cache-repair-device.json`。这是普通HostUpdates资源候选证据，不是独立核心模拟或删除cache后重装。
+
+随后budget-limit在instrument启动前因netpolicy setter exit255被driver拒绝，旧run前缀`f098a4d8`仍作为失败保留，未写对象或partial。根真实复现set true exit255但两AndroidWifi行均true，restore undefined exit255且均none。仅这个setter改为直接Invoke-DownloadCommand接受0/255，其后getter仍strict0且必须精确读回目标值；helper实际CM计费条件不变。其他ADB不放宽。解析也拒绝同SSID未知/非法大小写值，不能凭另一条合法行推断一致。
+
+setter修复实际PowerShell解析/纯policy及提取实际setter函数mock检查累计97项通过：255正确true/undefined读回可继续，255错误/矛盾/未知/非目标行、0错误读回和1/254均拒绝。没有操作设备或系统设置，不把mock当预算通过。当前cache-repair设备已PASS；budget-limit与budget-retry仍待根重跑，不能以setter已产生副作用或raw ZIP大小补写为验收成功。生产可复现缺陷本轮尚未发现。
