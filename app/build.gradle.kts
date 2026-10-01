@@ -18,6 +18,8 @@ val appVersionCode = (project.findProperty("appVersionCode") as String?)?.toInt(
 val appVersionName = project.findProperty("appVersionName") as String? ?: "1.0.9"
 
 val compactDebug = providers.gradleProperty("compactDebug").orNull == "true"
+// 空属性表示未配置签名，供本地无密钥的 Release 验证使用。
+val releaseStorePath = (project.findProperty("releaseStoreFile") as String?)?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "app.luoxianlv"
@@ -49,8 +51,8 @@ android {
 
     signingConfigs {
         create("release") {
-            if (project.hasProperty("releaseStoreFile")) {
-                storeFile = file(project.property("releaseStoreFile")!!)
+            if (releaseStorePath != null) {
+                storeFile = file(releaseStorePath)
                 storePassword = project.property("releaseStorePassword") as String?
                 keyAlias = project.property("releaseKeyAlias") as String?
                 keyPassword = project.property("releaseKeyPassword") as String?
@@ -63,7 +65,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (project.hasProperty("releaseStoreFile")) {
+            if (releaseStorePath != null) {
                 signingConfig = signingConfigs.getByName("release")
             } else if (project.findProperty("useDebugSigning") == "true") {
                 signingConfig = signingConfigs.getByName("debug")
