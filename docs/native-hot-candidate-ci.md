@@ -4,4 +4,6 @@
 
 工作流只有仓库读取权限，不读取签名私钥、管理员令牌、生产 OSS 凭据或热更源站配置，不签名热更包、不发布渠道、不触发 APK Release。Release 候选中的宿主 APK 尚未接入正式安装签名，不能把 artifact 当作可发给用户的正式安装包。
 
-本地已经验证工作流语法及 Debug、Release 三层实际导出入口；远端 CI 尚未推送或运行。当前两变体的 R8 和资源压缩均关闭，未以此构建声称开启优化后也已验收。报告标记 `compiled-artifact-only`，不代替设备、灰度、安全激活和回退验收。下载产物后仍需通过 CLI 核验、冻结、签名、上传和人工发布的独立步骤。
+Release 候选启用 `nativeOptimize=true`，导出后调用 `verify-native-release.ps1 -ExpectOptimized -CompileOnly` 核验实际三层 SDK、资源、映射及内置组合。Debug 保留调试构建。报告标记 `compiled-artifact-only`，不代替设备、灰度、安全激活和回退验收。下载产物后仍需通过 CLI 核验、冻结、签名、上传和发布的独立步骤。
+
+常规 `CI` 在 PR 和 main 推送时也运行同一优化 Release 核验，独立使用 JDK 21；既有 JDK 17 默认 Debug/Release 构建继续保留。只归档公开核验报告，不读取生产配置或签名凭据。`CompileOnly` 成功仅证明编译产物一致，报告仍为 `releaseReady=false`，正式发包须配置生产公开信任根、证书并通过正式签名核验。
