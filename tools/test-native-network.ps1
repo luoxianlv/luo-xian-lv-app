@@ -16,6 +16,10 @@ $networkStdout = Join-Path $networkOutput 'instrumentation.txt'
 $networkStderr = Join-Path $networkOutput 'instrumentation.stderr.txt'
 $networkInstrument = $null
 $networkOriginal = @{}
+$networkReply = $null
+$networkFailure = $null
+$networkCleanupErrors = [Collections.Generic.List[string]]::new()
+$networkExpires = [DateTime]::UtcNow.AddSeconds(300)
 
 function Invoke-NetworkAdb {
     $networkResult = & $Adb -s $Serial @args 2>$null
@@ -52,7 +56,8 @@ try {
         -RedirectStandardOutput $networkStdout -RedirectStandardError $networkStderr `
         -ArgumentList @('-s', $Serial, 'shell', 'am', 'instrument', '-w', '-e', 'networkRecovery',
             $networkRun, "$networkPackage.test/app.luoxianlv.host.NativeAppInstrumentation")
-    $networkDeadline = [DateTime]::UtcNow.AddSeconds(360)
+    # 总上界300秒，最后15秒留给停止仪器及核验网络还原。
+    $networkDeadline = $networkExpires.AddSeconds(-15)
     $networkCompleted = [Collections.Generic.HashSet[string]]::new()
     while ($true) {
         $networkInstrument.Refresh()
@@ -91,22 +96,48 @@ try {
         !$networkCompleted.Contains('disconnect') -or !$networkCompleted.Contains('reconnect')) {
         throw '缺少本轮实际断网和恢复的完整成功回执'
     }
-    [IO.File]::WriteAllText((Join-Path $networkOutput 'report.json'), ($networkReply | ConvertTo-Json -Depth 20),
-        [Text.UTF8Encoding]::new($false))
-    Write-Output "通过：真实断网恢复验收；报告：$(Join-Path $networkOutput 'report.json')"
+} catch {
+    $networkFailure = $_
 } finally {
     if ($networkInstrument) {
-        $networkInstrument.Refresh()
-        if (!$networkInstrument.HasExited) {
-            Stop-Process -Id $networkInstrument.Id -ErrorAction SilentlyContinue
-            Invoke-NetworkAdb shell am force-stop $networkPackage | Out-Null
+        try {
+            $networkInstrument.Refresh()
+            if (!$networkInstrument.HasExited) { Stop-Process -Id $networkInstrument.Id -ErrorAction Stop }
+        } catch { $networkCleanupErrors.Add('停止本轮ADB客户端失败') }
+        if ($networkFailure -or !$networkReply) {
+            try { Invoke-NetworkAdb shell am force-stop $networkPackage | Out-Null }
+            catch { $networkCleanupErrors.Add('停止失败的APP仪器失败') }
         }
     }
     foreach ($networkPair in @(@('wifi', 'wifi_on'), @('data', 'mobile_data'))) {
         if ($networkOriginal.ContainsKey($networkPair[1])) {
-            $networkAction = if ($networkOriginal[$networkPair[1]] -eq '1') { 'enable' } else { 'disable' }
-            Invoke-NetworkAdb shell svc $networkPair[0] $networkAction | Out-Null
+            try {
+                $networkAction = if ($networkOriginal[$networkPair[1]] -eq '1') { 'enable' } else { 'disable' }
+                Invoke-NetworkAdb shell svc $networkPair[0] $networkAction | Out-Null
+            } catch { $networkCleanupErrors.Add('还原系统网络命令失败：' + $networkPair[1]) }
         }
     }
-    Invoke-NetworkAdb shell am start -n "$networkPackage/app.luoxianlv.MainActivity" | Out-Null
+    foreach ($networkSetting in @('wifi_on', 'mobile_data')) {
+        if (!$networkOriginal.ContainsKey($networkSetting)) { continue }
+        try {
+            do {
+                $networkActual = (Invoke-NetworkAdb shell settings get global $networkSetting).Trim()
+                if ($networkActual -eq $networkOriginal[$networkSetting]) { break }
+                if ([DateTime]::UtcNow -ge $networkExpires) { throw '原网络状态未恢复' }
+                Start-Sleep -Milliseconds 100
+            } while ($true)
+        } catch { $networkCleanupErrors.Add('系统原网络状态核验失败：' + $networkSetting) }
+    }
+    if ($networkInstrument) {
+        try { Invoke-NetworkAdb shell am start -n "$networkPackage/app.luoxianlv.MainActivity" | Out-Null }
+        catch { $networkCleanupErrors.Add('恢复APP首页失败') }
+    }
 }
+if ($networkFailure) { throw $networkFailure }
+if ($networkCleanupErrors.Count) { throw ($networkCleanupErrors -join '；') }
+if (!$networkReply -or [DateTime]::UtcNow -gt $networkExpires) { throw '未在完整上界内结束网络验收与还原' }
+$networkReply | Add-Member -NotePropertyName driverNetworkSettingsRestored -NotePropertyValue $true
+$networkReply | Add-Member -NotePropertyName driverWaitLimitMs -NotePropertyValue 300000
+[IO.File]::WriteAllText((Join-Path $networkOutput 'report.json'), ($networkReply | ConvertTo-Json -Depth 20),
+    [Text.UTF8Encoding]::new($false))
+Write-Output "通过：真实断网恢复验收及系统原网络还原；报告：$(Join-Path $networkOutput 'report.json')"
