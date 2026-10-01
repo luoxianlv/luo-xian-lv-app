@@ -184,6 +184,165 @@ final class NativeSchedulerChecks {
     return result;
   }
 
+  /** root通过runId独立目录的文件ACK切网；本helper只观察实际系统callback和自然调度。 */
+  static JSONObject offlineRecovery(Instrumentation runner, Activity home, String runId) throws Exception {
+    var deadline = new NativeNetworkChecks.Deadline(SystemClock::elapsedRealtime);
+    Context target = guard(runner, home);
+    var session = NativeNetworkChecks.Session.open(target.getFilesDir().toPath(), runId);
+    Observer observer = new Observer(runner, home);
+    AtomicReference<NativeNetworkChecks.Probe> probeRef = new AtomicReference<>();
+    JSONObject result = null;
+    Throwable failure = null;
+    try {
+      onMain(runner, () -> probeRef.set(new NativeNetworkChecks.Probe(target)));
+      var probe = probeRef.get();
+      status(runner, "网络恢复握手目录=" + session.relativeControl());
+      Frame initial = waitFrame(observer, deadline.remaining(60000), frame ->
+          quiet(frame) && frame.windowFocus && frame.pulse && frame.networkCallbackRegistered
+              && frame.lastStart >= 0 && frame.due > frame.at && frame.due <= frame.at + 72500,
+          "网络恢复必须从已完成普通检查的在线空闲周期开始");
+      require(!initial.playback && !PracticeBridge.active(), "已有播放或演练场不能被网络测试接管");
+      var initialNetwork = network(runner, probe);
+      require(initialNetwork.internet, "系统实际没有INTERNET网络");
+      session.request("disconnect", SystemClock.elapsedRealtime(), deadline.expires, observer.source.prepared.identity());
+      status(runner, "等待root外部断网及disconnect ACK；不修改系统设置");
+      long disconnectLimit = SystemClock.elapsedRealtime() + deadline.remaining(45000);
+      Frame disconnected = null;
+      NativeNetworkChecks.Snapshot disconnectedNetwork = null;
+      while (SystemClock.elapsedRealtime() < disconnectLimit) {
+        deadline.check();
+        Frame frame = observer.read();
+        var system = network(runner, probe);
+        require(frame.active && frame.windowFocus && !frame.priorityWork && !frame.pending && !frame.observing,
+            "等待外部断网时窗口或候选状态改变");
+        if (session.acknowledged("disconnect") && !system.internet && !frame.online && !frame.inFlight
+            && !frame.busy && frame.failures == 0) {
+          disconnected = frame; disconnectedNetwork = system; break;
+        }
+        SystemClock.sleep(50);
+      }
+      require(disconnected != null, "未同时收到disconnect ACK与实际网络/宿主离线状态");
+      long offlineUntil = NativeNetworkChecks.offlineDeadline(disconnected.at, disconnected.due);
+      require(offlineUntil < deadline.expires, "剩余总期限不足真实75秒离线，拒绝缩短");
+      Frame pastDue = disconnected;
+      NativeNetworkChecks.Snapshot offlineNetwork = disconnectedNetwork;
+      while (SystemClock.elapsedRealtime() < offlineUntil) {
+        deadline.check();
+        pastDue = observer.read(); offlineNetwork = network(runner, probe);
+        require(pastDue.active && pastDue.windowFocus && !pastDue.online && !offlineNetwork.internet
+            && !pastDue.priorityWork && !pastDue.pending && !pastDue.observing && !pastDue.inFlight
+            && !pastDue.busy && pastDue.failures == 0 && pastDue.lastStart == disconnected.lastStart,
+            "实际离线期间产生了新检查、网络恢复或窗口/候选状态改变");
+        SystemClock.sleep(100);
+      }
+      pastDue = observer.read(); offlineNetwork = network(runner, probe);
+      require(!offlineNetwork.internet && !pastDue.online && pastDue.lastStart == disconnected.lastStart
+          && pastDue.at >= offlineUntil, "实际离线没有覆盖完整75秒及due，或仍有检查");
+
+      long reconnectAt = SystemClock.elapsedRealtime();
+      long oldInternetCallbacks = offlineNetwork.internetCallbacks;
+      session.request("reconnect", reconnectAt, deadline.expires, observer.source.prepared.identity());
+      status(runner, "等待root外部联网及reconnect ACK，观察一次自然合并检查");
+      long recoveryLimit = reconnectAt + deadline.remaining(75000);
+      long recoveredStart = Long.MIN_VALUE;
+      Frame resumed = null;
+      NativeNetworkChecks.Snapshot resumedNetwork = null;
+      while (SystemClock.elapsedRealtime() < recoveryLimit) {
+        deadline.check();
+        Frame frame = observer.read();
+        var system = network(runner, probe);
+        require(frame.active && frame.windowFocus && frame.networkCallbackRegistered && !frame.priorityWork
+            && !frame.pending && !frame.observing && frame.failures == 0,
+            "联网恢复期间窗口、候选或失败退避状态改变");
+        if (frame.lastStart != disconnected.lastStart) {
+          if (recoveredStart == Long.MIN_VALUE) recoveredStart = frame.lastStart;
+          require(frame.lastStart == recoveredStart, "联网恢复产生了多次检查，不能称单次合并");
+        }
+        boolean callbackObserved = system.internetCallbacks > oldInternetCallbacks && system.internetAt >= reconnectAt
+            && system.network.equals(system.internetNetwork);
+        if (session.acknowledged("reconnect") && system.internet && callbackObserved && frame.online
+            && recoveredStart != Long.MIN_VALUE && !frame.inFlight && !frame.busy && frame.due > frame.at) {
+          resumed = frame; resumedNetwork = system; break;
+        }
+        SystemClock.sleep(20);
+      }
+      require(resumed != null, "未同时观察到reconnect ACK、真实系统callback及自然成功检查");
+      long mergeUntil = SystemClock.elapsedRealtime() + 5000;
+      require(mergeUntil < deadline.expires, "总期限不足完整5秒合并窗口，拒绝缩短");
+      Frame merged = resumed;
+      NativeNetworkChecks.Snapshot mergedNetwork = resumedNetwork;
+      while (SystemClock.elapsedRealtime() < mergeUntil) {
+        deadline.check();
+        merged = observer.read(); mergedNetwork = network(runner, probe);
+        require(merged.active && merged.windowFocus && merged.online && mergedNetwork.internet
+            && !merged.priorityWork && !merged.pending && !merged.observing && !merged.inFlight && !merged.busy
+            && merged.failures == 0 && merged.lastStart == resumed.lastStart,
+            "真实联网后的5秒窗口出现重复/并行检查或状态改变");
+        SystemClock.sleep(100);
+      }
+      merged = observer.read();
+      require(merged.lastStart == resumed.lastStart && merged.at >= mergeUntil,
+          "合并观察窗口不足5秒或启动了重复检查");
+      result = new JSONObject().put("passed", true).put("runId", runId).put("pid", android.os.Process.myPid())
+          .put("sourceIdentity", observer.source.prepared.identity()).put("normal", initial.json())
+          .put("initialSystemNetwork", initialNetwork.json()).put("disconnected", disconnected.json())
+          .put("disconnectedSystemNetwork", disconnectedNetwork.json()).put("pastDue", pastDue.json())
+          .put("pastDueSystemNetwork", offlineNetwork.json()).put("minimumOfflineWaitMs", 75000)
+          .put("actualOfflineWaitMs", pastDue.at - disconnected.at).put("dueExceededMs", pastDue.at - disconnected.due)
+          .put("lastStartUnchangedOffline", true).put("resumed", resumed.json())
+          .put("resumedSystemNetwork", resumedNetwork.json()).put("afterMergeWindow", merged.json())
+          .put("afterMergeSystemNetwork", mergedNetwork.json()).put("mergeObservedMs", merged.at - resumed.at)
+          .put("singleCheck", true).put("systemRecoveryCallbackObserved", true)
+          .put("disconnectAcknowledged", true).put("reconnectAcknowledged", true)
+          .put("hostNetworkCallbackRegistered", true).put("hostOneSecondProbeExists", true)
+          .put("exclusiveCallbackCauseProven", false).put("systemNetworkChangedByHelper", false)
+          .put("downloadCancellationVerified", false).put("homeRestored", false).put("probeUnregistered", false)
+          .put("updateStateInjected", false).put("clockInjected", false).put("explicitCheckCalled", false)
+          .put("explicitActivationCalled", false).put("healthInjected", false).put("productionTouched", false);
+    } catch (Throwable invalid) {
+      failure = invalid;
+    } finally {
+      try {
+        var probe = probeRef.get();
+        if (probe != null) onMain(runner, probe::close);
+        if (result != null) result.put("probeUnregistered", true);
+      } catch (Throwable unregistering) { failure = append(failure, unregistering); }
+      try {
+        restoreHome(runner, target, home);
+        if (result != null) result.put("homeRestored", true);
+      } catch (Throwable restoring) { failure = append(failure, restoring); }
+    }
+    if (failure != null) {
+      try { session.request("failed", SystemClock.elapsedRealtime(), deadline.expires, observer.source.prepared.identity()); }
+      catch (Throwable reporting) { failure = append(failure, reporting); }
+      throw new AssertionError("真实离线/恢复调度验收未完成；root仍须恢复原网络设置", failure);
+    }
+    try {
+      require(result != null && result.getBoolean("homeRestored") && result.getBoolean("probeUnregistered"),
+          "窗口或探针未收尾，不能生成成功网络回执");
+      Frame finished = observer.read();
+      require(finished.active && finished.windowFocus && finished.online && finished.networkCallbackRegistered,
+          "最终首页或宿主联网状态未保持");
+      result.put("finished", finished.json());
+      deadline.complete();
+      result.put("elapsedMs", SystemClock.elapsedRealtime() - deadline.started)
+          .put("activeObservationLimitMs", 285000).put("totalWaitLimitMs", 300000);
+      session.request("complete", SystemClock.elapsedRealtime(), deadline.expires, observer.source.prepared.identity());
+      session.writeReport(result.toString(2));
+    } catch (Throwable finishing) {
+      try { session.request("failed", SystemClock.elapsedRealtime(), deadline.expires, observer.source.prepared.identity()); }
+      catch (Throwable reporting) { finishing.addSuppressed(reporting); }
+      throw new AssertionError("网络检查最终收尾/回执写入未完成", finishing);
+    }
+    return result;
+  }
+
+  private static NativeNetworkChecks.Snapshot network(Instrumentation runner, NativeNetworkChecks.Probe probe) throws Exception {
+    AtomicReference<NativeNetworkChecks.Snapshot> snapshot = new AtomicReference<>();
+    onMain(runner, () -> snapshot.set(probe.read()));
+    return snapshot.get();
+  }
+
   private static final class Observer {
     final Instrumentation runner;
     final Bootstrap.Source source;
@@ -219,6 +378,7 @@ final class NativeSchedulerChecks {
         frame.windowFocus = window != null && !window.isDestroyed() && window.hasWindowFocus();
         frame.playback = Bootstrap.playbackInUse();
         frame.online = (Boolean) field(updates.getClass(), updates, "online");
+        frame.networkCallbackRegistered = field(updates.getClass(), updates, "networkCallback") != null;
         frame.priorityWork = (Boolean) field(updates.getClass(), updates, "priorityWork");
         frame.busy = (Boolean) field(updates.getClass(), updates, "busy");
         frame.pending = field(updates.getClass(), updates, "pending") != null;
@@ -235,13 +395,14 @@ final class NativeSchedulerChecks {
   private static final class Frame {
     long at, lastStart, due;
     int failures;
-    boolean inFlight, requested, usable, active, windowFocus, playback, online, priorityWork, busy, pending, observing, pulse;
+    boolean inFlight, requested, usable, active, windowFocus, playback, online, priorityWork, busy, pending, observing, pulse, networkCallbackRegistered;
     JSONObject json() throws Exception {
       return new JSONObject().put("elapsedMs", at).put("lastStartMs", lastStart).put("nextDueMs", due)
           .put("failures", failures).put("inFlight", inFlight).put("requested", requested).put("usable", usable)
           .put("active", active).put("windowFocus", windowFocus).put("playbackInUse", playback)
           .put("online", online).put("priorityWork", priorityWork).put("busy", busy)
-          .put("pending", pending).put("observing", observing).put("pulseScheduled", pulse);
+          .put("pending", pending).put("observing", observing).put("pulseScheduled", pulse)
+          .put("networkCallbackRegistered", networkCallbackRegistered);
     }
   }
   private static final class Cycle {
