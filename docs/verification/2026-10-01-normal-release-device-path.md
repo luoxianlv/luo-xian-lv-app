@@ -95,7 +95,9 @@ runner 强制目标/测试包、原 Host manifest flags、两 APK 同一公开 A
 - 新 signed Host `a36175beb7caeab09b5b8cf977958d06c8802716aa6a99bd0eaf7aaa40750b82`；新 test APK `af71005b94b8fc173563fa1d45227283957e2fc8136c548af61a04379cb4f120`。
 - 新公开 fake 证书 `7d46b9268d1e2a34b938679774e8f5d77983246f20980f8ffcf89d0a26e927b1`，prepare finally 清理其临时私钥。`prepared.json` 仍 `deviceExecuted=false`/`deviceHealth=not-verified`/`rollback=not-verified`/`releaseReady=false`。
 
-root 用新 fixture 独立 fresh install 并按前文 `-w -r` 原命令读取新 metadata。此处只记录实际 prepare 和离线测试；新 FGS 设备 run 的结果须另由完整 raw 回执追加，不能挪用上一版本只验证 SDK 边界的设备 PASS。
+root 用新 fixture 独立 fresh install 并按前文 `-w -r` 原命令读取新 metadata。随后 root 实际新 FGS run 通过，公开 CLI `native-normal-optimized-release-fgs-device.json` 与 `native-normal-release-fgs-prepared.json` 已绑定：API 36、PID 8764、总耗时 14672 ms、隐私观察 10145 ms；一次 startId=1，进入/正常停止 epoch `1790839670030`/`1790839670033`，固定日志 pair 间隔 3 ms，实际 AM 最终 absent、非 forced stop。live sample 没捕获瞬态实例如实为 false，不称 3 ms 是精确完整生命周期时长。root 确认 raw `INSTRUMENTATION_CODE: -1`；本作者没有读 `.local` raw，也没有操作设备。新回执独立证明 `one-foreground-promise-then-idle-self-stop`，不挪用上一版本只验证 SDK 边界的 PASS；限定 normal R8 设备工作项 #3 已关闭。
+
+原 payload/新 fake certificate/五组模块与安装 hash 均与上述 c2d0050... prepare 对齐。隐私没有同意或正式 initialize，无正常无障碍/播放/手势。壁纸 screen、复杂 FGS cold/重入、Release HotConfig 健康/回退仍未验，releaseReady false。root 已按自身 fixture 清理新 normal/test 包并返回 Debug，没有卸其他包。
 
 KISS/DRY：小工具复用既有严格 Release verifier 和一个共用 payload policy；YAGNI：无需改变 Host flags/构建，也不做新的发布/联网路径；SOLID：prepare 负责字节与证书绑定，runner 负责实际只读设备观察，root 负责设备生命周期。后续报告仅追加实际设备回执及限制，生产签名/联网/业务隐私授权不在此任务范围。
 
