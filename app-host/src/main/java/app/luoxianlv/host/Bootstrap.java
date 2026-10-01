@@ -98,7 +98,33 @@ public final class Bootstrap {
   }
 
   static boolean inUse() {
-    return PAGES.keySet().stream().anyMatch(PageSwapHost::inUse) || playbackInUse();
+    return foregroundInUse() || playbackInUse();
+  }
+
+  static boolean foregroundInUse() {
+    return PAGES.keySet().stream().anyMatch(PageSwapHost::inUse);
+  }
+
+  /** 读取已有基础值通道，不把播放/手势/其他后台任务的 canReplace=false 当成准备。 */
+  static boolean playbackPreparing() {
+    if (Looper.myLooper() != Looper.getMainLooper())
+      throw new IllegalStateException("播放优先状态必须在主线程读取");
+    if (app.luoxianlv.hot.contract.PracticeBridge.active()
+        && !app.luoxianlv.hot.contract.PracticeBridge.ready()) return true;
+    var port = app.luoxianlv.hot.contract.PlaybackBridge.current();
+    if (port == null) return false;
+    try {
+      var state = port.query("state");
+      // 官方验证尚未完成或旧会话没有明确状态时，先给播放准备让路。
+      return state == null
+          || !state.containsKey("preparing")
+          || state.getBoolean("preparing")
+          || state.getBoolean("loadingSong")
+          || state.getBoolean("waitingToPlay");
+    } catch (Throwable unavailable) {
+      // 查询失败不能从调度器抛出并打断整组激活；宿主连接自有故障恢复门禁。
+      return true;
+    }
   }
 
   static boolean playbackInUse() {

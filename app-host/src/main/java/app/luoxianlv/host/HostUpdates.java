@@ -2,6 +2,8 @@ package app.luoxianlv.host;
 
 import android.app.Application;
 import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -15,14 +17,21 @@ import java.util.concurrent.ScheduledExecutorService;
 
 /** 普通页面与既有演奏生命周期驱动更新；不新建保活服务，下载、验签和日志均在后台。 */
 final class HostUpdates {
-  private static final long INTERVAL = 300_000;
+  private static final long PREPARED_TTL = 300_000, USAGE_PROBE = 1000;
   private final Application application;
   private final HostStartup state;
   private final Handler main = new Handler(Looper.getMainLooper());
+  private final UpdateSchedule schedule =
+      new UpdateSchedule(SystemClock::elapsedRealtime, Math::random);
+  private ConnectivityManager connectivity;
+  private ConnectivityManager.NetworkCallback networkCallback;
   private final ScheduledExecutorService worker =
       Executors.newSingleThreadScheduledExecutor(
           task -> {
-            Thread thread = new Thread(task, "native-update");
+            Thread thread = new Thread(() -> {
+              android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+              task.run();
+            }, "native-update");
             thread.setDaemon(true);
             return thread;
           });
@@ -31,11 +40,10 @@ final class HostUpdates {
   private final ActivationController controller;
   private final HealthOutbox outbox;
   private final Runnable pulse = this::tick;
-  private volatile boolean active, blocked;
+  private volatile boolean active, blocked, online, priorityWork;
   private boolean busy;
-  private long nextCheck, preparedAt;
-  private int failures;
-  private UpdateClient.PreparedUpdate pending;
+  private long preparedAt, nextCheck = -1; // 仅供宿主诊断；实际期限由 UpdateSchedule 唯一维护。
+  private volatile UpdateClient.PreparedUpdate pending;
   private GroupActivation group;
   private String attempt;
   private final Set<String> used = new HashSet<>();
@@ -191,7 +199,6 @@ final class HostUpdates {
                     if (healthy) {
                       coldTicket = null;
                       busy = false;
-                      nextCheck = SystemClock.elapsedRealtime() + INTERVAL;
                       worker.execute(
                           () -> {
                             try {
@@ -269,7 +276,14 @@ final class HostUpdates {
   void stopScheduling() {
     blocked = true;
     active = false;
+    nextCheck = -1;
     main.removeCallbacksAndMessages(null);
+    var callback = networkCallback;
+    networkCallback = null;
+    if (callback != null && connectivity != null) {
+      try { connectivity.unregisterNetworkCallback(callback); }
+      catch (RuntimeException ignored) { /* 已撤销的系统回调不阻止本地故障停用。 */ }
+    }
   }
 
   HostUpdates(Application application, HostStartup state) throws Exception {
@@ -315,11 +329,61 @@ final class HostUpdates {
             SystemClock::elapsedRealtime,
             new PreparationSpace(application),
             BundledBaseline.objects(application));
+    connectivity = application.getSystemService(ConnectivityManager.class);
+    if (connectivity != null) {
+      networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onAvailable(Network network) { networkChanged(); }
+        @Override public void onLost(Network network) { networkChanged(); }
+        @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
+          networkChanged();
+        }
+      };
+      try { connectivity.registerDefaultNetworkCallback(networkCallback, main); }
+      catch (RuntimeException unavailable) {
+        networkCallback = null;
+        Log.w("原生宿主", "网络监听不可用，保留当前版本并等待前台生命周期重新检查");
+      }
+    }
+  }
+
+  private void networkChanged() {
+    requireMain();
+    if (blocked || networkCallback == null) return;
+    usageChanged();
+  }
+
+  private boolean connected() {
+    try {
+      if (connectivity == null) return false;
+      var network = connectivity.getActiveNetwork();
+      var capabilities = network == null ? null : connectivity.getNetworkCapabilities(network);
+      return capabilities != null
+          && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+          && (state.config.environment.equals("test")
+              || capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+    } catch (RuntimeException unavailable) { return false; }
+  }
+
+  private void availability() {
+    requireMain();
+    boolean foreground = Bootstrap.foregroundInUse();
+    boolean playback = Bootstrap.playbackInUse();
+    active = foreground || playback;
+    online = connected();
+    priorityWork = Bootstrap.playbackPreparing();
+    schedule.availability(foreground, playback, online, priorityWork);
+    long delay = schedule.delayMillis();
+    nextCheck = delay < 0 ? -1 : SystemClock.elapsedRealtime() + delay;
   }
 
   void usageChanged() {
     requireMain();
-    active = Bootstrap.inUse();
+    if (blocked) {
+      active = false;
+      main.removeCallbacks(pulse);
+      return;
+    }
+    availability();
     coldUsage();
     if (group != null && attempt != null && group.phase() == GroupActivation.Phase.OBSERVING) {
       for (var page : Bootstrap.pages())
@@ -336,24 +400,30 @@ final class HostUpdates {
 
   private void tick() {
     requireMain();
+    if (blocked) { active = false; return; }
+    availability();
     if (!active || blocked) return;
     long now = SystemClock.elapsedRealtime();
-    if (busy) return;
-    if (pending != null && now - preparedAt >= INTERVAL) pending = null;
-    if (pending != null) {
-      if (!Bootstrap.canAutoActivate()) {
-        main.postDelayed(pulse, 500);
-        return;
-      }
+    if (pending != null && now - preparedAt >= PREPARED_TTL) pending = null;
+    if (busy || !online || priorityWork) {
+      // 只在已有真实使用期间轻量读取基础状态；从不在空闲后台保活或请求网络。
+      main.postDelayed(pulse, USAGE_PROBE);
+      return;
+    }
+    if (pending != null && Bootstrap.canAutoActivate() && schedule.beginFollowupIfAllowed()) {
       var candidate = pending;
       pending = null;
       busy = true;
       worker.execute(() -> authorize(candidate));
-    } else if (now >= nextCheck) {
+    } else if (schedule.beginIfDue()) {
       busy = true;
       worker.execute(this::prepare);
-    } else main.postDelayed(pulse, nextCheck - now);
+    }
+    // 探测正在准备播放的状态及时让下载让路；正常网络查询由 schedule 的 60s 抖动决定。
+    main.postDelayed(pulse, USAGE_PROBE);
   }
+
+  private boolean cancelled() { return !active || blocked || !online || priorityWork; }
 
   private long schema() {
     var manifest = Bootstrap.source().prepared.manifest;
@@ -371,9 +441,11 @@ final class HostUpdates {
 
   private void prepare() {
     try {
+      if (cancelled()) throw new java.io.InterruptedIOException("更新已让位于播放或生命周期");
       collectIdleContent();
+      if (cancelled()) throw new java.io.InterruptedIOException("更新已让位于播放或生命周期");
       flush();
-      var candidate = client.prepare(schema(), this::metered, () -> !active || blocked);
+      var candidate = client.prepare(schema(), this::metered, this::cancelled);
       var current = Bootstrap.source().prepared;
       boolean restart =
           candidate != null
@@ -384,8 +456,8 @@ final class HostUpdates {
       main.post(
           () -> {
             busy = false;
-            failures = 0;
-            nextCheck = SystemClock.elapsedRealtime() + INTERVAL;
+            schedule.finish(true, 0);
+            pending = null;
             if (candidate != null && !restart) {
               pending = candidate;
               preparedAt = SystemClock.elapsedRealtime();
@@ -417,6 +489,8 @@ final class HostUpdates {
                       }) if (!id.isEmpty()) protectedIds.add(id);
                   var execution = state.execution.current();
                   if (execution != null) protectedIds.add(execution.snapshot);
+                  var waiting = pending;
+                  if (waiting != null) protectedIds.add(waiting.snapshot.manifest.snapshotId);
                   return protectedIds;
                 },
                 2,
@@ -437,7 +511,7 @@ final class HostUpdates {
     try {
       ticket =
           client.authorize(
-              candidate, schema(), android.os.Process.myPid(), () -> !active || blocked);
+              candidate, schema(), android.os.Process.myPid(), this::cancelled);
       outbox.append(ticket.attemptId, "prepared", "whole_group_prepared");
       NativeLoader.Prepared prepared =
           state.loader.prepare(candidate.snapshot, state.journal.state());
@@ -464,7 +538,7 @@ final class HostUpdates {
       ActivationController.Ticket ticket,
       NativeLoader.Prepared prepared) {
     requireMain();
-    if (!active || blocked || !Bootstrap.canAutoActivate()) {
+    if (cancelled() || !Bootstrap.canAutoActivate()) {
       try {
         prepared.closeCallbacks();
       } catch (Throwable closing) {
@@ -482,6 +556,7 @@ final class HostUpdates {
             main.post(
                 () -> {
                   busy = false;
+                  schedule.cancelled();
                   pending = candidate;
                   preparedAt = SystemClock.elapsedRealtime();
                   usageChanged();
@@ -530,7 +605,7 @@ final class HostUpdates {
                   group = null;
                   attempt = null;
                   busy = false;
-                  nextCheck = SystemClock.elapsedRealtime() + INTERVAL;
+                  schedule.finish(true, 0);
                   if (failure != null)
                     Log.w("原生宿主", "自动热更已结束：" + result + "；" + failure.getClass().getSimpleName());
                   if (active && !blocked)
@@ -580,7 +655,7 @@ final class HostUpdates {
   private void flush() throws Exception {
     compactHistory();
     OutcomeRecovery.reconcile(state.journal, outbox);
-    if (!active || !(state.config.testHealthReports || Bootstrap.diagnosticsAllowed())) return;
+    if (cancelled() || !(state.config.testHealthReports || Bootstrap.diagnosticsAllowed())) return;
     var batch = outbox.batch(100);
     if (batch.isEmpty()) return;
     var reply = api.report(batch, true);
@@ -600,18 +675,27 @@ final class HostUpdates {
     main.post(
         () -> {
           busy = false;
-          long retry = Math.min(INTERVAL, 5000L << Math.min(6, failures++));
-          if (failure instanceof HotApiClient.Failure apiFailure)
-            retry = Math.max(retry, apiFailure.retryAfterMillis);
-          if (failure instanceof HttpObjectSource.Failure sourceFailure)
-            retry = Math.max(retry, sourceFailure.retryAfterMillis);
-          if (failure instanceof DownloadBudget.Deferred
+          if (cancelled() && failure instanceof java.io.InterruptedIOException)
+            schedule.cancelled();
+          else if (failure instanceof DownloadBudget.Deferred
               || failure instanceof ContentCollector.Deferred
-              || failure instanceof PreparationSpace.Deferred) retry = INTERVAL;
-          nextCheck = SystemClock.elapsedRealtime() + retry;
+              || failure instanceof PreparationSpace.Deferred) schedule.deferred();
+          else schedule.finish(false, retryAfterMillis(failure));
           Log.w("原生宿主", "自动热更暂缓，当前版本继续使用：" + failure.getClass().getSimpleName());
           usageChanged();
         });
+  }
+
+  static long retryAfterMillis(Throwable failure) {
+    long retry = 0;
+    var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+    for (Throwable value = failure; value != null && seen.add(value); value = value.getCause()) {
+      if (value instanceof HotApiClient.Failure apiFailure)
+        retry = Math.max(retry, apiFailure.retryAfterMillis);
+      if (value instanceof HttpObjectSource.Failure sourceFailure)
+        retry = Math.max(retry, sourceFailure.retryAfterMillis);
+    }
+    return retry;
   }
 
   private void requireMain() {

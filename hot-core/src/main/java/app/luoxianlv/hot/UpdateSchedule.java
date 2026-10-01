@@ -39,10 +39,37 @@ public final class UpdateSchedule {
 
   public synchronized boolean beginIfDue() {
     if (delayMillis() != 0) return false;
+    begin();
+    return true;
+  }
+
+  /** 已下载候选的许可属于同一轮后续工作，不等待正常轮询；失败退避仍不能绕过。 */
+  public synchronized boolean beginFollowupIfAllowed() {
+    if (!usable || !online || priorityWork || inFlight || elapsed.getAsLong() < retryNotBefore)
+      return false;
+    begin();
+    return true;
+  }
+
+  private void begin() {
     inFlight = true;
     requested = false;
     lastStart = elapsed.getAsLong();
-    return true;
+  }
+
+  /** 生命周期、断网或播放准备取消不计为网络失败；下一安全时刻仍遵守最小间隔。 */
+  public synchronized void cancelled() {
+    StrictJson.require(inFlight, "没有正在取消的更新检查");
+    inFlight = false;
+    due = Math.max(retryNotBefore, Math.max(elapsed.getAsLong(), lastStart + MIN_GAP));
+    retryNotBefore = due;
+    requested = false;
+  }
+
+  /** 本地预算/空间等待不归咎于服务端，但后续许可也应等到正常间隔，防止反复重试。 */
+  public synchronized void deferred() {
+    finish(true, 0);
+    retryNotBefore = due;
   }
 
   public synchronized void finish(boolean success, long retryAfterMillis) {
@@ -57,6 +84,8 @@ public final class UpdateSchedule {
     wait = Math.max(wait, Math.min(MAX_BACKOFF, retryAfterMillis));
     retryNotBefore = Math.addExact(elapsed.getAsLong(), Math.min(MAX_BACKOFF, retryAfterMillis));
     due = Math.max(lastStart + MIN_GAP, Math.addExact(elapsed.getAsLong(), wait));
+    // 恢复网络/重回前台只合并触发，不能把失败退避改成一次立即重试。
+    if (!success) retryNotBefore = due;
     requested = false;
   }
 }
