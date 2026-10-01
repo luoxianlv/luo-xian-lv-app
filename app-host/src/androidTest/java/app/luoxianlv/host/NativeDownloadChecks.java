@@ -160,6 +160,11 @@ final class NativeDownloadChecks {
       write(report, value.toString(2).getBytes(StandardCharsets.UTF_8));
     }
 
+    void failed(byte[] diagnostic, long at, long expires, String source) throws Exception {
+      write(report, diagnostic); // 先保存安全根因，再让外部driver看到failed。
+      request("failed", at, expires, source);
+    }
+
     private void safe() {
       require(
           !Files.isSymbolicLink(directory.getParent())
@@ -209,6 +214,7 @@ final class NativeDownloadChecks {
     Activity stage = null;
     JSONObject result = null;
     Throwable failure = null;
+    Frame observed = null;
     try {
       Frame initial =
           waitFrame(
@@ -221,6 +227,7 @@ final class NativeDownloadChecks {
               45000,
               frame -> frame.quiet() && home.hasWindowFocus(),
               "普通入口没有稳定在线空闲状态");
+      observed = initial;
       session.request("arm", now(), deadline.expires, originalId);
       status(runner, "下载握手：files/native-download-checks/" + runId + "/control.json");
       awaitAck(session, "armed", deadline, 45000);
@@ -251,6 +258,7 @@ final class NativeDownloadChecks {
                 return true;
               },
               "没有观察到普通入口的真实慢对象下载");
+      observed = inflight;
       UpdateCancellation token = captured[0];
       require(token != null && !token.isCancelled(), "捕获到的操作已经取消");
       byte[] prefix = read(downloads.partial(plan.slow).toPath(), 32768);
@@ -271,6 +279,7 @@ final class NativeDownloadChecks {
         long until = now() + deadline.remaining(30000);
         while (now() < until) {
           Frame frame = frame(runner, updates, original, plan.target, false);
+          observed = frame;
           if (frame.priority && PracticeBridge.active() && !PracticeBridge.ready()) {
             priorityObserved = true;
             if (priorityAt < 0) priorityAt = frame.at;
@@ -327,6 +336,7 @@ final class NativeDownloadChecks {
                         && frame.current != token
                         && !token.isCancelled(),
                 "目标没有通过普通入口自然启用，不能凭下载完成冒充激活");
+        observed = finished;
         require(token.objectBytes() == plan.missing, "实际成功读取字节与本次缺对象总量不一致");
         require(token.objectRequests() >= plan.objects.size(), "对象请求数少于真实缺对象数");
         var manifest = Bootstrap.source().prepared.manifest;
@@ -356,6 +366,7 @@ final class NativeDownloadChecks {
                         && startup.journal.state().phase == ActivationJournal.Phase.STABLE
                         && startup.journal.state().stable.equals(plan.target),
                 "自然健康观察未完成，不能在TRIAL结束仪器");
+        observed = stable;
         main(
             runner,
             () -> require(home.hasWindowFocus() && Bootstrap.foregroundInUse(), "健康确认后没有实际前台首页"));
@@ -423,7 +434,28 @@ final class NativeDownloadChecks {
       }
       if (failure != null) {
         try {
-          session.request("failed", now(), deadline.expires, originalId);
+          JSONObject diagnostic =
+              new JSONObject()
+                  .put("schema", 1)
+                  .put("passed", false)
+                  .put("runId", runId)
+                  .put("mode", plan.mode)
+                  .put("targetSnapshotId", plan.target)
+                  .put("initialSourceIdentity", originalId)
+                  .put("failureChain", new org.json.JSONArray(safeFailureChain(failure)))
+                  .put("journalBefore", initialSelection.json());
+          // 已完成的观察含实际elapsed时间；不另调主线程，避免诊断再次阻塞。
+          if (observed != null) diagnostic.put("lastCompletedObservation", observed.json());
+          try {
+            diagnostic.put("journalAfter", new Selection(startup.journal.state()).json());
+          } catch (Throwable unavailable) {
+            diagnostic.put("journalAfterUnavailable", true);
+          }
+          session.failed(
+              diagnostic.toString(2).getBytes(StandardCharsets.UTF_8),
+              now(),
+              deadline.expires,
+              originalId);
         } catch (Throwable reporting) {
           failure.addSuppressed(reporting);
         }
@@ -532,7 +564,7 @@ final class NativeDownloadChecks {
       if (predicate.check(frame)) return frame;
       SystemClock.sleep(20);
     }
-    throw new AssertionError(error);
+    throw new CheckFailure(error);
   }
 
   private static Frame frame(
@@ -588,7 +620,7 @@ final class NativeDownloadChecks {
       if (session.acknowledged(phase)) return;
       SystemClock.sleep(50);
     }
-    throw new AssertionError("未收到本run下载ACK：" + phase);
+    throw new CheckFailure("未收到本run下载ACK：" + phase);
   }
 
   private interface Action {
@@ -605,7 +637,7 @@ final class NativeDownloadChecks {
             failure.set(error);
           }
         });
-    if (failure.get() != null) throw new AssertionError("下载主线程观察失败", failure.get());
+    if (failure.get() != null) throw new CheckFailure("下载主线程观察失败", failure.get());
   }
 
   private static Object field(Class<?> type, Object owner, String name) throws Exception {
@@ -670,7 +702,7 @@ final class NativeDownloadChecks {
       if (home.hasWindowFocus() && Bootstrap.foregroundInUse()) return;
       SystemClock.sleep(50);
     }
-    throw new AssertionError("未恢复原首页焦点");
+    throw new CheckFailure("未恢复原首页焦点");
   }
 
   private static void status(Instrumentation runner, String message) {
@@ -680,6 +712,43 @@ final class NativeDownloadChecks {
   }
 
   private static void require(boolean condition, String message) {
-    if (!condition) throw new AssertionError(message);
+    if (!condition) throw new CheckFailure(message);
+  }
+
+  /** 只保留helper自身固定断言；网络/反射/文件异常正文可能带URL或路径，统一隐藏。 */
+  static final class CheckFailure extends AssertionError {
+    CheckFailure(String message) {
+      super(message);
+    }
+
+    CheckFailure(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
+  static List<Map<String, Object>> safeFailureChain(Throwable failure) {
+    var rows = new ArrayList<Map<String, Object>>();
+    var seen = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
+    addFailure(failure, "root", rows, seen);
+    return rows;
+  }
+
+  private static void addFailure(
+      Throwable failure,
+      String relation,
+      List<Map<String, Object>> rows,
+      Set<Throwable> seen) {
+    if (failure == null || rows.size() >= 24 || !seen.add(failure)) return;
+    rows.add(
+        Map.of(
+            "relation", relation,
+            "type", failure.getClass().getName(),
+            "message",
+                failure instanceof CheckFailure
+                    ? Objects.toString(failure.getMessage(), "")
+                    : "外部异常详情已隐藏"));
+    addFailure(failure.getCause(), "cause", rows, seen);
+    for (Throwable suppressed : failure.getSuppressed())
+      addFailure(suppressed, "suppressed", rows, seen);
   }
 }

@@ -146,6 +146,25 @@ function Assert-DownloadMetrics($Metrics, [string]$RunId, [string]$SlowHash, [lo
     }
     $sum
 }
+function Wait-DownloadFailureOutput($Child, [int]$Maximum) {
+    if (!$Child -or $Maximum -lt 0 -or $Maximum -gt 8000) { throw '失败输出等待须为本轮有界仪器' }
+    $until = [Environment]::TickCount64 + $Maximum
+    $exited = $Child.Process.WaitForExit($Maximum)
+    if (!$exited) { return $false }
+    $stdout = $Child.Out.Wait([int][Math]::Max(0,$until-[Environment]::TickCount64))
+    $stderr = $Child.Err.Wait([int][Math]::Max(0,$until-[Environment]::TickCount64))
+    $stdout -and $stderr
+}
+function Assert-DownloadFailureReport($Report, [string]$RunId, [string]$Mode, [string]$Target, [string]$Source) {
+    if ($Report.schema -ne 1 -or $Report.passed -isnot [bool] -or $Report.passed -or
+        $Report.runId -cne $RunId -or $Report.mode -cne $Mode -or $Report.targetSnapshotId -cne $Target -or
+        $Report.initialSourceIdentity -cne $Source -or @($Report.failureChain).Count -lt 1 -or
+        @($Report.failureChain).Count -gt 24) { throw '不是本轮安全失败报告' }
+    foreach ($row in $Report.failureChain) {
+        if ($row.relation -notin @('root','cause','suppressed') -or $row.type -cnotmatch '^[a-zA-Z0-9_.$]+$' -or
+            $row.message -isnot [string]) { throw '失败报告异常链格式无效' }
+    }
+}
 # DOWNLOAD_DRIVER_POLICY_END
 
 if ($Serial -cne 'emulator-5554') { throw '仅允许明确的独立 emulator-5554' }
@@ -289,6 +308,29 @@ function Restore-DownloadChannel {
     if ($reply.requestId -cne ($runId+'-rollback')) { throw '本轮恢复请求身份不匹配' }
     $script:restored = Resolve-DownloadRollbackReceipt $reply.response $ownership $source
 }
+function Save-DownloadInstrumentationOutput {
+    if ($instrument.Out.IsCompletedSuccessfully) {
+        [IO.File]::WriteAllText((Join-Path $output 'instrumentation.txt'),$instrument.Out.Result,$utf8)
+    }
+    if ($instrument.Err.IsCompletedSuccessfully) {
+        [IO.File]::WriteAllText((Join-Path $output 'instrumentation-stderr.txt'),$instrument.Err.Result,$utf8)
+    }
+}
+function Save-DownloadDeviceFailureReport {
+    $raw = Invoke-DownloadAdb @('shell','run-as',$package,'cat',($remote+'/report.json')) -AllowMissing
+    if ($raw) {
+        $diagnostic = Convert-DownloadJson $raw
+        Assert-DownloadFailureReport $diagnostic $runId $Mode $template.targetSnapshotId $source
+        Save-DownloadJson (Join-Path $output 'failure-report.json') $diagnostic
+    }
+}
+function Receive-DownloadFailure {
+    # failed先于runner最终栈；留最多8秒等待原进程/管道，仍保留共同期限中的5秒收尾。
+    $wait = [int][Math]::Max(0,[Math]::Min(8000,($expires-[DateTime]::UtcNow).TotalMilliseconds-5000))
+    [void](Wait-DownloadFailureOutput $instrument $wait)
+    Save-DownloadInstrumentationOutput
+    Save-DownloadDeviceFailureReport
+}
 
 try {
     Assert-DownloadNoLinks $Fixture $localRoot
@@ -331,7 +373,10 @@ try {
             Assert-DownloadControl $control $runId $Mode $template.targetSnapshotId
             if ($control.slowObjectSha -cne $template.slowObjectSha -or $control.expectedMissingBytes -ne $template.expectedMissingBytes) { throw '设备计划指标不同' }
             if ($source -and $control.sourceIdentity -cne $source) { throw '本轮实际原来源改变' }
-            if ($control.phase -eq 'failed') { throw '设备下载验收失败' }
+            if ($control.phase -eq 'failed') {
+                Receive-DownloadFailure
+                throw '设备下载验收失败；本轮安全报告和仪器输出已尽力保存'
+            }
             if ($phases.Add([string]$control.phase)) {
                 switch ($control.phase) {
                     'arm' {
@@ -364,7 +409,7 @@ try {
         Start-Sleep -Milliseconds 100
     }
     if ($instrument.Process.ExitCode -ne 0 -or !$instrument.Out.Wait(1000) -or !$instrument.Err.Wait(1000)) { throw '本轮instrumentation没有正常退出' }
-    [IO.File]::WriteAllText((Join-Path $output 'instrumentation.txt'),$instrument.Out.Result,$utf8)
+    Save-DownloadInstrumentationOutput
     if ($instrument.Out.Result -match 'AssertionError|Process crashed|INSTRUMENTATION_FAILED|INSTRUMENTATION_ABORTED') { throw '设备原始结果包含失败' }
     $report = Convert-DownloadJson (Invoke-DownloadAdb @('shell','run-as',$package,'cat',($remote+'/report.json')))
     Assert-DownloadReport $report $runId $Mode $template.targetSnapshotId $source $template.expectedMissingBytes
@@ -379,7 +424,15 @@ try {
 finally {
     $closing = $true
     if ($instrument) {
-        try { if (!$instrument.Process.HasExited) { $instrument.Process.Kill(); [void]$instrument.Process.WaitForExit(1000) } }
+        if ($failure -and !(Test-Path -LiteralPath (Join-Path $output 'failure-report.json'))) {
+            # 进程退出恰早于最后一次failed轮询时，也在force-stop前收集本run失败回执。
+            try { Save-DownloadDeviceFailureReport } catch { }
+        }
+        try {
+            if (!$instrument.Process.HasExited) { $instrument.Process.Kill(); [void]$instrument.Process.WaitForExit(1000) }
+            [void]$instrument.Out.Wait(1000); [void]$instrument.Err.Wait(1000)
+            Save-DownloadInstrumentationOutput
+        }
         catch { $cleanupErrors.Add('停止本次ADB客户端失败') }
         if ($failure -or !$report) {
             try { Invoke-DownloadAdb @('shell','am','force-stop',$package) | Out-Null }
@@ -407,7 +460,7 @@ finally {
     if ($instrument) {
         try { Invoke-DownloadAdb @('shell','am','start','-n',"$package/app.luoxianlv.MainActivity") | Out-Null }
         catch { $cleanupErrors.Add('恢复APP首页失败') }
-        if ($instrument.Out.IsCompleted) { [IO.File]::WriteAllText((Join-Path $output 'instrumentation.txt'),$instrument.Out.Result,$utf8) }
+        Save-DownloadInstrumentationOutput
     }
 }
 if ($failure) { throw $failure }

@@ -114,4 +114,32 @@ Reject {Get-DownloadScopedPath (Join-Path $boundary '../outside') $boundary} '�
 Check ($sourceText.Contains('CreateNoWindow = $true')-and $sourceText.Contains('ArgumentList.Add')) '子进程必须隐藏且使用结构化参数'
 Check ($sourceText.IndexOf('if ($cleanupErrors.Count)')-lt $sourceText.LastIndexOf('Write-Output "通过')) '不能在收尾验证前打印成功'
 Check ($sourceText.Contains('downloadRunId')-and !$sourceText.Contains('Get-Content $tokenFile')-and !$sourceText.Contains('ReadAllText($tokenFile')) '仪器runId或token读取边界不正确'
+$failureReport=[pscustomobject]@{schema=1;passed=$false;runId=$runId;mode='delta';targetSnapshotId=$target;initialSourceIdentity=$source;
+    failureChain=@([pscustomobject]@{relation='root';type='app.luoxianlv.host.NativeDownloadChecks$CheckFailure';message='健康确认后没有实际前台首页'})}
+Assert-DownloadFailureReport $failureReport $runId 'delta' $target $source;$checks++
+$failureReport.passed=$true;Reject {Assert-DownloadFailureReport $failureReport $runId 'delta' $target $source} 'success残留不能冒充失败诊断'
+$failureReport.passed=$false;$failureReport.runId='f'*32;Reject {Assert-DownloadFailureReport $failureReport $runId 'delta' $target $source} '旧run失败报告不能复用'
+$failureReport.runId=$runId;$failureReport.failureChain[0].type='https://private.invalid'
+Reject {Assert-DownloadFailureReport $failureReport $runId 'delta' $target $source} '类型字段不能包含URL'
+function New-LocalFlushChild {
+    $info=[Diagnostics.ProcessStartInfo]::new()
+    $info.FileName=(Get-Process -Id $PID).Path;$info.UseShellExecute=$false;$info.CreateNoWindow=$true
+    $info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+    foreach($argument in @('-NoProfile','-NonInteractive','-Command',"Start-Sleep -Milliseconds 300; [Console]::Out.WriteLine('AssertionError: bounded-local-test'); [Console]::Error.WriteLine('safe-local-test')")){$info.ArgumentList.Add($argument)}
+    $process=[Diagnostics.Process]::new();$process.StartInfo=$info;[void]$process.Start()
+    [pscustomobject]@{Process=$process;Out=$process.StandardOutput.ReadToEndAsync();Err=$process.StandardError.ReadToEndAsync()}
+}
+$child=New-LocalFlushChild
+try {
+    Check (Wait-DownloadFailureOutput $child 2000) '真实本地晚到栈输出应等待退出及两个管道结束'
+    Check ($child.Out.Result.Contains('AssertionError: bounded-local-test')-and $child.Err.Result.Contains('safe-local-test')) '等待flush不能丢stdout/stderr'
+} finally {if(!$child.Process.HasExited){$child.Process.Kill()};$child.Process.Dispose()}
+$child=New-LocalFlushChild
+try {
+    $started=[Environment]::TickCount64
+    Check (!(Wait-DownloadFailureOutput $child 10)-and [Environment]::TickCount64-$started-lt 500) '未退出仪器flush必须有界'
+    Check (!$child.Process.HasExited) '等待flush本身不得kill原仪器'
+} finally {if(!$child.Process.HasExited){$child.Process.Kill()};[void]$child.Process.WaitForExit(1000);$child.Process.Dispose()}
+Reject {Wait-DownloadFailureOutput $null 8001} 'flush不能超8秒或使用非本轮仪器'
+Check ($sourceText.Contains('Receive-DownloadFailure')-and $sourceText.Contains('instrumentation-stderr.txt')-and $sourceText.Contains('failure-report.json')) '失败分支须保留双管道和安全报告'
 Write-Output "实际driver纯policy/mock检查：$checks 通过；未执行CLI/ADB/API/代理/凭据读取。"

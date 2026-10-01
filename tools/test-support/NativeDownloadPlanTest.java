@@ -192,4 +192,46 @@ public final class NativeDownloadPlanTest {
     assertEquals(runId, value.string("runId"));
     assertEquals(554, value.number("expectedMissingBytes"));
   }
+
+  @Test
+  public void safeFailureChainPreservesOnlyOwnAssertionsAndBoundsCycles() {
+    var external = new java.io.IOException("https://private.invalid/?token=secret /private/file");
+    var failure = new NativeDownloadChecks.CheckFailure("下载主线程观察失败", external);
+    failure.addSuppressed(new NativeDownloadChecks.CheckFailure("自己的演练场未关闭"));
+    external.initCause(failure);
+    var rows = NativeDownloadChecks.safeFailureChain(failure);
+    assertEquals(3, rows.size());
+    assertEquals("下载主线程观察失败", rows.get(0).get("message"));
+    assertEquals("java.io.IOException", rows.get(1).get("type"));
+    assertEquals("外部异常详情已隐藏", rows.get(1).get("message"));
+    assertEquals("suppressed", rows.get(2).get("relation"));
+    assertFalse(rows.toString().contains("private.invalid"));
+    assertFalse(rows.toString().contains("secret"));
+    var many = new NativeDownloadChecks.CheckFailure("实际演练场没有启动");
+    for (int i = 0; i < 40; i++) many.addSuppressed(new java.io.IOException("secret"));
+    assertEquals(24, NativeDownloadChecks.safeFailureChain(many).size());
+  }
+
+  @Test
+  public void failureReportOverwritesSuccessBeforePublishingFailed() throws Exception {
+    var session = session();
+    Files.writeString(session.report, "{\"passed\":true}");
+    byte[] safe = JsonWire.encode(JsonWire.fields("passed", false, "runId", runId));
+    session.failed(safe, 123, 300000, "d".repeat(64));
+    assertFalse(StrictJson.object(Files.readAllBytes(session.report)).bool("passed"));
+    assertEquals("failed", StrictJson.object(Files.readAllBytes(session.control)).string("phase"));
+    assertArrayEquals(safe, Files.readAllBytes(session.report));
+  }
+
+  @Test
+  public void failureControlIsNotPublishedBeforeDiagnosticWriteSucceeds() throws Exception {
+    var session = session();
+    Files.createDirectory(session.report);
+    Files.write(session.report.resolve("keep"), new byte[] {7});
+    assertThrows(
+        Exception.class,
+        () -> session.failed(new byte[] {1}, 123, 300000, "d".repeat(64)));
+    assertFalse(Files.exists(session.control));
+    assertTrue(Files.isDirectory(session.report));
+  }
 }
