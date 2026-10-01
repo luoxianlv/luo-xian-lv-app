@@ -31,6 +31,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
   private boolean prepareUserWallpaper;
   private String renderUserWallpaper;
   private boolean schedulerOnly, schedulerPractice, schedulerOffline;
+  private String networkRecovery;
   private boolean prepareUserScore, verifyUserScore;
   private boolean receiptFault;
   private boolean receiptRecovered;
@@ -86,6 +87,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
     schedulerPractice =
         arguments != null && "true".equals(arguments.getString("schedulerPractice"));
     schedulerOffline = arguments != null && "true".equals(arguments.getString("schedulerOffline"));
+    networkRecovery = arguments == null ? null : arguments.getString("networkRecovery");
     prepareUserScore = arguments != null && "true".equals(arguments.getString("prepareUserScore"));
     verifyUserScore = arguments != null && "true".equals(arguments.getString("verifyUserScore"));
     receiptFault = arguments != null && "true".equals(arguments.getString("receiptFault"));
@@ -419,6 +421,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
         java.nio.file.Files.write(
             verifiedPath, result.toString(2).getBytes(StandardCharsets.UTF_8));
         report.putString("stream", "通过：当前业务重新读取并解析同一用户谱，全部用户曲目、选曲与设置保持。\n");
+        success = true;
+      } else if (networkRecovery != null) {
+        NativeSchedulerChecks.offlineRecovery(this, main, networkRecovery);
+        report.putString("stream", "通过：真实断网、越过调度期限及联网后单次合并检查。\n");
         success = true;
       } else if (schedulerOnly) {
         if (schedulerOffline) NativeSchedulerChecks.offline(this, main);
