@@ -106,6 +106,7 @@ internal object OfficialRendererGate {
         private var jsReady = false
         private var visualRequested = false
         private var visualEpoch = 0L
+        private var lastDiagnostic = "尚无脚本诊断"
         private val deadline = RendererValidationBudget(12000)
         private var refreshing = false
         private val parents = linkedMapOf<ViewGroup, ParentWatch>()
@@ -147,7 +148,7 @@ internal object OfficialRendererGate {
                     }
                 }
                 override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                    if (!closed) finish(false, false, IllegalStateException("官方渲染检查进程退出"))
+                    if (!closed) finish(false, false, IllegalStateException("官方渲染检查进程退出：崩溃=${detail.didCrash()}，脚本就绪=$jsReady"))
                     return true
                 }
             }
@@ -158,6 +159,8 @@ internal object OfficialRendererGate {
                     if (title == "wallpaper:ready") { jsReady = true; refreshWindow(); if (!closed) finish(true, false) }
                 }
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    // 只记录固定检查页面的阶段，不保存项目内容、路径或任意脚本文本。
+                    if (message.message().startsWith("壁纸引擎诊断")) lastDiagnostic = "引擎已输出诊断"
                     if (!closed && message.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
                         (message.message().startsWith("Uncaught") || message.message().contains("SyntaxError") || message.message().startsWith("壁纸加载失败")))
                         finish(false, false, IllegalStateException("官方渲染器固定项目脚本失败"))
@@ -219,7 +222,9 @@ internal object OfficialRendererGate {
             if (closed || !started) return
             val visual = waiters.values.any { it.visual }
             val remaining = deadline.update(SystemClock.uptimeMillis(), !visual || displayableBrowser()) ?: return
-            if (remaining == 0L) finish(false, false, IllegalStateException("官方渲染器有效验证时间超时"))
+            if (remaining == 0L) finish(false, false, IllegalStateException(
+                "官方渲染器有效验证时间超时：脚本就绪=$jsReady，首帧请求=$visualRequested，" +
+                    "页面进度=${browser.progress}，可绘制=${displayableBrowser()}，$lastDiagnostic"))
             else handler.postDelayed(timeout, remaining)
         }
         private fun requestVisual() {

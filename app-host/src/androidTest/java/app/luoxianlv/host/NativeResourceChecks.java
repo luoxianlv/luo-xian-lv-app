@@ -31,6 +31,9 @@ final class NativeResourceChecks {
             && HotManifest.validHash(stable),
         "仅允许本机资源回退验收");
     UserTree userBefore = userWallpaperFingerprint(runner.getTargetContext());
+    Files.deleteIfExists(
+        new File(runner.getTargetContext().getFilesDir(), "native-resource-rollback-report.json")
+            .toPath());
     require(userBefore.files() > 0 && userBefore.bytes() > 0, "必须先导入真实非空用户项目再验证保留");
     require(!state.journal.state().quarantine.contains(bad), "目标已被隔离，不能把重复观察当作新故障回退");
     await(
