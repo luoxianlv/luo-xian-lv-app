@@ -39,6 +39,23 @@ $plan.case='expired';$plan.grantExpirationEpoch=101;$report.matrixCase='expired'
 $report.runtimeHash=$plan.sourceRuntime;$report.phase='STABLE';$report.candidate='';$report.newRuntimeMarkerLoaded=$false;$report.sameRuntimeParent=$false
 Reject {Assert-ServiceMatrixReport $report $plan $run 999 100000}
 $report.wallClockStartedEpochMillis=102000;Assert-ServiceMatrixReport $report $plan $run 999 100000;$count++
+$skew=Resolve-ServiceMatrixClockAnchors 1790835986000 '1790835965'
+Check ($skew.deviceEpochMillis-eq 1790835965000-and $skew.hostEpochMillis-eq 1790835986000-and
+    !$skew.clockDomainsCompared-and $skew.devicePrecisionMillis-eq 1000) '真实21秒guest偏差须分别记录两时间域'
+$plan.case='valid';$plan.grantExpirationEpoch=0;$report.matrixCase='valid';$report.snapshot=$plan.targetSnapshot;
+$report.runtimeHash=$plan.targetRuntime;$report.phase='TRIAL';$report.candidate=$plan.targetSnapshot;
+$report.newRuntimeMarkerLoaded=$true;$report.sameRuntimeParent=$true;
+$report.wallClockStartedEpochMillis=1790835965500;$report.wallClockEndedEpochMillis=1790835969500
+Assert-ServiceMatrixReport $report $plan $run 999 $skew.deviceEpochMillis;$count++
+Reject {Assert-ServiceMatrixReport $report $plan $run 999 $skew.hostEpochMillis}
+Check (!(Test-ServiceMatrixGrantExpired $skew 1790835970)) 'host越界但device未到期不能启动expired'
+$behind=Resolve-ServiceMatrixClockAnchors 1790835965000 '1790835986'
+Check (!(Test-ServiceMatrixGrantExpired $behind 1790835970)) 'device越界但host未到期不能启动expired'
+$both=Resolve-ServiceMatrixClockAnchors 1790835986000 '1790835986'
+Check (Test-ServiceMatrixGrantExpired $both 1790835970) '两域真实越界后应允许expired'
+Check (!(Test-ServiceMatrixGrantExpired $both 1790835986)) '正好到期秒不能视为已跨真实期限'
+Reject {Resolve-ServiceMatrixClockAnchors 1790835986000 '1790835965 token'}
+Reject {Resolve-ServiceMatrixClockAnchors 1790835986000 '-1'}
 Reject {Convert-ServiceMatrixJson '{"case":"valid","CASE":"expired"}'}
 Check (!$source.Contains('rm -rf')-and !$source.Contains('admin-token')-and !$source.Contains('Invoke-WebRequest')) '矩阵driver不能删状态/读凭据/操作API'
 Check ($source.Contains('CreateNoWindow=$true')-and $source.Contains('ArgumentList.Add')-and $source.Contains('homeStartedByDriver=$false')) '进程/主页面边界不正确'

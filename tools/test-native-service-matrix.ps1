@@ -45,6 +45,17 @@ function Get-ServiceMatrixExpected($Plan) {
         phase=$(if(!$valid){'STABLE'}elseif($Plan.consumer-ceq 'accessibility'){'TRIAL'}else{'PREPARING'})
     }
 }
+function Resolve-ServiceMatrixClockAnchors([long]$HostEpochMillis,[string]$DeviceEpochSeconds) {
+    if($HostEpochMillis-le 0-or $HostEpochMillis-gt 253402300799999-or
+        $DeviceEpochSeconds-cnotmatch '^[0-9]{1,12}$'-or [long]$DeviceEpochSeconds-le 0-or
+        [long]$DeviceEpochSeconds-gt 253402300799){throw '实际主机/设备UTC锚点格式无效'}
+    [pscustomobject]@{hostEpochMillis=$HostEpochMillis;deviceEpochMillis=[long]$DeviceEpochSeconds*1000;
+        devicePrecisionMillis=1000;clockDomainsCompared=$false}
+}
+function Test-ServiceMatrixGrantExpired($Anchors,[long]$ExpirationEpoch) {
+    $ExpirationEpoch-gt 0-and $Anchors.hostEpochMillis-gt $ExpirationEpoch*1000-and
+        $Anchors.deviceEpochMillis-gt $ExpirationEpoch*1000
+}
 function Assert-ServiceMatrixReport($Report,$Plan,[string]$RunId,[long]$PreviousPid,[long]$StartedEpoch) {
     $expected=Get-ServiceMatrixExpected $Plan
     if($Report.passed-isnot [bool]-or !$Report.passed-or $Report.matrixRunId-cne $RunId-or $Report.matrixCase-cne $Plan.case-or
@@ -113,6 +124,11 @@ function Save-Streams {
     if($child.Out.IsCompletedSuccessfully){[IO.File]::WriteAllText((Join-Path $output 'instrumentation.txt'),$child.Out.Result,$encoding)}
     if($child.Err.IsCompletedSuccessfully){[IO.File]::WriteAllText((Join-Path $output 'instrumentation-stderr.txt'),$child.Err.Result,$encoding)}
 }
+function Read-ClockAnchors {
+    # 仪器写设备System.currentTimeMillis；主机UTC只保留为独立域，不能拿它当设备启动下限。
+    $device=Adb @('shell','date','+%s')
+    Resolve-ServiceMatrixClockAnchors ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) $device
+}
 try{
     $services=Adb @('shell','settings','get','secure','enabled_accessibility_services')
     $enabled=Adb @('shell','settings','get','secure','accessibility_enabled')
@@ -142,10 +158,14 @@ try{
         if($route.Count){Adb @('reverse','--remove','tcp:18472')|Out-Null}
     }elseif(!$route.Count){Adb @('reverse','tcp:18472','tcp:18472')|Out-Null}
     if($plan.case-ceq 'expired'){
-        while([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()-le $plan.grantExpirationEpoch){[void](Remaining 1000);Start-Sleep -Milliseconds 200}
+        while(!(Test-ServiceMatrixGrantExpired (Read-ClockAnchors) $plan.grantExpirationEpoch)){
+            [void](Remaining 1000);Start-Sleep -Milliseconds 200
+        }
     }
     $expected=Get-ServiceMatrixExpected $plan
-    $started=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $clockAnchors=Read-ClockAnchors
+    if($plan.case-ceq 'expired' -and !(Test-ServiceMatrixGrantExpired $clockAnchors $plan.grantExpirationEpoch)){throw '启动前两域真实时间尚未都跨grant到期'}
+    $started=$clockAnchors.deviceEpochMillis
     $options=@('shell','am','instrument','-w','-e','consumer',$plan.consumer,
         '-e','expectedSnapshot',$expected.snapshot,'-e','expectedStable',$plan.sourceSnapshot,
         '-e','expectedPending',$plan.targetSnapshot,'-e','expectedRuntime',$expected.runtime,'-e','expectedPhase',$expected.phase,
@@ -191,6 +211,6 @@ if($cleanup.Count){throw ($cleanup-join '；')}
 if(!$report-or !$checkpointRestored-or [DateTime]::UtcNow-gt $expires){throw '缺少本轮报告或完整收尾'}
 $final=[ordered]@{passed=$true;runId=$runId;plan=$plan;device=$report;checkpointRestoredByDriver=$true;
     checkpoint=$Checkpoint;archivedStateDirectory=$archive;settingsRestored=$true;reverseRestored=$true;
-    homeStartedByDriver=$false;productionTouched=$false;scenarioConditionRequiresRootEvidence=$true}
+    homeStartedByDriver=$false;productionTouched=$false;scenarioConditionRequiresRootEvidence=$true;clockAnchors=$clockAnchors}
 [IO.File]::WriteAllText((Join-Path $output 'report.json'),($final|ConvertTo-Json -Depth 25),$encoding)
 Write-Output "通过：本轮$($plan.case)/$($plan.consumer)真实冷服务观察及外层收尾；报告：$(Join-Path $output 'report.json')"
