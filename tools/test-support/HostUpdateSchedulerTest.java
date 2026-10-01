@@ -16,7 +16,10 @@ import app.luoxianlv.hot.contract.ProcessHooks;
 import java.lang.reflect.*;
 import java.util.*;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.*;
 import sun.misc.Unsafe;
 
@@ -84,6 +87,7 @@ public final class HostUpdateSchedulerTest {
     set(HostUpdates.class, host, "schedule", schedule);
     set(HostUpdates.class, host, "main", new Handler(android.os.Looper.getMainLooper()));
     set(HostUpdates.class, host, "pulse", (Runnable) () -> {});
+    set(HostUpdates.class, host, "coldPulse", (Runnable) () -> {});
     set(HostUpdates.class, host, "worker", worker);
     set(HostUpdates.class, host, "connectivity", network);
   }
@@ -169,6 +173,138 @@ public final class HostUpdateSchedulerTest {
     assertEquals(1, worker.tasks.size());
     assertFalse((Boolean) get(host, "active"));
     assertTrue((Boolean) invoke(host, "cancelled"));
+  }
+
+  /** worker完成加载与主线程故障停用确定性交替，真实activate取消路径必须关闭并abort。 */
+  private void handoffAcrossStop(boolean queuedBeforeStop, int failureMode) throws Exception {
+    var directory = java.nio.file.Files.createTempDirectory("host-stop-handoff-").toFile();
+    var journal = new ActivationJournal(directory);
+    String attempt = journal.begin("a".repeat(64), 1, 1, 100, 1000);
+    var ticket = allocate(ActivationController.Ticket.class);
+    set(ActivationController.Ticket.class, ticket, "attemptId", attempt);
+    set(ActivationController.Ticket.class, ticket, "health", new HealthWindow(SystemClock::elapsedRealtime));
+    var controller = new ActivationController(journal, null, null, 1, SystemClock::elapsedRealtime);
+    set(ActivationController.class, controller, "current", ticket);
+    set(HostUpdates.class, host, "controller", controller);
+    schedule.availability(true, false, true, false);
+    assertTrue(schedule.beginIfDue());
+    set(HostUpdates.class, host, "busy", true);
+    set(HostUpdates.class, host, "active", true);
+
+    var prepared = allocate(NativeLoader.Prepared.class);
+    Class<?> scopeType = Class.forName("app.luoxianlv.hot.ResourceScope");
+    Class<?> resourcesType = Class.forName("app.luoxianlv.hot.ModuleResources");
+    Object scope = allocate(scopeType), resources = allocate(resourcesType);
+    set(resourcesType, resources, "legacyOwners", new WeakHashMap<>());
+    set(NativeLoader.Prepared.class, prepared, "official", scope);
+    set(NativeLoader.Prepared.class, prepared, "resources", resources);
+    AtomicInteger closed = new AtomicInteger();
+    set(NativeLoader.Prepared.class, prepared, "contentLease", (AutoCloseable) () -> {
+      closed.incrementAndGet();
+      if (failureMode == 1) throw new IllegalStateException("公开测试租约释放故障");
+    });
+    if (failureMode == 2) {
+      var journalFile = directory.toPath().resolve("activation.bin");
+      byte[] bytes = java.nio.file.Files.readAllBytes(journalFile);
+      bytes[12] ^= 1;
+      java.nio.file.Files.write(journalFile, bytes); // 真正的已登记字节失配，abort必须拒绝覆盖。
+    }
+    var candidate = allocate(UpdateClient.PreparedUpdate.class);
+    Method activate = HostUpdates.class.getDeclaredMethod("activate", UpdateClient.PreparedUpdate.class,
+        ActivationController.Ticket.class, NativeLoader.Prepared.class);
+    activate.setAccessible(true);
+    Handler handler = (Handler) get(host, "main");
+    handler.post((Runnable) get(host, "pulse"));
+    handler.post((Runnable) get(host, "coldPulse"));
+    CountDownLatch posted = new CountDownLatch(1), allowPost = new CountDownLatch(queuedBeforeStop ? 0 : 1);
+    AtomicReference<Throwable> producerFailure = new AtomicReference<>();
+    AtomicInteger restored = new AtomicInteger(), rejected = new AtomicInteger();
+    AtomicReference<Throwable> rejection = new AtomicReference<>();
+    Thread producer = new Thread(() -> {
+      try {
+        if (!allowPost.await(5, TimeUnit.SECONDS)) throw new AssertionError("producer not released");
+        handler.post(() -> {
+          try { activate.invoke(host, candidate, ticket, prepared); }
+          catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+        });
+      } catch (Throwable error) { producerFailure.set(error); }
+      finally { posted.countDown(); }
+    }, "test-loaded-candidate");
+    producer.start();
+    try {
+      if (queuedBeforeStop) assertTrue(posted.await(5, TimeUnit.SECONDS));
+      host.stopScheduling();
+      host.afterStopped(() -> {
+        assertEquals(ActivationJournal.Phase.STABLE, journal.state().phase);
+        assertEquals(1, closed.get());
+        restored.incrementAndGet();
+      }, failure -> { rejection.set(failure); rejected.incrementAndGet(); });
+      allowPost.countDown();
+      assertTrue(posted.await(5, TimeUnit.SECONDS));
+      assertNull(producerFailure.get());
+      assertEquals("only handoff survives stop", 1, timers());
+      assertEquals(1, worker.tasks.size());
+      worker.tasks.remove(0).run(); // worker→main屏障排在已完成加载的handoff之后。
+      Handler.class.getMethod("drain").invoke(null);
+      assertEquals(1, closed.get());
+      assertTrue((Boolean) get(prepared, "retired"));
+      assertTrue((Boolean) get(scope, "retired"));
+      assertTrue((Boolean) get(resources, "closed"));
+      assertEquals("abort must precede recovery", 2, worker.tasks.size());
+      assertEquals(0, restored.get());
+      assertEquals(0, rejected.get());
+      worker.tasks.remove(0).run(); // 真实controller.abort/journal.fail落盘，不运行HTTP或SDK加载。
+      worker.tasks.remove(0).run(); // main→worker屏障，完成或明确拒绝恢复。
+      assertEquals(failureMode == 0 ? 1 : 0, restored.get());
+      assertEquals(failureMode == 0 ? 0 : 1, rejected.get());
+      if (failureMode == 0) assertNull(rejection.get());
+      else assertSame(get(host, "stoppedCleanupFailure"), rejection.get());
+      assertEquals(failureMode == 2 ? ActivationJournal.Phase.PREPARING : ActivationJournal.Phase.STABLE,
+          journal.state().phase);
+      if (failureMode != 2) assertEquals("", journal.state().candidate);
+      assertTrue(journal.state().quarantine.isEmpty());
+      assertEquals(failureMode == 2, controller.valid(ticket));
+      Handler.class.getMethod("drain").invoke(null);
+      assertFalse((Boolean) get(host, "busy"));
+      assertTrue((Boolean) get(host, "blocked"));
+      assertEquals(0, timers());
+      host.stopScheduling();
+      Handler.class.getMethod("drain").invoke(null);
+      assertEquals(1, closed.get());
+      assertEquals(0, worker.tasks.size());
+    } finally {
+      allowPost.countDown(); producer.join(5000);
+      assertFalse("producer leaked", producer.isAlive());
+      // 仅本测试创建的随机目录，JVM回执保留在系统临时目录供排查。
+    }
+  }
+
+  @Test public void loadedCandidateQueuedBeforeStopStillReleasesAndAborts() throws Exception {
+    handoffAcrossStop(true, 0);
+  }
+
+  @Test public void loadedCandidateQueuedAfterStopStillReleasesAndAborts() throws Exception {
+    handoffAcrossStop(false, 0);
+  }
+
+  @Test public void stoppedRecoveryRejectsCandidateLeaseCloseFailure() throws Exception {
+    handoffAcrossStop(true, 1);
+  }
+
+  @Test public void stoppedRecoveryRejectsActualJournalByteMismatch() throws Exception {
+    handoffAcrossStop(true, 2);
+  }
+
+  @Test public void recoveryBarrierRequiresStoppedInactiveHost() throws Exception {
+    AtomicInteger called = new AtomicInteger();
+    assertThrows(IllegalStateException.class, () -> host.afterStopped(called::incrementAndGet,
+        failure -> called.incrementAndGet()));
+    set(HostUpdates.class, host, "blocked", true);
+    set(HostUpdates.class, host, "active", true);
+    assertThrows(IllegalStateException.class, () -> host.afterStopped(called::incrementAndGet,
+        failure -> called.incrementAndGet()));
+    assertEquals(0, called.get());
+    assertTrue(worker.tasks.isEmpty());
   }
 
   @Test public void wrappedApiAndObjectRetryAfterRemainVisibleWithoutReadingErrorText() throws Exception {

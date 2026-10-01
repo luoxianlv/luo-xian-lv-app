@@ -42,6 +42,7 @@ final class HostUpdates {
   private final Runnable pulse = this::tick;
   private volatile boolean active, blocked, online, priorityWork;
   private boolean busy;
+  private volatile Throwable stoppedCleanupFailure;
   private long preparedAt, nextCheck = -1; // 仅供宿主诊断；实际期限由 UpdateSchedule 唯一维护。
   private volatile UpdateClient.PreparedUpdate pending;
   private GroupActivation group;
@@ -277,13 +278,37 @@ final class HostUpdates {
     blocked = true;
     active = false;
     nextCheck = -1;
-    main.removeCallbacksAndMessages(null);
+    // 只停止调度；已准备候选的主线程转交必须继续执行取消/释放和后台 abort。
+    // 清空整个 Handler 会删除刚入队的 activate，遗失资源租约与 PREPARING 收尾。
+    main.removeCallbacks(pulse);
+    main.removeCallbacks(coldPulse);
     var callback = networkCallback;
     networkCallback = null;
     if (callback != null && connectivity != null) {
       try { connectivity.unregisterNetworkCallback(callback); }
       catch (RuntimeException ignored) { /* 已撤销的系统回调不阻止本地故障停用。 */ }
     }
+  }
+
+  /** 先排空授权worker的转交，再让主线程取消候选；恢复落盘排在其abort之后。 */
+  void afterStopped(Runnable persistRecovery, java.util.function.Consumer<Throwable> rejectRecovery) {
+    requireMain();
+    if (!blocked || active) throw new IllegalStateException("故障恢复必须先停止调度");
+    java.util.Objects.requireNonNull(persistRecovery);
+    java.util.Objects.requireNonNull(rejectRecovery);
+    worker.execute(
+        () -> main.post(
+            () -> worker.execute(
+                () -> {
+                  Throwable failure = stoppedCleanupFailure;
+                  if (failure == null) persistRecovery.run();
+                  else rejectRecovery.accept(failure);
+                })));
+  }
+
+  private synchronized void stoppedCleanupFailed(Throwable failure) {
+    if (stoppedCleanupFailure == null) stoppedCleanupFailure = failure;
+    else if (stoppedCleanupFailure != failure) stoppedCleanupFailure.addSuppressed(failure);
   }
 
   HostUpdates(Application application, HostStartup state) throws Exception {
@@ -543,6 +568,7 @@ final class HostUpdates {
         prepared.closeCallbacks();
       } catch (Throwable closing) {
         blocked = true;
+        stoppedCleanupFailed(closing);
         Log.e("原生宿主", "取消候选资源释放失败，停止后续更新", closing);
       }
       worker.execute(
@@ -551,6 +577,7 @@ final class HostUpdates {
               controller.abort(ticket, false);
             } catch (Throwable failure) {
               blocked = true;
+              stoppedCleanupFailed(failure);
               Log.e("原生宿主", "过期激活恢复失败", failure);
             }
             main.post(
