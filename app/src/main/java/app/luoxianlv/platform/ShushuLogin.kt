@@ -36,13 +36,14 @@ internal class ShushuLogin(
             .edit()
             .putString("state", state)
             .putString("verifier", verifier)
+            .putString("redirect_uri", REDIRECT_URI)
             .apply()
         val url =
             Uri.parse("https://shushu.fan/oauth/authorize")
                 .buildUpon()
                 .appendQueryParameter("response_type", "code")
                 .appendQueryParameter("client_id", "shu_8d4eddbcb1e96ff01a8b52fb")
-                .appendQueryParameter("redirect_uri", "https://luoxianlv.com/login/callback")
+                .appendQueryParameter("redirect_uri", REDIRECT_URI)
                 .appendQueryParameter("scope", "openid profile")
                 .appendQueryParameter("state", "app_$state")
                 .appendQueryParameter("code_challenge", challenge)
@@ -61,6 +62,8 @@ internal class ShushuLogin(
         val prefs = Kv.of(context, "oauth")
         if (returnedState != "app_${prefs.getString("state", null)}") return
         val verifier = prefs.getString("verifier", null) ?: return
+        // 令牌交换必须复用发起授权时的地址；旧版未记录该值的进行中请求沿用旧回调。
+        val redirectUri = prefs.getString("redirect_uri", LEGACY_REDIRECT_URI) ?: return
         prefs.edit().clear().apply()
         background(onResult) {
             val root =
@@ -76,7 +79,7 @@ internal class ShushuLogin(
                                 "state",
                                 returnedState,
                             )
-                            .put("redirect_uri", "https://luoxianlv.com/login/callback")
+                            .put("redirect_uri", redirectUri)
                             .put("code_verifier", verifier)
                             .toString(),
                     )
@@ -94,5 +97,10 @@ internal class ShushuLogin(
                 )
             )
         }
+    }
+
+    private companion object {
+        const val REDIRECT_URI = "https://www.luoxianlv.cn/login/callback"
+        const val LEGACY_REDIRECT_URI = "https://luoxianlv.com/login/callback"
     }
 }
