@@ -70,9 +70,7 @@ final class ModuleResources {
     if (closed) return;
     closed = true;
     if (loader != null) {
-      for (Resources owner : owners) Api30.detach(owner, loader);
-      owners.clear();
-      Api30.close(loader);
+      Api30.close(loader, owners);
     }
     for (var assets : legacyOwners.values()) assets.close();
     legacyOwners.clear();
@@ -128,10 +126,14 @@ final class ModuleResources {
       resources.removeLoaders((android.content.res.loader.ResourcesLoader) loader);
     }
 
-    static void close(Object value) {
+    static void close(Object value, java.util.Set<Resources> owners) {
       var loader = (android.content.res.loader.ResourcesLoader) value;
       var providers = java.util.List.copyOf(loader.getProviders());
+      // 保留窗口更新回调，先让 ResourcesManager 清除仍引用本代 ApkAssets 的旧 ResourcesImpl 缓存。
+      // 先移除加载器会注销回调；随后关闭 provider，转屏就可能访问缓存中已销毁的 native 资源。
       loader.clearProviders();
+      for (Resources owner : owners) detach(owner, loader);
+      owners.clear();
       for (var provider : providers) provider.close();
     }
   }

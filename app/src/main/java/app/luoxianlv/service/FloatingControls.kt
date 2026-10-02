@@ -2,21 +2,16 @@ package app.luoxianlv.service
 
 import android.animation.ValueAnimator
 import android.content.res.ColorStateList
-import android.graphics.PixelFormat
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.ContextThemeWrapper
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
-import android.view.inputmethod.InputMethodManager
 import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.ScrollView
 import app.luoxianlv.R
 import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.business.playback.PlaybackSession
@@ -26,10 +21,12 @@ import app.luoxianlv.data.SongRepository
 import app.luoxianlv.debug.AppLog
 import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.ui.floating.FloatingPanel
+import app.luoxianlv.ui.floating.FloatingPlaylistWindow
+import app.luoxianlv.ui.floating.FloatingTouchMarker
+import app.luoxianlv.ui.floating.FloatingWindowLayout
 import app.luoxianlv.ui.floating.PlayerUi
 import app.luoxianlv.ui.floating.PlayerUi.dp
 import app.luoxianlv.ui.floating.PlayerUiPalette
-import app.luoxianlv.ui.floating.createPlaylistContent
 import kotlin.math.abs
 import kotlinx.coroutines.*
 
@@ -58,8 +55,8 @@ class FloatingControls(private val service: PlaybackSession) {
 
     private var root: View? = null
     private var params: WindowManager.LayoutParams? = null
-    private var popup: View? = null
-    private var marker: View? = null
+    private val playlistWindow = FloatingPlaylistWindow(context, wm)
+    private val touchMarker = FloatingTouchMarker(context, wm, handler) { palette }
     private var dock =
         FloatingDock.entries.firstOrNull { it.name == prefs.getString("dock", null) }
             ?: FloatingDock.NONE
@@ -79,7 +76,7 @@ class FloatingControls(private val service: PlaybackSession) {
         get() =
             touching ||
                 panel?.touching == true ||
-                popup != null ||
+                playlistWindow.isShowing ||
                 playlistJob?.isActive == true ||
                 dockAnimator?.isRunning == true
 
@@ -97,10 +94,6 @@ class FloatingControls(private val service: PlaybackSession) {
                 if (root != null) handler.postDelayed(this, 200)
             }
         }
-    private val removeMarker = Runnable {
-        marker?.let { wm.removeView(it) }
-        marker = null
-    }
 
     /**
      * 悬浮窗此刻是否（应当）显示在屏幕上。
@@ -122,7 +115,7 @@ class FloatingControls(private val service: PlaybackSession) {
         }
 
     fun restore(state: Bundle?) {
-        check(root == null && popup == null && !touching)
+        check(root == null && !playlistWindow.isShowing && !touching)
         if (state == null) return
         require(state.getInt("schema") == 1)
         x = state.getInt("x")
@@ -165,7 +158,7 @@ class FloatingControls(private val service: PlaybackSession) {
         hide()
         scope.cancel()
         handler.removeCallbacksAndMessages(null)
-        removeMarker.run()
+        touchMarker.close()
     }
 
     fun reposition() {
@@ -180,24 +173,10 @@ class FloatingControls(private val service: PlaybackSession) {
     fun refreshTheme() {
         when {
             root != null -> render(expanded)
-            popup != null -> dismissPlaylist()
+            playlistWindow.isShowing -> dismissPlaylist()
             else -> Unit
         }
     }
-
-    private fun layout(
-        width: Int,
-        height: Int,
-    ) =
-        WindowManager.LayoutParams(
-                width,
-                height,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT,
-            )
-            .apply { gravity = Gravity.TOP or Gravity.LEFT }
 
     private fun render(open: Boolean) {
         revision++
@@ -234,7 +213,9 @@ class FloatingControls(private val service: PlaybackSession) {
                         palette,
                         service,
                         speedControlsVisible,
-                        onSelectSong = { if (popup == null) showPlaylist() else dismissPlaylist() },
+                        onSelectSong = {
+                            if (!playlistWindow.isShowing) showPlaylist() else dismissPlaylist()
+                        },
                         onToggleSpeed = {
                             speedControlsVisible = !speedControlsVisible
                             render(true)
@@ -249,7 +230,7 @@ class FloatingControls(private val service: PlaybackSession) {
             View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
         )
         params =
-            layout(width, if (open) -2 else context.dp(44)).apply {
+            FloatingWindowLayout.create(width, if (open) -2 else context.dp(44)).apply {
                 // 仅气泡允许越过屏幕边缘，面板和选歌窗始终完整可见。
                 if (!open) flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                 x =
@@ -452,12 +433,12 @@ class FloatingControls(private val service: PlaybackSession) {
             root?.let { wm.removeView(it) }
             root = null
         }
-        val (card, search, list) =
-            createPlaylistContent(
-                context = context,
-                palette = palette,
+        val opened =
+            playlistWindow.show(
                 songs = songs,
                 selectedId = service.song.id,
+                palette = palette,
+                screenBounds = service::screenBounds,
                 onSelect = { song ->
                     service.select(song)
                     dismissPlaylist()
@@ -465,114 +446,18 @@ class FloatingControls(private val service: PlaybackSession) {
                 },
                 onDismiss = ::dismissPlaylist,
             )
-        val bounds = service.screenBounds()
-        val maxHeight = minOf(context.dp(300), bounds.height() / 2)
-        val scroll =
-            ScrollView(context).apply {
-                addView(list)
-                setOnTouchListener { _, event ->
-                    if (event.action == MotionEvent.ACTION_OUTSIDE) {
-                        dismissPlaylist()
-                        true
-                    } else {
-                        false
-                    }
-                }
-            }
-        card.addView(
-            scroll,
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = context.dp(6) },
-        )
-        card.measure(
-            View.MeasureSpec.makeMeasureSpec(context.dp(264), View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST),
-        )
-        val height = minOf(card.measuredHeight, maxHeight)
-        val centeredY = ((bounds.height() - height) / 2).coerceAtLeast(0)
-        val p =
-            layout(context.dp(264), height).apply {
-                // 搜索框要收键盘：overlay 窗口默认带 FLAG_NOT_FOCUSABLE，键盘挂不上来，
-                // 去掉它才能获焦。不追加 FLAG_NOT_TOUCH_MODAL：窗口外的点按继续被本窗口
-                // 吞掉，否则会穿到下面的游戏里去。
-                flags =
-                    (flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH) and
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
-                x = ((bounds.width() - context.dp(264)) / 2).coerceAtLeast(0)
-                y = centeredY
-            }
-        popup = card
-        // overlay 窗口拿不到 IME 的 insets，键盘弹起时不会自动上移：
-        // 搜索框获得焦点就把面板挪到屏幕上方，否则列表下半截会被键盘盖住。
-        search.setOnFocusChangeListener { _, hasFocus ->
-            val lp =
-                popup?.layoutParams as? WindowManager.LayoutParams
-                    ?: return@setOnFocusChangeListener
-            lp.y = if (hasFocus) (bounds.height() / 8).coerceAtLeast(0) else centeredY
-            runCatching { popup?.let { wm.updateViewLayout(it, lp) } }
-        }
-        // 点一下就把键盘叫出来：overlay 窗口的 EditText 不一定会自动弹输入法。
-        // 第二参传 0（SHOW_IMPLICIT 已废弃，语义相同）。
-        search.setOnClickListener {
-            (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                    as? InputMethodManager)
-                ?.showSoftInput(search, 0)
-        }
-        try {
-            wm.addView(card, p)
-        } catch (_: WindowManager.BadTokenException) {
-            popup = null
-            panelHiddenForPicker = false
-        } catch (_: IllegalStateException) {
-            popup = null
-            panelHiddenForPicker = false
-        }
+        if (!opened) panelHiddenForPicker = false
     }
 
     private fun dismissPlaylist() {
         playlistJob?.cancel()
         playlistJob = null
-        popup?.let { view ->
-            // 搜索框可能还开着键盘：窗口移除前主动收一次，避免键盘留在游戏画面上。
-            (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                    as? InputMethodManager)
-                ?.hideSoftInputFromWindow(view.windowToken, 0)
-            wm.removeView(view)
-        }
-        popup = null
+        playlistWindow.close()
         if (panelHiddenForPicker) {
             panelHiddenForPicker = false
             if (displayRequested && root == null) render(expanded)
         }
     }
 
-    fun mark(
-        x: Float,
-        y: Float,
-    ) {
-        handler.removeCallbacks(removeMarker)
-        if (marker == null) {
-            marker =
-                View(context).apply {
-                    background = PlayerUi.background(context, 0x55007aff, 20, true, palette.line)
-                }
-            val p =
-                layout(context.dp(20), context.dp(20)).apply {
-                    flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                }
-            try {
-                wm.addView(marker, p)
-            } catch (_: WindowManager.BadTokenException) {
-                marker = null
-                return
-            } catch (_: IllegalStateException) {
-                marker = null
-                return
-            }
-        }
-        val p = marker!!.layoutParams as WindowManager.LayoutParams
-        p.x = x.toInt() - context.dp(10)
-        p.y = y.toInt() - context.dp(10)
-        wm.updateViewLayout(marker, p)
-        handler.postDelayed(removeMarker, 120)
-    }
+    fun mark(x: Float, y: Float) = touchMarker.show(x, y)
 }

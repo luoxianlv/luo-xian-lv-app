@@ -133,12 +133,15 @@ $baseClasspath = "$coreClasses;$contractClasses;$hostClasses;$hostResources;$and
 $schedule = Join-Path $repoRoot 'hot-core/src/main/java/app/luoxianlv/hot/UpdateSchedule.java'
 $scheduleTest = Join-Path $repoRoot 'hot-core/src/test/java/app/luoxianlv/hot/UpdateScheduleTest.java'
 $hostSource = Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/HostUpdates.java'
+$hostUpdateHelpers = @('HostUpdateReports','HostUpdateContent') | ForEach-Object {
+    Join-Path $repoRoot ("app-host/src/main/java/app/luoxianlv/host/$_.java")
+}
 $test = Join-Path $repoRoot 'tools/test-support/HostUpdateSchedulerTest.java'
 function Run-Checks([string]$name,[string[]]$inputs,[string[]]$tests) {
     $sharedSources = @('UpdateCancellation','HotApiClient','HttpObjectSource','ObjectDownloader','UpdateClient') | ForEach-Object {
         Join-Path $repoRoot ("hot-core/src/main/java/app/luoxianlv/hot/$_.java")
     }
-    $inputs = @($sharedSources + $inputs | Select-Object -Unique)
+    $inputs = @($sharedSources + $hostUpdateHelpers + $inputs | Select-Object -Unique)
     $classes = Join-Path $runRoot $name
     New-Item -ItemType Directory -Path $classes | Out-Null
     $arguments = @('-encoding','UTF-8','--release','17','-classpath',$baseClasspath,'-d',$classes) + $inputs

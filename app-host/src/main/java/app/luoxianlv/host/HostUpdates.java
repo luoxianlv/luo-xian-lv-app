@@ -43,6 +43,8 @@ final class HostUpdates {
   private final UpdateClient client;
   private final ActivationController controller;
   private final HealthOutbox outbox;
+  private final HostUpdateReports reports;
+  private final HostUpdateContent content;
   private final Runnable pulse = this::tick;
   private volatile boolean active, blocked, online, priorityWork;
   private boolean busy;
@@ -350,7 +352,12 @@ final class HostUpdates {
             state.config.hostContract,
             SystemClock::elapsedRealtime);
     outbox = new HealthOutbox(new File(root, "health"));
-    compactHistory();
+    reports =
+        new HostUpdateReports(new File(root, "state"), state.journal, outbox, api, controller);
+    reports.compactHistory();
+    content =
+        new HostUpdateContent(
+            new File(root, "state"), state.store, state.pendingRestart, state.execution);
     var budget = new DownloadBudget(new File(root, "budget"));
     // 热更断点使用内部目录，便于原子隔离后安全回收；用户壁纸/日志继续使用各自外部目录。
     var downloads =
@@ -559,39 +566,7 @@ final class HostUpdates {
 
   /** 与下载、准备、激活收尾共用单线程；候选转交主线程后不插入清理任务。 */
   private void collectIdleContent() throws Exception {
-    File root = new File(application.getNoBackupFilesDir(), "native-update");
-    var result =
-        new ContentCollector(state.store)
-            .collect(
-                () -> {
-                  // 从磁盘重新读取，损坏或另一个进程的更新不能被内存旧值掩盖。
-                  var current = new ActivationJournal(new File(root, "state")).state();
-                  Set<String> protectedIds = new HashSet<>();
-                  for (String id :
-                      new String[] {
-                        current.stable,
-                        current.active,
-                        current.candidate,
-                        current.previousStable,
-                        state.pendingRestart.current()
-                      }) if (!id.isEmpty()) protectedIds.add(id);
-                  var execution = state.execution.current();
-                  if (execution != null) protectedIds.add(execution.snapshot);
-                  var waiting = pending;
-                  if (waiting != null) protectedIds.add(waiting.snapshot.manifest.snapshotId);
-                  return protectedIds;
-                },
-                2,
-                512L << 20);
-    if (result.beforeBytes() != result.afterBytes())
-      Log.i(
-          "原生宿主",
-          "热更缓存已回收 "
-              + (result.beforeBytes() - result.afterBytes())
-              + " 字节，删除历史组合 "
-              + result.removedSnapshots()
-              + " 个");
-    if (result.overBudget()) throw new ContentCollector.Deferred();
+    content.collect(() -> pending);
   }
 
   private void authorize(UpdateClient.PreparedUpdate candidate) {
@@ -763,23 +738,7 @@ final class HostUpdates {
   }
 
   private void flush(UpdateCancellation token) throws Exception {
-    compactHistory();
-    OutcomeRecovery.reconcile(state.journal, outbox);
-    token.check();
-    if (!(state.config.testHealthReports || Bootstrap.diagnosticsAllowed())) return;
-    var batch = outbox.batch(100);
-    if (batch.isEmpty()) return;
-    var reply = api.report(batch, true, token);
-    // 接口已接收的幂等回执可能早于后来收到的修订；仍可确认事件，但不能回退渠道下限。
-    if (reply.revision >= state.journal.state().revision)
-      controller.observe(reply.revision, null, null, reply.serverTime);
-    outbox.acknowledge(batch);
-  }
-
-  private void compactHistory() throws Exception {
-    // 在转入新回执前让已结束历史让出容量；读取磁盘保护身份，不能重置当前/恢复版序号。
-    File root = new File(application.getNoBackupFilesDir(), "native-update");
-    outbox.compact(() -> new ActivationJournal(new File(root, "state")).state(), 64);
+    reports.flush(token, () -> state.config.testHealthReports || Bootstrap.diagnosticsAllowed());
   }
 
   private void retry(Throwable failure) {

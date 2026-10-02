@@ -35,11 +35,9 @@ import app.luoxianlv.service.DisplayState
 import app.luoxianlv.service.FloatingControls
 import app.luoxianlv.service.PlaybackCoordinates
 import app.luoxianlv.service.PlaybackInterruptionGuard
-import app.luoxianlv.service.recognition.ScreenshotAnalyzer
 import app.luoxianlv.ui.practice.PracticeGeometry
 import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.update.MidiCoreFixer
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -66,10 +64,9 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private val current
         get() = active && !closed && binding.current()
 
-    private val recognitionJobs = AtomicInteger()
     private val remoteFixJobs = AtomicInteger()
     private val handler = Handler(Looper.getMainLooper())
-    private val recognitionExecutor = Executors.newSingleThreadExecutor()
+    private val screenCapture = PlaybackScreenCapture(handler) { closed }
     private lateinit var repository: SongRepository
     private lateinit var keys: KeyLayout
     private lateinit var floating: FloatingControls
@@ -334,21 +331,22 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         restoreState(state, ready, background = true)
     }
 
-    override fun snapshot() =
-        Bundle().apply {
-            check(!closed && ::repository.isInitialized)
-            putInt("schema", 1)
-            putBundle("song", PlaybackWire.song(song))
-            putLong("position", positionMs)
-            putFloat("speed", speed)
-            putString("mode", pitchMode.name)
-            putBoolean("half", halfToneOn)
-            putBoolean("fixed", fixedKeys)
-            putBoolean("fixAttempted", fixAttemptedForSong)
-            putBoolean("floating", if (active) floatingVisible else restoredFloating)
-            putBundle("floatingState", floating.snapshot())
-            putString("error", error)
-        }
+    override fun snapshot(): Bundle {
+        check(!closed && ::repository.isInitialized)
+        val selected = PlaybackWire.song(song)
+        return PlaybackSnapshot.encode(
+            song = selected,
+            position = positionMs,
+            speed = speed,
+            mode = pitchMode,
+            halfToneOn = halfToneOn,
+            fixedKeys = fixedKeys,
+            fixAttempted = fixAttemptedForSong,
+            floatingVisible = if (active) floatingVisible else restoredFloating,
+            floatingState = floating.snapshot(),
+            error = error,
+        )
+    }
 
     override fun restore(state: Bundle?, ready: NativePage.Ready) =
         restoreState(state, ready, background = false)
@@ -368,35 +366,29 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         check(!closed && !active) { "必须先停用播放会话再恢复状态" }
         handoverPrepared = false
         songLoadJob?.cancel()
+        val snapshot = PlaybackSnapshot(state)
         songLoadJob = scoreScope.launch {
             try {
                 val prepared =
                     withContext(if (background) ScoreWork.preview else ScoreWork.playback) {
-                        if (state != null) require(state.getInt("schema") == 1) { "播放状态版本不支持" }
-                        val selected =
-                            if (state == null) repository.selected()
-                            else
-                                PlaybackWire.song(
-                                    requireNotNull(state.getBundle("song")) { "播放快照缺少曲目" }
-                                )
+                        val selected = snapshot.selectedSong(repository::selected)
                         selected to PlaybackTimeline(selected.events, selected.bpm)
                     }
-                val restoredSpeed = state?.getFloat("speed", 1f) ?: repository.speed
-                require(restoredSpeed.isFinite() && restoredSpeed in .5f..2f)
-                val mode = state?.getString("mode")?.let(PlayMode::valueOf) ?: PlayMode.NATURAL
+                val restoredSpeed = snapshot.speed { repository.speed }
+                val mode = snapshot.mode
                 song = prepared.first
                 timeline = prepared.second
-                baseMs = (state?.getLong("position") ?: 0L).coerceIn(0, durationMs)
+                baseMs = snapshot.position.coerceIn(0, durationMs)
                 speed = restoredSpeed
                 pitchMode = mode
-                halfToneOn = state?.getBoolean("half") ?: false
-                fixedKeys =
-                    state?.getBoolean("fixed")
-                        ?: ExperimentalOptions.fixedHarmonicaKeys(this@PlaybackSession)
-                fixAttemptedForSong = state?.getBoolean("fixAttempted") ?: false
-                restoredFloating = state?.getBoolean("floating") ?: repository.floatingEnabled
-                floating.restore(state?.getBundle("floatingState"))
-                error = state?.getString("error")
+                halfToneOn = snapshot.halfToneOn
+                fixedKeys = snapshot.fixedKeys {
+                    ExperimentalOptions.fixedHarmonicaKeys(this@PlaybackSession)
+                }
+                fixAttemptedForSong = snapshot.fixAttempted
+                restoredFloating = snapshot.floatingVisible { repository.floatingEnabled }
+                floating.restore(snapshot.floatingState)
+                error = snapshot.error
                 coordinateFrame = null
                 playing = false
                 preparing = false
@@ -439,8 +431,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         playing = false
         generation++
         handler.removeCallbacksAndMessages(null)
-        // 允许已接受的截图任务执行 finally，确保缓冲区释放。
-        recognitionExecutor.shutdown()
+        screenCapture.close()
         recoveringDisplay = false
         if (::floating.isInitialized) floating.destroy()
     }
@@ -452,16 +443,15 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             !recoveringDisplay &&
             !loadingSong &&
             !waitingToPlay &&
-            recognitionJobs.get() == 0 &&
+            screenCapture.idle &&
             remoteFixJobs.get() == 0 &&
             (!::floating.isInitialized || !floating.interacting)
 
     override fun released() =
         closed &&
-            recognitionJobs.get() == 0 &&
+            screenCapture.released &&
             remoteFixJobs.get() == 0 &&
             scoreScope.coroutineContext[Job]?.isCompleted == true &&
-            recognitionExecutor.isTerminated &&
             (!::floating.isInitialized || floating.released)
 
     override fun query(kind: String): Bundle =
@@ -739,77 +729,44 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             done(false)
             return
         }
-        try {
-            binding.screenshot(
-                Display.DEFAULT_DISPLAY,
-                object : AccessibilityBinding.ScreenshotCallback {
-                    override fun success(screenshot: AccessibilityBinding.Frame) {
-                        val currentDisplay = displayState()
-                        if (token != generation || playbackDisplay != currentDisplay) {
-                            AppLog.log(
-                                "截图请求已过期：令牌有效=${token == generation} 播放显示=$playbackDisplay 当前显示=$currentDisplay 截图尺寸=${screenshot.buffer.width}x${screenshot.buffer.height}"
-                            )
-                            screenshot.close()
-                            done(false)
-                            return
-                        }
-                        val frame =
-                            PlaybackCoordinates.Frame(
-                                screenshot.buffer.width,
-                                screenshot.buffer.height,
-                            )
-                        AppLog.log("无障碍截图尺寸=${frame.width}x${frame.height} 显示=$currentDisplay")
-                        recognitionJobs.incrementAndGet()
-                        try {
-                            recognitionExecutor.execute {
-                                val result =
-                                    try {
-                                        ScreenshotAnalyzer.recognize(screenshot)
-                                    } finally {
-                                        recognitionJobs.decrementAndGet()
-                                    }
-                                if (closed) return@execute
-                                handler.post {
-                                    if (closed) return@post
-                                    if (token != generation || playbackDisplay != displayState()) {
-                                        done(false)
-                                        return@post
-                                    }
-                                    val valid =
-                                        result != null &&
-                                            PlaybackCoordinates.validLayout(result.layout)
-                                    if (valid) {
-                                        coordinateFrame = frame
-                                        keys = result.layout
-                                        ConfigStore.save(this@PlaybackSession, result.layout)
-                                        result.mode?.let { pitchMode = it }
-                                        result.halfTone?.let { halfToneOn = it }
-                                        AppLog.i(
-                                            TAG,
-                                            "按键识别成功 音区=${result.mode} 半音=${result.halfTone}",
-                                        )
-                                        floating.refresh()
-                                    }
-                                    done(valid)
-                                }
-                            }
-                        } catch (failure: java.util.concurrent.RejectedExecutionException) {
-                            recognitionJobs.decrementAndGet()
-                            screenshot.close()
-                            if (!closed) done(false)
-                        }
+        screenCapture.recognize(
+            binding = binding,
+            accept = { screenshot ->
+                val currentDisplay = displayState()
+                val valid = token == generation && playbackDisplay == currentDisplay
+                if (!valid) {
+                    AppLog.log(
+                        "截图请求已过期：令牌有效=${token == generation} 播放显示=$playbackDisplay 当前显示=$currentDisplay 截图尺寸=${screenshot.buffer.width}x${screenshot.buffer.height}"
+                    )
+                } else {
+                    AppLog.log(
+                        "无障碍截图尺寸=${screenshot.buffer.width}x${screenshot.buffer.height} 显示=$currentDisplay"
+                    )
+                }
+                valid
+            },
+            done = { frame, result ->
+                if (token != generation || playbackDisplay != displayState()) {
+                    done(false)
+                } else {
+                    val valid = result != null && PlaybackCoordinates.validLayout(result.layout)
+                    if (valid) {
+                        coordinateFrame = frame
+                        keys = result.layout
+                        ConfigStore.save(this@PlaybackSession, result.layout)
+                        result.mode?.let { pitchMode = it }
+                        result.halfTone?.let { halfToneOn = it }
+                        AppLog.i(
+                            TAG,
+                            "按键识别成功 音区=${result.mode} 半音=${result.halfTone}",
+                        )
+                        floating.refresh()
                     }
-
-                    override fun failure(errorCode: Int) {
-                        AppLog.w(TAG, "截图失败：错误码=$errorCode")
-                        done(false)
-                    }
-                },
-            )
-        } catch (failure: Exception) {
-            AppLog.w(TAG, "无法请求截图", failure)
-            done(false)
-        }
+                    done(valid)
+                }
+            },
+            failed = { done(false) },
+        )
     }
 
     fun pause() {

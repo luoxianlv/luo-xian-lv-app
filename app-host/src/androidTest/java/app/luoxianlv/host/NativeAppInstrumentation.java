@@ -658,6 +658,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
         await("动态 Material 浮窗没有显示", () -> find("展开播放器") != null);
         click("展开播放器");
         await("动态 Material 面板没有显示", () -> find("选歌") != null);
+        click("选歌");
+        await("独立选歌窗口没有显示", () -> find("选择谱子") != null);
+        click("关闭");
+        await("选歌关闭后未恢复浮窗面板", () -> find("选歌") != null);
         step("通过：无障碍服务与真实 Material 浮窗面板");
         if (online != null) {
           NativeFullOnlineChecks.run(this, main, online, onlineRollback, onlinePersist);

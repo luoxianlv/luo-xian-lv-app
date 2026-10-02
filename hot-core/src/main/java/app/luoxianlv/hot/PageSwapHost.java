@@ -351,20 +351,8 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   public void initialSession(
       NativePage page, Context context, Bundle saved, String identity, NativePage.Ready ready) {
     requireMain();
-    StrictJson.require(
-        identity != null && !identity.isEmpty() && identity.length() <= 1024, "页面内容身份无效");
-    Bundle state = saved;
-    String generation = null;
-    if (saved.containsKey("session.version")) {
-      StrictJson.require(saved.getInt("session.version") == 1, "页面会话版本不支持");
-      if (identity.equals(saved.getString("session.identity"))) {
-        generation = saved.getString("session.generation");
-        StrictJson.require(generation != null && generation.matches("[0-9a-f]{32}"), "页面会话身份无效");
-        state = saved.getBundle("session.page");
-        StrictJson.require(state != null, "页面会话状态缺失");
-      } else state = new Bundle();
-    }
-    initial(page, context, state, ready, identity, generation);
+    PageSessionState restored = PageSessionState.restore(saved, identity);
+    initial(page, context, restored.page, ready, identity, restored.generation);
   }
 
   /** 首次页面必须来自已验证稳定组合或 APK 恢复入口。 */
@@ -475,12 +463,7 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   public Bundle saveSession() {
     requireMain();
     StrictJson.require(active != null && !closed, "页面会话已关闭");
-    Bundle state = new Bundle();
-    state.putInt("session.version", 1);
-    state.putString("session.identity", active.identity);
-    state.putString("session.generation", active.generation);
-    state.putBundle("session.page", save());
-    return PageState.copy(state);
+    return PageSessionState.save(active.identity, active.generation, save());
   }
 
   public NativePage.Retained retain() {
@@ -1118,43 +1101,6 @@ public final class PageSwapHost extends FrameLayout implements AutoCloseable {
   public void clearChildFocus(View child) {
     inputEpoch++;
     super.clearChildFocus(child);
-  }
-
-  /** 隐藏预绘制页有独立挂载层：禁止抢焦点、触摸穿透或靠根 View 的 Z 值盖住旧页。 */
-  private static final class PageContainer extends FrameLayout {
-    private boolean input;
-
-    PageContainer(Context context, View content, boolean input) {
-      super(context);
-      setSaveFromParentEnabled(false);
-      input(input);
-      if (!input) content.clearFocus();
-      addView(content, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-    }
-
-    void input(boolean enabled) {
-      input = enabled;
-      setDescendantFocusability(enabled ? FOCUS_AFTER_DESCENDANTS : FOCUS_BLOCK_DESCENDANTS);
-      setImportantForAccessibility(
-          enabled
-              ? IMPORTANT_FOR_ACCESSIBILITY_AUTO
-              : IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
-    }
-
-    @Override
-    public boolean dispatchTouchEvent(MotionEvent event) {
-      return input && super.dispatchTouchEvent(event);
-    }
-
-    @Override
-    public boolean dispatchGenericMotionEvent(MotionEvent event) {
-      return input && super.dispatchGenericMotionEvent(event);
-    }
-
-    @Override
-    public boolean dispatchKeyEvent(KeyEvent event) {
-      return input && super.dispatchKeyEvent(event);
-    }
   }
 
   @Override
