@@ -68,6 +68,20 @@ public final class ProtocolTest {
   }
 
   @Test
+  public void exactInstallationVersionIsIndependentOfHostContract() throws Exception {
+    try (HotPackage pack = new HotPackage(fixture("target.lxhp"), policy())) {
+      String raw = new String(pack.manifestBytes(), StandardCharsets.UTF_8);
+      HotManifest legacy = new HotManifest(raw.getBytes(StandardCharsets.UTF_8));
+      legacy.requireVersion(17);
+      HotManifest targeted = new HotManifest(raw.replaceFirst("\\{", "{\"targetVersionCode\":17,").getBytes(StandardCharsets.UTF_8));
+      targeted.requireVersion(17);
+      assertThrows(IllegalArgumentException.class, () -> targeted.requireVersion(18));
+      assertThrows(IllegalArgumentException.class, () -> targeted.requireVersion(0));
+      assertThrows(IllegalArgumentException.class, () -> new HotManifest(raw.replaceFirst("\\{", "{\"targetVersionCode\":-1,").getBytes(StandardCharsets.UTF_8)));
+    }
+  }
+
+  @Test
   public void strictJsonRejectsCrossLanguageAmbiguities() {
     String[] bad = {
       "{\"x\":1,\"x\":2}",

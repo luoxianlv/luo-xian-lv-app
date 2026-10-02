@@ -6,13 +6,15 @@ param(
     [Parameter(Mandatory)][string]$AuthDirectory,
     [string]$Lxhot,
     [string]$HostApk,
+    [ValidateSet('http://127.0.0.1:18472','https://www.luoxianlv.cn')]
+    [string]$TestOrigin = 'http://127.0.0.1:18472',
     [switch]$Fresh
 )
 
 # 一次 instrumentation 保持同一 PID。前三份或更多候选真实确认，最后一份故障回退。
 # 先用本轮普通宿主构建冻结 runtime.apk/base.lxhp，再逐次构建、冻结不同业务 APK：
 # :app-business:assembleDebug -PnativeBusinessProbe=true -PappVersionName=1.0.9-loop-A/B/C/D
-# Candidates 是 Fixture 内已签名 .lxhp 文件名；此脚本不构建、不创建签名、不访问 OSS。
+# Candidates 是 Fixture 内已签名包；显式 TestOrigin 可验证真实 HTTPS/OSS，仍只允许 Debug/test。
 $ErrorActionPreference = 'Stop'
 if ($Serial -ne 'emulator-5554' -or !$Fresh) { throw '只允许独立 emulator-5554，并显式使用 Fresh 测试热更状态' }
 if ($Candidates.Count -lt 4 -or $Candidates.Count -gt 12) { throw '至少三份健康候选及最后一份回退候选，至多十二份' }
@@ -38,7 +40,7 @@ if ((Get-FileHash -LiteralPath $HostApk -Algorithm SHA256).Hash -ne
 $testApk = (Resolve-Path -LiteralPath (Join-Path $repo 'app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')).Path
 $rootKey = (Resolve-Path -LiteralPath (Join-Path $Fixture 'root.public.json')).Path
 $tokenFile = (Resolve-Path -LiteralPath (Join-Path $AuthDirectory 'admin-token')).Path
-$origin = 'http://127.0.0.1:18472'
+$origin = $TestOrigin
 $package = 'app.luoxianlv.debug'
 $component = "$package/app.luoxianlv.service.MusicAccessibilityService"
 $runId = [Guid]::NewGuid().ToString('N')
@@ -296,6 +298,9 @@ function Read-State {
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $config = Read-ApkJson 'assets/hot/config.json'
 $baseline = Read-ApkJson 'assets/baseline/index.json'
+$metadata = Get-Content -LiteralPath (Join-Path $repo 'app-host/build/outputs/apk/debug/output-metadata.json') -Raw | ConvertFrom-Json
+$versionCode = [long]$metadata.elements[0].versionCode
+if ($versionCode -lt 1 -or $versionCode -gt [int]::MaxValue) { throw '宿主安装版本号无效' }
 $publicRoot = Get-Content -LiteralPath $rootKey -Raw | ConvertFrom-Json
 if ($config.applicationId -ne $package -or $config.environment -ne 'test' -or
     $config.origin -ne $origin -or $config.hostContract -ne 1 -or $config.automatic -eq $false -or !$config.testHealthReports -or
@@ -308,7 +313,7 @@ if ((Get-FileHash -LiteralPath $frozenRuntime -Algorithm SHA256).Hash.ToLowerInv
     throw '本轮冻结运行时不匹配最新宿主基线'
 }
 $basePackage = Join-Path $Fixture 'base.lxhp'
-$base = Invoke-Lxhot @('verify', $basePackage, '--root', $rootKey, '--host-contract', '1')
+$base = Invoke-Lxhot @('verify', $basePackage, '--root', $rootKey, '--host-contract', '1', '--app-version-code', [string]$versionCode)
 Assert-ContinuousArtifactScope $base
 $baseRuntime = @($base.artifacts | Where-Object role -eq 'runtime')
 $baseBusiness = @($base.artifacts | Where-Object role -eq 'business')
@@ -324,7 +329,7 @@ $businesses = [Collections.Generic.HashSet[string]]::new()
 foreach ($name in $Candidates) {
     if ($name -notmatch '^[A-Za-z0-9._-]+\.lxhp$') { throw '候选必须是 Fixture 内普通 .lxhp 文件名' }
     $path = (Resolve-Path -LiteralPath (Join-Path $Fixture $name)).Path
-    $candidate = Invoke-Lxhot @('verify', $path, '--root', $rootKey, '--host-contract', '1')
+    $candidate = Invoke-Lxhot @('verify', $path, '--root', $rootKey, '--host-contract', '1', '--app-version-code', [string]$versionCode)
     Assert-ContinuousArtifactScope $candidate
     $runtime = @($candidate.artifacts | Where-Object role -eq 'runtime')
     $business = @($candidate.artifacts | Where-Object role -eq 'business')
@@ -338,7 +343,7 @@ foreach ($name in $Candidates) {
     $packagePaths += $path
 }
 $stages[-1].mode = 'rollback'
-$plan = [ordered]@{ schema=1; runId=$runId; runtime=$baseline.runtime.sha256; baselineSnapshot=$base.snapshotId; stageTimeoutMillis=$stageTimeoutMillis; stages=$stages }
+$plan = [ordered]@{ schema=1; runId=$runId; testOrigin=$origin; appVersionCode=$versionCode; runtime=$baseline.runtime.sha256; baselineSnapshot=$base.snapshotId; stageTimeoutMillis=$stageTimeoutMillis; stages=$stages }
 $planPath = Join-Path $output 'plan.json'
 Save-Json $planPath $plan
 $services = ((Invoke-Adb shell settings get secure enabled_accessibility_services) -join "`n").Trim()
@@ -357,7 +362,7 @@ $stderr = Join-Path $output 'instrumentation.stderr.txt'
 try {
     Prepare-ContinuousFresh $services
     Invoke-Adb install -r $testApk | Out-Null
-    Invoke-Adb reverse tcp:18472 tcp:18472 | Out-Null
+    if ($origin -eq 'http://127.0.0.1:18472') { Invoke-Adb reverse tcp:18472 tcp:18472 | Out-Null }
     Send-File $planPath 'files/native-continuous/plan.json'
     # 返回值、对象回读地址和服务端许可均不写入设备计划或公开报告。
     Invoke-Lxhot @('upload', $basePackage, '--root', $rootKey, '--server', $origin, '--token-file', $tokenFile) | Out-Null

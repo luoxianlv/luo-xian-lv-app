@@ -1,0 +1,72 @@
+{
+  "date": "2026-10-02",
+  "passed": true,
+  "package": "app.luoxianlv.debug",
+  "environment": "test",
+  "origin": "https://www.luoxianlv.cn",
+  "targetVersionCode": 17,
+  "pid": 11491,
+  "hostApkSha256": "968ee8186e56694a0ccf8b593794423636198603bb433f37676e1886ae2a33a2",
+  "apiSha256": "d0695fb0bcfdab449872091ae6295de571f56667332be74ebdb5ddbaf70b4ae8",
+  "actualAutomaticScheduler": true,
+  "healthClockModified": false,
+  "productionRolloutModified": false,
+  "stages": [
+    {
+      "index": 0,
+      "mode": "healthy",
+      "snapshot": "e7bd28c7235906a69fe6c211c806205aef92fd1c9097f9a57838cc591a888288",
+      "business": "2150eb540b735015a91a3beef9c96f1916e2e4e5cc11597df8f28339fc738cf8",
+      "observedActiveMillis": 61049,
+      "healthReportAcknowledged": true,
+      "restoredSnapshot": null,
+      "latestUserStatePreserved": null,
+      "candidateRetired": null,
+      "previousRetired": true,
+      "runtimeReused": true
+    },
+    {
+      "index": 1,
+      "mode": "healthy",
+      "snapshot": "155911069e9cd29c7778c4a588304e623a99f88ec0c67433043e14044a6299a6",
+      "business": "dcde5b625eed1d90d00d0bf707c3ffc02ccba124b236962f50cff3cd6053acd6",
+      "observedActiveMillis": 60588,
+      "healthReportAcknowledged": true,
+      "restoredSnapshot": null,
+      "latestUserStatePreserved": null,
+      "candidateRetired": null,
+      "previousRetired": true,
+      "runtimeReused": true
+    },
+    {
+      "index": 2,
+      "mode": "healthy",
+      "snapshot": "c5180164cfe7d4dc41aa0042f761bc44f3d97e3e3d7c44c91361907ffd72ec16",
+      "business": "e828eb941da5ef75e7fc950a267fc83616707bd40bf5a4a33571ec87efd64ca7",
+      "observedActiveMillis": 60776,
+      "healthReportAcknowledged": true,
+      "restoredSnapshot": null,
+      "latestUserStatePreserved": null,
+      "candidateRetired": null,
+      "previousRetired": true,
+      "runtimeReused": true
+    },
+    {
+      "index": 3,
+      "mode": "rollback",
+      "snapshot": "87314c6e6ecd08f5c69d2d71f644355b204dddfd62ec7d06fc60fa20fc288b70",
+      "business": "26ca8478b8104ca4c93c9557f12dd680fa3c19f517733359747398e3e05acda5",
+      "observedActiveMillis": null,
+      "healthReportAcknowledged": true,
+      "restoredSnapshot": "c5180164cfe7d4dc41aa0042f761bc44f3d97e3e3d7c44c91361907ffd72ec16",
+      "latestUserStatePreserved": true,
+      "candidateRetired": true,
+      "previousRetired": null,
+      "runtimeReused": true
+    }
+  ],
+  "accessibilityRestored": true,
+  "reverseRestored": true,
+  "homeRestored": true,
+  "releaseSignedEndToEndVerified": false
+}

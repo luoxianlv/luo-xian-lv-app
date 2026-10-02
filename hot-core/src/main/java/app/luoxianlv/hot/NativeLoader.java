@@ -278,6 +278,9 @@ public final class NativeLoader {
   }
 
   private Prepared prepareVerified(ContentStore.Snapshot snapshot) throws Exception {
+    var installed = application.getPackageManager().getPackageInfo(application.getPackageName(), 0);
+    snapshot.manifest.requireVersion(android.os.Build.VERSION.SDK_INT >= 28
+        ? installed.getLongVersionCode() : installed.versionCode);
     AutoCloseable lease = store.pin(snapshot);
     try {
       Prepared prepared = preparePinned(snapshot);

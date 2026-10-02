@@ -281,6 +281,14 @@ final class NativeContinuousChecks {
             && next.classLoader().getParent() == sharedRuntime,
         "业务加载器没有隔离或共享运行时被重复加载");
     main(test, () -> assertSources(next.classLoader()));
+    if (plan.has("appVersionCode"))
+      check(next.manifest.targetVersionCode == plan.getLong("appVersionCode"), "候选未限定实际安装版本");
+    // 默认 UiAutomation 会抑制无障碍服务；截图必须保持本轮真实播放连接。
+    var screenshot = test.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).takeScreenshot();
+    check(screenshot != null, "未取得真实原生 UI 截图");
+    try (var stream = new java.io.FileOutputStream(new File(area, "ui-" + index + ".png"))) {
+      check(screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream), "保存原生 UI 截图失败");
+    } finally { screenshot.recycle(); }
     var row =
         new JSONObject()
             .put("index", index)
@@ -640,14 +648,27 @@ final class NativeContinuousChecks {
   }
 
   private static void requireLocal(HostStartup state, Instrumentation test) {
+    String origin = state == null ? "" : state.config.origin.toString();
+    boolean allowedOrigin = origin.equals("http://127.0.0.1:18472");
+    if (origin.equals("https://www.luoxianlv.cn")) {
+      try {
+        var file = new File(test.getTargetContext().getFilesDir(), AREA + "/plan.json");
+        var plan = new JSONObject(Files.readString(file.toPath()));
+        allowedOrigin = origin.equals(plan.getString("testOrigin"));
+      } catch (Exception invalidPlan) {
+        allowedOrigin = false;
+      }
+    }
     check(
         state != null
             && test.getTargetContext().getPackageName().equals("app.luoxianlv.debug")
             && state.config.environment.equals("test")
             && state.config.automatic
             && state.config.testHealthReports
-            && state.config.origin.toString().equals("http://127.0.0.1:18472"),
-        "仅允许显式本机 Debug 自动验收");
+            && allowedOrigin
+            && (test.getTargetContext().getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0,
+        "仅允许显式计划绑定的 Debug/test 自动验收");
   }
 
   private static Field member(Object owner, String name) {

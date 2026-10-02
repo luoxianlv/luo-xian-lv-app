@@ -33,6 +33,7 @@ public final class HotManifest {
   public final String runtimeAbi;
   public final String activation;
   public final long hostMin, hostMax, stateCurrent, stateMin, stateMax;
+  public final long targetVersionCode;
   public final List<Artifact> artifacts;
   public final Map<String, Long> objects;
   public final Artifact runtime, business;
@@ -97,6 +98,7 @@ public final class HotManifest {
                 "label",
                 "createdAt",
                 "hostContract",
+                "targetVersionCode",
                 "runtimeAbi",
                 "activation",
                 "stateSchema",
@@ -124,6 +126,9 @@ public final class HotManifest {
     hostMin = host.number("min");
     hostMax = host.number("max");
     range(hostMin, hostMax);
+    targetVersionCode = value.has("targetVersionCode") ? value.number("targetVersionCode") : 0;
+    StrictJson.require(targetVersionCode >= 0 && targetVersionCode <= Integer.MAX_VALUE,
+        "目标安装版本号无效");
     StrictJson.Obj state = value.object("stateSchema").only("current", "readable");
     StrictJson.Obj readable = state.object("readable").only("min", "max");
     stateCurrent = state.number("current");
@@ -213,6 +218,12 @@ public final class HotManifest {
 
   static void range(long min, long max) {
     StrictJson.require(min >= 1 && max >= min && max <= Integer.MAX_VALUE, "兼容区间无效");
+  }
+
+  /** 安装版本与接口契约分开；0 仅用于读取未限定版本的历史清单。 */
+  public void requireVersion(long installedVersionCode) {
+    StrictJson.require(targetVersionCode == 0 || targetVersionCode == installedVersionCode,
+        "热更不适用于当前安装版本");
   }
 
   static int utf8Size(String text) {

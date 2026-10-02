@@ -144,6 +144,7 @@ public final class UpdateClient {
     accept(decision);
     if (!decision.hasCandidate()) return null;
     SignedSnapshot candidate = decision.verify(policy(decision));
+    candidate.manifest.requireVersion(api.appVersionCode);
     requireReadable(candidate.manifest, stateSchema);
     quarantine.requireAllowed(candidate.manifest, api.hostContract);
     Map<String, Long> missing = new LinkedHashMap<>();
@@ -197,6 +198,7 @@ public final class UpdateClient {
         latest.hasCandidate() && latest.snapshotId.equals(prepared.snapshot.manifest.snapshotId),
         "候选已被暂停、撤回或新版本取代");
     SignedSnapshot current = latest.verify(policy(latest));
+    current.manifest.requireVersion(api.appVersionCode);
     requireReadable(current.manifest, stateSchema);
     quarantine.requireAllowed(current.manifest, api.hostContract);
     store.verifySnapshotObjects(prepared.snapshot);

@@ -14,6 +14,7 @@ import java.util.Map;
 public final class HotApiClient {
   public final InstallationIdentity installation;
   public final long hostContract;
+  public final long appVersionCode;
   public final String hostIdentity;
   private final URI origin;
   private final boolean localTest;
@@ -142,17 +143,24 @@ public final class HotApiClient {
       long hostContract,
       String hostIdentity,
       boolean localTest) {
+    this(origin, installation, hostContract, hostIdentity, localTest, 0);
+  }
+
+  public HotApiClient(URI origin, InstallationIdentity installation, long hostContract,
+      String hostIdentity, boolean localTest, long appVersionCode) {
     HttpObjectSource.validateUrl(origin, localTest);
     StrictJson.require(
         (origin.getRawPath().isEmpty() || origin.getRawPath().equals("/"))
             && origin.getRawQuery() == null
             && hostContract > 0
             && hostContract <= Integer.MAX_VALUE
+            && appVersionCode >= 0 && appVersionCode <= Integer.MAX_VALUE
             && HotManifest.validHash(hostIdentity),
         "API 来源或宿主身份无效");
     this.origin = origin;
     this.installation = installation;
     this.hostContract = hostContract;
+    this.appVersionCode = appVersionCode;
     this.hostIdentity = hostIdentity;
     this.localTest = localTest;
   }
@@ -212,8 +220,10 @@ public final class HotApiClient {
                 "hostContract",
                 hostContract,
                 "hostIdentity",
-                hostIdentity),
-            "register-" + installation.id + "-" + hostIdentity.substring(0, 16),
+                hostIdentity,
+                "appVersionCode",
+                appVersionCode),
+            "register-" + installation.id + "-" + hostIdentity.substring(0, 16) + "-" + appVersionCode,
             false,
             cancellation);
     response.value.only("installationId", "credentialFormat", "scope");

@@ -331,13 +331,17 @@ final class HostUpdates {
     var identity =
         InstallationIdentity.open(
             new File(root, "installation"), state.config.applicationId, state.config.environment);
+    var installed = application.getPackageManager().getPackageInfo(application.getPackageName(), 0);
+    long versionCode = android.os.Build.VERSION.SDK_INT >= 28
+        ? installed.getLongVersionCode() : installed.versionCode;
     api =
         new HotApiClient(
             state.config.origin,
             identity,
             state.config.hostContract,
             state.config.fingerprint,
-            state.config.environment.equals("test"));
+            state.config.environment.equals("test"),
+            versionCode);
     controller =
         new ActivationController(
             state.journal,
