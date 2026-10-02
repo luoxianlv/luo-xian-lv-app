@@ -29,6 +29,7 @@ if [[ "$native_package" == true ]]; then
   hot_config="$RUNNER_TEMP/native-hot-config.json"
   printf '%s' "$NATIVE_HOT_CONFIG_JSON" > "$hot_config"
   build_args+=("-PhotUpdateConfig=$hot_config" '-PnativeOptimize=true' '-PnativeRequireReleaseSigning=true')
+  build_args+=('-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' '--max-workers=2')
   bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest :app-business:testDebugUnitTest \
     :app-host:exportReleaseNativeBuildReport --no-daemon "${build_args[@]}"
   apk=app-host/build/outputs/apk/release/app-host-release.apk

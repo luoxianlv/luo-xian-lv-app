@@ -35,6 +35,9 @@ jobs:
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           "$(go env GOPATH)/bin/actionlint"
+      - name: 检查安装签名解析边界
+        shell: pwsh
+        run: ./tools/test-native-apk-signature.ps1
 
   build:
     runs-on: ubuntu-24.04
@@ -84,7 +87,9 @@ jobs:
       - name: 测试核心并构建优化三层产物
         run: |
           bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest :app-business:testDebugUnitTest \
-            :app-host:exportReleaseNativeBuildReport -PnativeOptimize=true --no-daemon --console=plain --stacktrace
+            :app-host:exportReleaseNativeBuildReport -PnativeOptimize=true \
+            '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' --max-workers=2 \
+            --no-daemon --console=plain --stacktrace
       - name: 检查实际 SDK、资源和 R8 映射
         shell: pwsh
         run: ./tools/verify-native-release.ps1 -ExpectOptimized -CompileOnly

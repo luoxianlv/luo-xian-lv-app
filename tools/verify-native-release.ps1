@@ -14,6 +14,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'native-release-output.ps1')
+. (Join-Path $PSScriptRoot 'native-apk-signature.ps1')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $nativeRoot = (Resolve-Path -LiteralPath $AppRoot).Path
 
@@ -212,8 +213,9 @@ try {
         $signatureExit = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousErrorPreference }
     $signerText = $signerOutput -join "`n"
-    $certificates = @([regex]::Matches($signerText, '(?m)^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})\s*$') | ForEach-Object { $_.Groups[1].Value.ToLowerInvariant() })
-    $debugCertificate = $signerText -match '(?im)^Signer #\d+ certificate DN: .*CN=Android Debug(?:,|$)'
+    $parsedSignature = Get-NativeApkSignature $signerText
+    $certificates = $parsedSignature.certificates
+    $debugCertificate = $parsedSignature.debugCertificate
     $signatureStatus = 'not-verified'
     if ($signatureExit -eq 0) {
         if ($certificates.Count -ne 1) {
