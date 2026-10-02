@@ -12,7 +12,7 @@ on:
       native_package:
         description: 使用三层原生宿主（需要配置公开热更配置；旧标签保持关闭）
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -45,10 +45,24 @@ jobs:
           ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
           path: source
           persist-credentials: false
+      - name: Resolve package route
+        id: package_route
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          MANUAL_NATIVE: ${{ inputs.native_package && 'true' || 'false' }}
+          DEFAULT_NATIVE: ${{ vars.NATIVE_RELEASE_DEFAULT }}
+        run: |
+          native=false
+          if [[ "$RELEASE_EVENT" == workflow_dispatch ]]; then
+            native="$MANUAL_NATIVE"
+          elif [[ "$DEFAULT_NATIVE" == true && -f source/app-host/build.gradle.kts ]]; then
+            native=true
+          fi
+          echo "native=$native" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
-          java-version: ${{ inputs.native_package && '21' || '17' }}
+          java-version: ${{ steps.package_route.outputs.native == 'true' && '21' || '17' }}
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-provider: basic
@@ -61,7 +75,7 @@ jobs:
           ORG_GRADLE_PROJECT_releaseKeyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
           UPDATE_BASE_URL: ${{ vars.UPDATE_BASE_URL }}
           ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
-          NATIVE_RELEASE_PACKAGE: ${{ inputs.native_package && 'true' || 'false' }}
+          NATIVE_RELEASE_PACKAGE: ${{ steps.package_route.outputs.native }}
           NATIVE_HOT_CONFIG_JSON: ${{ vars.NATIVE_HOT_CONFIG_JSON }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/package-release.sh"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

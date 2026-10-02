@@ -62,5 +62,5 @@ fun openPracticeStage(
 ) {
     val activity = context.findActivity()
     if (activity == null) onPractice(dark)
-    else StageEntry.open(activity, lifecycleOwner, origin, dark) { onPractice(dark) }
+    else StageEntry.open(activity, context, lifecycleOwner, origin, dark) { onPractice(dark) }
 }

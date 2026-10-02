@@ -672,11 +672,18 @@ public final class NativeAppInstrumentation extends Instrumentation {
               PlaybackBridge.current().command("showFloating", value);
             });
 
-        stage =
-            startActivitySync(
-                new Intent()
-                    .setClassName(getTargetContext(), "app.luoxianlv.ui.practice.PracticeActivity")
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        if (find("演练场") == null) click("我的");
+        await("演练场真实入口没有显示", () -> find("演练场") != null);
+        // 必须经实际入口构造首页幕布，直接启动 Activity 会漏掉宿主/业务 assets 边界。
+        var entryMonitor = addMonitor("app.luoxianlv.ui.practice.PracticeActivity", null, false);
+        try {
+          click("演练场");
+          if (find("稍后再问") != null) click("稍后再问");
+          stage = waitForMonitorWithTimeout(entryMonitor, 15000);
+          require(stage != null, "点击入口后演练场没有启动");
+        } finally {
+          removeMonitor(entryMonitor);
+        }
         Activity playing = stage;
         await(
             "独立业务演练场未准备好",

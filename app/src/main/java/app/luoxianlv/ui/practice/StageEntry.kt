@@ -1,6 +1,7 @@
 package app.luoxianlv.ui.practice
 
 import android.app.Activity
+import android.content.Context
 import android.graphics.RectF
 import android.view.ViewGroup
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -17,6 +18,7 @@ object StageEntry {
 
     fun open(
         activity: Activity,
+        resourceContext: Context,
         lifecycleOwner: LifecycleOwner,
         bounds: RectF,
         dark: Boolean,
@@ -33,7 +35,8 @@ object StageEntry {
             if (portrait) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         val curtain =
-            StageCurtain(activity, dark).apply {
+            // 窗口仍由宿主管理；动画资源须从当前业务代际读取，薄宿主不包含业务 assets。
+            StageCurtain(resourceContext, dark).apply {
                 tag = TAG
                 origin = bounds
                 expansion = 1f
