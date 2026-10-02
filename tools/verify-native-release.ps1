@@ -216,7 +216,10 @@ try {
     $debugCertificate = $signerText -match '(?im)^Signer #\d+ certificate DN: .*CN=Android Debug(?:,|$)'
     $signatureStatus = 'not-verified'
     if ($signatureExit -eq 0) {
-        if ($certificates.Count -ne 1) { throw 'Expected one verified current signing certificate.' }
+        if ($certificates.Count -ne 1) {
+            $publicDigestLines = @($signerOutput | Where-Object { [string]$_ -match 'certificate SHA-256 digest:' })
+            throw "Expected one verified current signing certificate; parsed=$($certificates.Count); public digest lines: $($publicDigestLines -join '; ')"
+        }
         if ($ExpectedCertificateSha256) { Assert-Same $certificates[0] $ExpectedCertificateSha256.ToLowerInvariant() 'public signing certificate' }
         $signatureStatus = if ($debugCertificate) { 'verified-debug-certificate' } elseif ($CompileOnly) { 'verified-certificate-compile-only' } else { 'verified-expected-release-certificate' }
     }

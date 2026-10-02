@@ -84,7 +84,7 @@ jobs:
       - name: 测试核心并构建优化三层产物
         run: |
           bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest :app-business:testDebugUnitTest \
-            :app-host:exportReleaseNativeBuildReport -PnativeOptimize=true --no-daemon --console=plain
+            :app-host:exportReleaseNativeBuildReport -PnativeOptimize=true --no-daemon --console=plain --stacktrace
       - name: 检查实际 SDK、资源和 R8 映射
         shell: pwsh
         run: ./tools/verify-native-release.ps1 -ExpectOptimized -CompileOnly
