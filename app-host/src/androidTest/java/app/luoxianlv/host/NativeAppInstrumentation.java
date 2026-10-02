@@ -124,7 +124,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
 
   private AccessibilityNodeInfo find(String text, AccessibilityNodeInfo node) {
     if (node == null) return null;
-    if (node.isVisibleToUser()
+    boolean owned = getTargetContext().getPackageName().contentEquals(String.valueOf(node.getPackageName()));
+    boolean systemHint = "com.android.systemui".contentEquals(String.valueOf(node.getPackageName()))
+        && (text.equals("Viewing full screen") || text.equals("Got it") || text.equals("GOT IT"));
+    if ((owned || systemHint) && node.isVisibleToUser()
         && (text.equals(String.valueOf(node.getText()))
             || text.equals(String.valueOf(node.getContentDescription())))) return node;
     for (int i = 0; i < node.getChildCount(); i++) {
@@ -672,7 +675,13 @@ public final class NativeAppInstrumentation extends Instrumentation {
               PlaybackBridge.current().command("showFloating", value);
             });
 
-        if (find("演练场") == null) click("我的");
+        getTargetContext().startActivity(
+            new Intent().setClassName(getTargetContext(), "app.luoxianlv.MainActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        Activity entryHome = main;
+        await("入口回归前首页窗口未恢复焦点", entryHome::hasWindowFocus);
+        // 设置页也有同名分区标题，不能据此误以为已经位于首页。
+        if (find("我的") != null) click("我的");
         await("演练场真实入口没有显示", () -> find("演练场") != null);
         // 必须经实际入口构造首页幕布，直接启动 Activity 会漏掉宿主/业务 assets 边界。
         var entryMonitor = addMonitor("app.luoxianlv.ui.practice.PracticeActivity", null, false);

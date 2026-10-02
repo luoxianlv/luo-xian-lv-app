@@ -68,6 +68,9 @@ printf 'APK version: %s (%s); release tag: %s\n' "$version" "$code" "$RELEASE_TA
 test "v$version" = "$RELEASE_TAG" || { echo 'APK version does not match release tag' >&2; exit 1; }
 
 mkdir -p dist
+if [[ "$native_package" == true ]]; then
+  cp app-host/build/native-release-verification.json dist/native-release-verification.json
+fi
 asset="luoxianlv-${RELEASE_TAG}-release.apk"
 cp "$apk" "dist/$asset"
 (cd dist && sha256sum "$asset" > "$asset.sha256")
