@@ -2,7 +2,6 @@ package app.luoxianlv.ui.floating
 
 import android.content.Context
 import android.content.res.ColorStateList
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
@@ -48,12 +47,13 @@ internal class FloatingPanel(
     private var status: TextView? = null
     private var play: ImageView? = null
     private var progress: FloatingProgressView? = null
+    private var previewPositionMs: Long? = null
 
     init {
         build()
     }
 
-    /** 展开态：播放控制和倍速滑动条，播放进度条叠在胶囊底部边缘。 */
+    /** 各控制区独立排布，底部进度热区不覆盖播放按钮和曲名拖动把手。 */
     private fun build(): View {
         val panel =
             this.apply {
@@ -169,10 +169,17 @@ internal class FloatingPanel(
                     palette,
                     duration = { service.durationMs },
                     onSeek = service::seek,
-                    onSeekFinished = ::refresh,
+                    onSeekFinished = {
+                        previewPositionMs = null
+                        refresh()
+                    },
+                    onPreview = {
+                        previewPositionMs = it
+                        refreshStatus()
+                    },
                 )
                 .also { progress = it }
-        // 播放控制 46dp，倍速滑动条 32dp，底部 10dp 留给播放进度条。
+        val progressTop = context.dp(46 + if (speedControlsVisible) 32 else 0)
         panel.addView(row, android.widget.FrameLayout.LayoutParams(-1, context.dp(46)))
         if (speedControlsVisible) {
             panel.addView(
@@ -184,16 +191,33 @@ internal class FloatingPanel(
         }
         panel.addView(
             strip,
-            android.widget.FrameLayout.LayoutParams(-1, context.dp(10), Gravity.BOTTOM),
+            android.widget.FrameLayout.LayoutParams(
+                    -1,
+                    context.dp(FloatingProgressView.TOUCH_HEIGHT_DP),
+                )
+                .apply { topMargin = progressTop },
         )
-        panel.minimumHeight = context.dp(if (speedControlsVisible) 88 else 46)
+        panel.minimumHeight = progressTop + context.dp(FloatingProgressView.TOUCH_HEIGHT_DP)
         return panel
     }
 
     fun refresh() {
         title?.text = service.song.title
-        status?.text =
-            service.error
+        refreshStatus()
+        play?.apply {
+            val pending = service.playing || service.waitingToPlay
+            setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)
+            contentDescription = if (pending) "暂停" else "播放"
+        }
+        progress?.update(service.positionMs, service.durationMs)
+    }
+
+    private fun refreshStatus() {
+        val label =
+            previewPositionMs?.let {
+                "${timeLabel(it)}/${timeLabel(service.durationMs)}"
+            }
+                ?: service.error
                 ?: if (service.loadingSong) {
                     if (service.waitingToPlay) "准备完成后立即播放…" else "正在准备谱面…"
                 } else if (service.preparing) {
@@ -203,11 +227,6 @@ internal class FloatingPanel(
                         service.positionMs
                     )}/${timeLabel(service.durationMs)}"
                 }
-        play?.apply {
-            val pending = service.playing || service.waitingToPlay
-            setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)
-            contentDescription = if (pending) "暂停" else "播放"
-        }
-        progress?.update(service.positionMs, service.durationMs)
+        status?.let { if (it.text.toString() != label) it.text = label }
     }
 }
