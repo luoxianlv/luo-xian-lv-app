@@ -4,6 +4,7 @@ import android.content.Context
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.storage.AppStorage
+import app.luoxianlv.update.ClientVersion
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -46,7 +47,9 @@ object DefaultWallpaper {
             if (installed(context)) return@withLock
             val job = currentCoroutineContext()
             val manifestConnection =
-                open("${BuildConfig.UPDATE_BASE_URL.trimEnd('/')}/api/wallpapers/default")
+                open(
+                    "${BuildConfig.UPDATE_BASE_URL.trimEnd('/')}/api/wallpapers/default?delivery=edgeone"
+                )
             val metadata =
                 try {
                     checkResponse(manifestConnection)
@@ -61,14 +64,7 @@ object DefaultWallpaper {
             require(size in 1..256L * 1024 * 1024 && sha.matches(Regex("[0-9a-f]{64}"))) {
                 "壁纸下载资料无效"
             }
-            val url = URL(metadata.getString("url"))
-            require(
-                url.protocol == "https" &&
-                    url.host == "oss-luoxianlv.admilk.cn" &&
-                    url.userInfo == null
-            ) {
-                "壁纸下载地址无效"
-            }
+            val url = validatedWallpaperDownloadUrl(metadata.getString("url"))
             val archive = File(AppStorage.imports(context), "default-wallpaper.download")
             val destination = folder(context)
             val staging = File(destination.parentFile, ".install-$ID")
@@ -76,7 +72,7 @@ object DefaultWallpaper {
                 require(archive.parentFile!!.usableSpace > size + 32L * 1024 * 1024) {
                     "存储空间不足"
                 }
-                val connection = open(url.toString())
+                val connection = open(url)
                 try {
                     checkResponse(connection)
                     val digest = MessageDigest.getInstance("SHA-256")
@@ -145,6 +141,7 @@ object DefaultWallpaper {
 
     private fun open(url: String) =
         (URL(url).openConnection() as HttpURLConnection).apply {
+            ClientVersion.attach(this)
             connectTimeout = 15000
             readTimeout = 15000
             instanceFollowRedirects = false

@@ -58,10 +58,10 @@ def existing_object(client, bucket, key, size, sha):
     return True
 
 
-def multipart_upload(client, bucket, apk, key, sha):
+def multipart_upload(client, bucket, apk, key, sha, *, content_type=APK_CONTENT_TYPE):
     size = apk.stat().st_size
     upload_id = client.create_multipart_upload(
-        Bucket=bucket, Key=key, ContentType=APK_CONTENT_TYPE,
+        Bucket=bucket, Key=key, ContentType=content_type,
         CacheControl=APK_CACHE_CONTROL, Metadata={"sha256": sha},
     )["UploadId"]
     progress_lock = threading.Lock()
@@ -101,17 +101,17 @@ def multipart_upload(client, bucket, apk, key, sha):
         raise
 
 
-def upload_and_verify(client, bucket, apk, key, sha):
+def upload_and_verify(client, bucket, apk, key, sha, *, content_type=APK_CONTENT_TYPE):
     size = apk.stat().st_size
     if existing_object(client, bucket, key, size, sha):
         print("R2 已有同摘要文件，跳过上传并重新回读校验", flush=True)
     else:
-        multipart_upload(client, bucket, apk, key, sha)
+        multipart_upload(client, bucket, apk, key, sha, content_type=content_type)
     result = client.get_object(Bucket=bucket, Key=key)
     source = result["Body"]
     try:
         if (result.get("ContentLength") != size or
-                result.get("ContentType", "").split(";", 1)[0] != APK_CONTENT_TYPE):
+                result.get("ContentType", "").split(";", 1)[0] != content_type):
             raise ValueError("R2 文件大小或类型错误")
         digest = hashlib.sha256()
         received = 0
@@ -126,6 +126,6 @@ def upload_and_verify(client, bucket, apk, key, sha):
                 last_percent = percent // 10
                 print(f"R2 回读校验：{percent}%（{received}/{size} 字节）", flush=True)
         if received != size or digest.hexdigest() != sha:
-            raise ValueError("R2 回读内容与正式签名包不一致")
+            raise ValueError("R2 回读内容与原文件不一致")
     finally:
         source.close()

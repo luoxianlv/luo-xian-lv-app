@@ -40,6 +40,18 @@ class AppReleaseTest {
     }
 
     @Test
+    fun officialSourceKeepsLegacyIdAndAcceptsSignedEdgeOneRedirect() {
+        val url =
+            "https://oss-eo.luoxianlv.cn/luoxianlv/release/fixture/app-release.apk?auth_key=1-2-0-abcd"
+        val json = manifest()
+        json.getJSONObject("channels").getJSONObject("oss").put("url", "/api/update/oss")
+        val release = parseAppRelease(json, 4, "https://www.luoxianlv.cn", "oss", false)!!
+        assertEquals("oss", release.sources.first().id)
+        assertEquals("https://www.luoxianlv.cn/api/update/oss", release.sources.first().url)
+        assertEquals(url, validatedUpdateUrl(url, release.sources.first().url, false))
+    }
+
+    @Test
     fun newerVersionIsMandatoryEvenWhenServerMarksItOptional() {
         assertTrue(
             parseAppRelease(

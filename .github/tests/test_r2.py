@@ -66,6 +66,17 @@ class R2Tests(unittest.TestCase):
         self.client.get_object.assert_called_once()
         self.client.delete_object.assert_not_called()
 
+    def test_wallpaper_reuses_private_upload_with_zip_type(self):
+        self.client.get_object.return_value["ContentType"] = "application/zip"
+        with redirect_stdout(io.StringIO()):
+            r2.upload_and_verify(self.client, "fixture", self.apk,
+                                 f"luoxianlv/wallpapers/{self.sha}/default.zip", self.sha,
+                                 content_type="application/zip")
+        self.assertEqual(self.client.create_multipart_upload.call_args.kwargs["ContentType"],
+                         "application/zip")
+        self.client.generate_presigned_url.assert_not_called()
+        self.assertTrue(self.body.closed)
+
     def test_existing_mismatch_is_never_overwritten(self):
         self.client.head_object.side_effect = None
         for metadata in ({}, {"ContentLength": len(self.data), "Metadata": {"sha256": "bad"}},
