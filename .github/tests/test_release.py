@@ -189,7 +189,7 @@ class ReleaseTests(unittest.TestCase):
         previous = Path.cwd()
         os.chdir(self.root)
         try:
-            with patch.dict(os.environ, {"RELEASE_TAG": "v1.0.8", "OSS_ENDPOINT": "example.test", "OSS_BUCKET": "fixture", "OSS_ACCESS_KEY_ID": "fixture", "OSS_ACCESS_KEY_SECRET": "fixture"}), patch.object(publish, "upload_and_verify", side_effect=side_effect) as transfer, patch.object(publish.time, "sleep"), redirect_stdout(io.StringIO()):
+            with patch.dict(os.environ, {"DOWNLOAD_PROVIDER": "oss", "RELEASE_TAG": "v1.0.8", "OSS_ENDPOINT": "example.test", "OSS_BUCKET": "fixture", "OSS_ACCESS_KEY_ID": "fixture", "OSS_ACCESS_KEY_SECRET": "fixture"}), patch.object(publish, "upload_and_verify", side_effect=side_effect) as transfer, patch.object(publish.time, "sleep"), redirect_stdout(io.StringIO()):
                 publish.main()
                 return transfer
         finally:
@@ -212,6 +212,56 @@ class ReleaseTests(unittest.TestCase):
         self.write_json("stable.json", {"stale": True})
         with self.assertRaises(OSError):
             self.run_main(OSError("network"))
+        self.assertFalse((self.directory / "stable.json").exists())
+
+    def run_r2_main(self, side_effect, provider="r2"):
+        previous = Path.cwd()
+        os.chdir(self.root)
+        client = Mock()
+        try:
+            with patch.dict(os.environ, {"RELEASE_TAG": "v1.0.8", "DOWNLOAD_PROVIDER": provider}), \
+                    patch("publish_r2.create_client", return_value=(client, "fixture")), \
+                    patch("publish_r2.upload_and_verify", side_effect=side_effect) as transfer, \
+                    patch.object(publish, "upload_oss") as upload_oss, \
+                    patch.object(publish.time, "sleep"), redirect_stdout(io.StringIO()):
+                publish.main()
+                upload_oss.assert_not_called()
+                return transfer
+        finally:
+            os.chdir(previous)
+            client.close.assert_called_once()
+
+    def test_r2_retry_generates_legacy_compatible_manifest(self):
+        transfer = self.run_r2_main([OSError("network"), None])
+        self.assertEqual(transfer.call_count, 2)
+        manifest = json.loads((self.directory / "stable.json").read_text(encoding="utf-8"))
+        validate_manifest(manifest)
+        self.assertEqual(manifest["channels"]["oss"]["sha256"], self.sha)
+        self.assertEqual(manifest["apkUrl"], "")
+        self.assertNotIn("r2", manifest["channels"])
+
+    def test_r2_failure_keeps_no_stale_manifest(self):
+        self.write_json("stable.json", {"stale": True})
+        with self.assertRaises(OSError):
+            self.run_r2_main(OSError("network"))
+        self.assertFalse((self.directory / "stable.json").exists())
+
+    def test_cf_provider_alias(self):
+        self.run_r2_main(None, provider="cf")
+        validate_manifest(json.loads((self.directory / "stable.json").read_text(encoding="utf-8")))
+
+    def test_unknown_provider_never_falls_back_or_writes_manifest(self):
+        self.write_json("stable.json", {"stale": True})
+        previous = Path.cwd()
+        os.chdir(self.root)
+        try:
+            with patch.dict(os.environ, {"RELEASE_TAG": "v1.0.8", "DOWNLOAD_PROVIDER": "typo"}), \
+                    patch.object(publish, "upload_oss") as transfer:
+                with self.assertRaises(ValueError):
+                    publish.main()
+                transfer.assert_not_called()
+        finally:
+            os.chdir(previous)
         self.assertFalse((self.directory / "stable.json").exists())
 
     def test_manifest_provenance(self):

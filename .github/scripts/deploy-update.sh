@@ -12,4 +12,4 @@ ssh_args=(-i "$key" -o "UserKnownHostsFile=$known_hosts" -o StrictHostKeyCheckin
 remote="/app/public/updates/.stable-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 scp -q -P "$SERVER_PORT" "${ssh_args[@]}" dist/stable.json "root@$SERVER_HOST:$remote"
 ssh -p "$SERVER_PORT" "${ssh_args[@]}" "root@$SERVER_HOST" "python3 - '$remote'" < .github/scripts/deploy_manifest.py
-printf 'GitHub and OSS published; stable manifest updated.\n' >> "$GITHUB_STEP_SUMMARY"
+printf 'GitHub and official storage verified; stable manifest updated.\n' >> "$GITHUB_STEP_SUMMARY"

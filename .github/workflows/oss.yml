@@ -1,4 +1,4 @@
-name: Upload Release to OSS
+name: Upload Release to official storage
 
 on:
   workflow_dispatch:
@@ -27,6 +27,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       GH_TOKEN: ${{ github.token }}
+      DOWNLOAD_PROVIDER: ${{ vars.DOWNLOAD_PROVIDER || 'oss' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,19 +35,36 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
+      - name: Validate selected storage provider
+        run: |
+          case "$DOWNLOAD_PROVIDER" in
+            oss|r2|cf) ;;
+            *) printf '::error::DOWNLOAD_PROVIDER must be oss or r2.\n' >&2; exit 1 ;;
+          esac
       - name: Download and verify published release
         run: python .github/scripts/release_package.py
-      - name: Install OSS SDK
-        run: python -m pip install --disable-pip-version-check oss2==2.19.1
+      - name: Install upload SDKs
+        run: python -m pip install --disable-pip-version-check oss2==2.19.1 boto3==1.43.108
       - name: Prepare upload network
+        if: env.DOWNLOAD_PROVIDER == 'oss'
         run: bash .github/scripts/prepare-oss-network.sh
-      - name: Multipart upload and verify download
+      - name: Multipart upload to OSS and verify download
+        if: env.DOWNLOAD_PROVIDER == 'oss'
         timeout-minutes: 15
         env:
           OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
           OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           OSS_BUCKET: ${{ vars.OSS_BUCKET }}
           OSS_ENDPOINT: ${{ vars.OSS_ENDPOINT }}
+        run: python -u .github/scripts/publish-oss.py
+      - name: Multipart upload to private R2 and verify readback
+        if: env.DOWNLOAD_PROVIDER == 'r2' || env.DOWNLOAD_PROVIDER == 'cf'
+        timeout-minutes: 15
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
         run: python -u .github/scripts/publish-oss.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -56,4 +74,4 @@ jobs:
           retention-days: 30
       - name: Deployment instructions
         run: |
-          printf 'OSS 校验通过。运行 Deploy stable update，oss_run_id 填写 %s。\n' "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          printf '官方存储校验通过。运行 Deploy stable update，oss_run_id 填写 %s。\n' "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"

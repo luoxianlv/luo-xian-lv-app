@@ -96,6 +96,47 @@ def main():
     package, release_notes, github_asset, sha = validate_package(directory, os.environ["RELEASE_TAG"], release)
     apk = directory / package["asset"]
     size = apk.stat().st_size
+    provider = os.environ.get("DOWNLOAD_PROVIDER", "oss").strip().lower() or "oss"
+    if provider not in ("oss", "r2", "cf"):
+        raise ValueError("DOWNLOAD_PROVIDER 只能为 oss 或 r2")
+    object_key = f"luoxianlv/release/{package['versionName']}/{sha}/app-release.apk"
+    if provider in ("r2", "cf"):
+        from publish_r2 import create_client, upload_and_verify as upload_r2
+        client, bucket = create_client()
+        try:
+            transfer_with_retry(lambda: upload_r2(client, bucket, apk, object_key, sha))
+        finally:
+            client.close()
+    else:
+        upload_oss(apk, object_key, sha)
+    manifest = {
+        "enabled": True, "channel": "stable",
+        "latestVersionCode": package["versionCode"], "latestVersionName": package["versionName"],
+        "apkUrl": "", "apkSha256": sha, "apkSize": size,
+        "releaseNotes": release_notes,
+        "mandatory": True, "minSupportedVersionCode": package["versionCode"],
+        "channels": {
+            "oss": {"object": object_key, "sha256": sha, "size": size},
+            "github": {"url": github_asset["browser_download_url"], "assetId": github_asset["id"], "sha256": sha, "size": size},
+        },
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"官方存储上传及回读校验通过（{provider}）：{sha} ({size} bytes)")
+
+
+def transfer_with_retry(transfer):
+    for attempt in range(3):
+        try:
+            transfer()
+            return
+        except Exception as error:
+            print(f"传输第 {attempt + 1} 次失败（{type(error).__name__}）", flush=True)
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
+
+
+def upload_oss(apk, object_key, sha):
     oss2.defaults.connection_pool_size = 4
     endpoint = os.environ["OSS_ENDPOINT"]
     if not endpoint.startswith("https://"):
@@ -109,37 +150,15 @@ def main():
         is_cname=True, connect_timeout=60,
     )
     # APP 与官网统一使用 APK，按内容摘要隔离每次构建。
-    object_key = f"luoxianlv/release/{package['versionName']}/{sha}/app-release.apk"
     # 同一次任务重试复用断点；不同任务不共享上传凭据与断点文件。
     with tempfile.TemporaryDirectory(prefix="oss-upload-") as checkpoint:
         store = oss2.ResumableStore(root=checkpoint)
-        for attempt in range(3):
-            try:
-                upload_and_verify(bucket, download_bucket, apk, object_key, sha, store)
-                break
-            except Exception as error:
-                print(f"传输第 {attempt + 1} 次失败（{type(error).__name__}）", flush=True)
-                if attempt == 2:
-                    raise
-                time.sleep(2 ** attempt)
-    manifest = {
-        "enabled": True, "channel": "stable",
-        "latestVersionCode": package["versionCode"], "latestVersionName": package["versionName"],
-        "apkUrl": "", "apkSha256": sha, "apkSize": size,
-        "releaseNotes": release_notes,
-        "mandatory": True, "minSupportedVersionCode": package["versionCode"],
-        "channels": {
-            "oss": {"object": object_key, "sha256": sha, "size": size},
-            "github": {"url": github_asset["browser_download_url"], "assetId": github_asset["id"], "sha256": sha, "size": size},
-        },
-    }
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"OSS 上传及下载校验通过： {sha} ({size} bytes)")
+        transfer_with_retry(lambda: upload_and_verify(bucket, download_bucket, apk, object_key, sha, store))
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print(f"OSS 发布失败（{type(error).__name__}）；未生成更新清单。", file=sys.stderr)
+        print(f"官方存储发布失败（{type(error).__name__}）；未生成更新清单。", file=sys.stderr)
         sys.exit(1)

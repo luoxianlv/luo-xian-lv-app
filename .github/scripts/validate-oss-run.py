@@ -1,4 +1,4 @@
-"""仅允许部署本仓库主分支中成功完成 OSS 校验的运行产物。"""
+"""仅允许部署本仓库主分支中成功完成官方存储校验的运行产物。"""
 
 import json
 import os
@@ -17,9 +17,9 @@ def validate_run(run, repository):
     if run["repository"]["full_name"] != repository or any(
         run.get(key) != value for key, value in expected.items()
     ):
-        raise ValueError("更新清单必须来自本仓库 main 分支成功的 OSS 工作流")
+        raise ValueError("更新清单必须来自本仓库 main 分支成功的官方存储工作流")
 
 
 if __name__ == "__main__":
     validate_run(json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")), os.environ["GITHUB_REPOSITORY"])
-    print("OSS 运行来源与结果校验通过")
+    print("官方存储运行来源与结果校验通过")

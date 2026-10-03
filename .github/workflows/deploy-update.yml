@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       oss_run_id:
-        description: 成功的 Upload Release to OSS 运行 ID
+        description: 成功的官方存储上传工作流运行 ID
         required: true
         type: string
 
