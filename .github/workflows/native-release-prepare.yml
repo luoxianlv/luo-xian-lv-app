@@ -6,12 +6,12 @@ on:
       version_name:
         description: 候选版本号（只生成验收产物，不发布）
         required: true
-        default: '1.0.10'
+        default: '1.1.0'
         type: string
       version_code:
         description: 候选版本代码（须高于已发布版本）
         required: true
-        default: '17'
+        default: '18'
         type: string
 
 permissions:

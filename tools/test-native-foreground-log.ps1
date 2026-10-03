@@ -12,7 +12,7 @@ $foregroundClasspath=($foregroundInputs+@($foregroundAndroid,$foregroundJunit,$f
 foreach($foregroundInput in $foregroundInputs+@($foregroundAndroid,$foregroundJunit,$foregroundHamcrest)){if(!(Test-Path -LiteralPath $foregroundInput)){throw "Missing frozen compile input: $foregroundInput; no Gradle will run."}}
 $foregroundScratch=Join-Path $foregroundApp ('.local/foreground-log-checks-'+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($foregroundScratch)
-$foregroundSources=@('app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java','app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceColdInstrumentation.java','tools/test-support/NativeForegroundLogEventsTest.java') | ForEach-Object {Join-Path $foregroundApp $_}
+$foregroundSources=@('app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java','app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceColdInstrumentation.java','app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceMatrixPlan.java','tools/test-support/NativeForegroundLogEventsTest.java') | ForEach-Object {Join-Path $foregroundApp $_}
 & javac '-J-Duser.language=en' '-J-Dfile.encoding=UTF-8' --release 17 -encoding UTF-8 -cp $foregroundClasspath -d $foregroundScratch @foregroundSources
 if($LASTEXITCODE-ne0){throw 'Actual cold instrumentation/parser failed standalone compilation.'}
 & java -cp ($foregroundScratch+';'+$foregroundClasspath) org.junit.runner.JUnitCore app.luoxianlv.host.NativeForegroundLogEventsTest
