@@ -17,6 +17,8 @@ with tempfile.TemporaryDirectory(prefix="lxupdate-native-") as temporary:
     args = [str(decoder), str(root / "old"), str(root / "patch"), str(root / "output"), str(len(new))]
     subprocess.run(args, check=True)
     assert (root / "output").read_bytes() == new
+    subprocess.run(args + ["--token-cancellation"], check=True)
+    assert (root / "output").read_bytes() == new
     same_file = args.copy()
     same_file[3] = str(root / "old")
     assert subprocess.run(same_file, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
@@ -28,4 +30,5 @@ with tempfile.TemporaryDirectory(prefix="lxupdate-native-") as temporary:
     (root / "patch").write_bytes(patch + b"trailing")
     assert subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
     assert (root / "old").read_bytes() == old
-    print(f"精确重建 {len(new)} 字节；{len(patch)} 个截断边界及尾随数据全部拒绝；基线未修改。")
+    print(f"精确重建 {len(new)} 字节；启动前取消、迟到 token 和 CAS 清理通过；"
+          f"{len(patch)} 个截断边界及尾随数据全部拒绝；基线未修改。")

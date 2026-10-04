@@ -12,20 +12,25 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicReference;
 
 /** 描述符只读输入、独占输出，worker 崩溃和超时会成为可控的合并失败。 */
 public final class IsolatedPatchMerger implements PatchMerger {
   private final Context context;
   private final long timeoutMillis;
+  private final Runnable descriptorsOpened;
 
   public IsolatedPatchMerger(Context context) {
     this(context, 180000);
   }
 
   public IsolatedPatchMerger(Context context, long timeoutMillis) {
+    this(context, timeoutMillis, () -> {});
+  }
+
+  IsolatedPatchMerger(Context context, long timeoutMillis, Runnable descriptorsOpened) {
     this.context = context.getApplicationContext();
     this.timeoutMillis = timeoutMillis;
+    this.descriptorsOpened = java.util.Objects.requireNonNull(descriptorsOpened);
     if (timeoutMillis < 1000 || timeoutMillis > 180000)
       throw new IllegalArgumentException("合并超时范围无效");
   }
@@ -39,14 +44,12 @@ public final class IsolatedPatchMerger implements PatchMerger {
     SafeFiles.rejectLink(output);
     SafeFiles.directory(output.getParentFile());
     CompletableFuture<IDeltaWorker> connected = new CompletableFuture<>();
-    AtomicReference<IDeltaWorker> worker = new AtomicReference<>();
     long jobToken = System.nanoTime();
     ServiceConnection connection =
         new ServiceConnection() {
           @Override
           public void onServiceConnected(ComponentName name, IBinder binder) {
             IDeltaWorker remote = IDeltaWorker.Stub.asInterface(binder);
-            worker.set(remote);
             connected.complete(remote);
           }
 
@@ -69,18 +72,9 @@ public final class IsolatedPatchMerger implements PatchMerger {
         context.bindService(
             new Intent(context, DeltaWorkerService.class), connection, Context.BIND_AUTO_CREATE);
     if (!bound) throw new IOException("无法启动合并进程");
-    try (AutoCloseable ignored =
-        cancellation.onCancel(
-            () -> {
-              IDeltaWorker remote = worker.get();
-              if (remote != null)
-                try {
-                  remote.cancel(jobToken);
-                } catch (android.os.RemoteException dead) {
-                  /* worker 已退出 */
-                }
-            })) {
-      IDeltaWorker remote = null;
+    IDeltaWorker remote = null;
+    boolean reserved = false;
+    try {
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
       while (remote == null) {
         cancellation.check();
@@ -92,17 +86,34 @@ public final class IsolatedPatchMerger implements PatchMerger {
         }
       }
       cancellation.check();
-      try (ParcelFileDescriptor old =
-              ParcelFileDescriptor.open(base, ParcelFileDescriptor.MODE_READ_ONLY);
-          ParcelFileDescriptor diff =
-              ParcelFileDescriptor.open(patch, ParcelFileDescriptor.MODE_READ_ONLY);
-          ParcelFileDescriptor target =
-              ParcelFileDescriptor.open(
-                  output,
-                  ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_READ_WRITE)) {
-        int result = remote.merge(old, diff, target, targetSize, timeoutMillis, jobToken);
+      if (remote.reserve(jobToken, timeoutMillis) != 0) throw new IOException("合并进程已有任务");
+      reserved = true;
+      IDeltaWorker owned = remote;
+      // 先由 worker 保留 token，再注册取消；注册会补发保留期间已发生的取消。
+      try (AutoCloseable ignored =
+          cancellation.onCancel(
+              () -> {
+                try {
+                  owned.cancel(jobToken);
+                } catch (android.os.RemoteException dead) {
+                  /* worker 已退出 */
+                }
+              })) {
         cancellation.check();
-        if (result != 0) throw new IOException("增量合并失败：" + result);
+        try (ParcelFileDescriptor old =
+                ParcelFileDescriptor.open(base, ParcelFileDescriptor.MODE_READ_ONLY);
+            ParcelFileDescriptor diff =
+                ParcelFileDescriptor.open(patch, ParcelFileDescriptor.MODE_READ_ONLY);
+            ParcelFileDescriptor target =
+                ParcelFileDescriptor.open(
+                    output,
+                    ParcelFileDescriptor.MODE_CREATE | ParcelFileDescriptor.MODE_READ_WRITE)) {
+          descriptorsOpened.run();
+          cancellation.check();
+          int result = remote.merge(old, diff, target, targetSize, timeoutMillis, jobToken);
+          cancellation.check();
+          if (result != 0) throw new IOException("增量合并失败：" + result);
+        }
       }
     } catch (Cancellation.CancelledException cancelled) {
       throw cancelled;
@@ -118,9 +129,17 @@ public final class IsolatedPatchMerger implements PatchMerger {
       cancellation.check();
       throw new IOException("合并进程失败", failure);
     } finally {
-      worker.set(null);
-      context.unbindService(connection);
-      cancellation.awaitClosures();
+      try {
+        if (reserved)
+          try {
+            remote.release(jobToken);
+          } catch (android.os.RemoteException dead) {
+            /* worker 已退出，不能再持有保留任务 */
+          }
+      } finally {
+        context.unbindService(connection);
+        cancellation.awaitClosures();
+      }
     }
   }
 }

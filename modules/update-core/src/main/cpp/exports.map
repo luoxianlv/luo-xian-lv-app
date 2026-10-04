@@ -2,5 +2,6 @@
     global:
         Java_app_luoxianlv_update_NativePatch_merge;
         Java_app_luoxianlv_update_NativePatch_cancel;
+        Java_app_luoxianlv_update_NativePatch_finish;
     local: *;
 };

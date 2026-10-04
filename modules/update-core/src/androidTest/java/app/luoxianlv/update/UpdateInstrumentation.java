@@ -55,6 +55,7 @@ public final class UpdateInstrumentation extends Instrumentation {
       }
       checkGenericOutputAliases(base, patch, target.length(), baseDigest);
       checkDescriptorGuards(base, patch, output, target.length());
+      checkStartupCancellation(base, patch, output, target.length());
       File stress = new File(root, "stress.hpatch");
       try (InputStream input = getContext().getAssets().open("w26/stress.hpatch");
           FileOutputStream out = new FileOutputStream(stress)) {
@@ -68,7 +69,7 @@ public final class UpdateInstrumentation extends Instrumentation {
       Files.delete(root.toPath());
       report.putString(
           "stream",
-          "隔离 FD 精确解码、截断拒绝、输入只读/输出别名防护、运行中取消及 worker 崩溃恢复通过；旧对象不变，整组耗时="
+          "隔离 FD 精确解码、截断拒绝、输入只读/输出别名防护、启动边界取消、token 隔离、运行中取消及 worker 崩溃恢复通过；旧对象不变，整组耗时="
               + (System.nanoTime() - started) / 1000000
               + "ms\n"
               + measured
@@ -131,7 +132,7 @@ public final class UpdateInstrumentation extends Instrumentation {
       String pid = workerPid();
       String before = shell("/system/xbin/su 0 cat /proc/" + pid + "/status");
       long start = System.nanoTime();
-      int result = worker.remote.merge(old, diff, out, size, 180000, System.nanoTime());
+      int result = worker.merge(old, diff, out, size);
       long elapsed = (System.nanoTime() - start) / 1000000;
       if (result != 0) throw new AssertionError("测量合并失败：" + result);
       String after = shell("/system/xbin/su 0 cat /proc/" + pid + "/status");
@@ -177,8 +178,7 @@ public final class UpdateInstrumentation extends Instrumentation {
         android.os.ParcelFileDescriptor out =
             android.os.ParcelFileDescriptor.open(
                 output, android.os.ParcelFileDescriptor.MODE_READ_WRITE)) {
-      if (worker.remote.merge(writableBase, diff, out, size, 180000, System.nanoTime()) == 0)
-        throw new AssertionError("可写基线 FD 未拒绝");
+      if (worker.merge(writableBase, diff, out, size) == 0) throw new AssertionError("可写基线 FD 未拒绝");
     }
     try (Worker worker = new Worker(getTargetContext());
         android.os.ParcelFileDescriptor old =
@@ -190,9 +190,80 @@ public final class UpdateInstrumentation extends Instrumentation {
         android.os.ParcelFileDescriptor sameFile =
             android.os.ParcelFileDescriptor.open(
                 base, android.os.ParcelFileDescriptor.MODE_READ_WRITE)) {
-      if (worker.remote.merge(old, diff, sameFile, size, 180000, System.nanoTime()) == 0)
-        throw new AssertionError("旧包作为输出未拒绝");
+      if (worker.merge(old, diff, sameFile, size) == 0) throw new AssertionError("旧包作为输出未拒绝");
     }
+  }
+
+  private void checkStartupCancellation(File base, File patch, File output, long size)
+      throws Exception {
+    Files.deleteIfExists(output.toPath());
+    Cancellation early = new Cancellation();
+    early.cancel();
+    try {
+      new IsolatedPatchMerger(getTargetContext()).merge(base, patch, output, size, early);
+      throw new AssertionError("启动前取消未拒绝");
+    } catch (Cancellation.CancelledException expected) {
+      if (output.exists()) throw new AssertionError("启动前取消创建了输出");
+    }
+    Cancellation opened = new Cancellation();
+    try {
+      new IsolatedPatchMerger(getTargetContext(), 180000, opened::cancel)
+          .merge(base, patch, output, size, opened);
+      throw new AssertionError("打开 FD 后取消未拒绝");
+    } catch (Cancellation.CancelledException expected) {
+      if (output.length() != 0) throw new AssertionError("打开 FD 后取消仍启动了合并");
+    }
+    // FD 打开失败也必须 release 保留任务；同一个 worker 之后仍可工作。
+    try {
+      new IsolatedPatchMerger(getTargetContext())
+          .merge(
+              base,
+              new File(patch.getParentFile(), "missing.hpatch"),
+              output,
+              size,
+              new Cancellation());
+      throw new AssertionError("缺少补丁未拒绝");
+    } catch (java.io.IOException expected) {
+      /* 继续检验保留 token 已释放 */
+    }
+    try (Worker worker = new Worker(getTargetContext());
+        android.os.ParcelFileDescriptor old =
+            android.os.ParcelFileDescriptor.open(
+                base, android.os.ParcelFileDescriptor.MODE_READ_ONLY);
+        android.os.ParcelFileDescriptor diff =
+            android.os.ParcelFileDescriptor.open(
+                patch, android.os.ParcelFileDescriptor.MODE_READ_ONLY);
+        android.os.ParcelFileDescriptor out =
+            android.os.ParcelFileDescriptor.open(
+                output, android.os.ParcelFileDescriptor.MODE_READ_WRITE)) {
+      long cancelledToken = System.nanoTime(), other = cancelledToken + 1;
+      if (worker.remote.reserve(cancelledToken, 180000) != 0) throw new AssertionError("预取消任务未保留");
+      worker.remote.release(other);
+      if (worker.remote.reserve(other, 180000) == 0) throw new AssertionError("无关 release 释放了当前任务");
+      worker.remote.cancel(cancelledToken);
+      worker.remote.cancel(other);
+      if (worker.remote.merge(old, diff, out, size, 180000, cancelledToken) != -4)
+        throw new AssertionError("保留后取消丢失，或被无关 token 覆盖");
+      if (output.length() != 0) throw new AssertionError("保留后取消仍写入了输出");
+      if (worker.merge(old, diff, out, size) != 0) throw new AssertionError("预取消污染了后续正常任务");
+      worker.remote.cancel(cancelledToken); // idle 时迟到的旧 token 必须忽略。
+      long next = System.nanoTime();
+      if (worker.remote.reserve(next, 180000) != 0) throw new AssertionError("后续任务未保留");
+      worker.remote.cancel(cancelledToken);
+      if (worker.remote.merge(old, diff, out, size, 180000, next) != 0)
+        throw new AssertionError("旧 token 的迟到取消影响了新任务");
+      long abandoned = System.nanoTime();
+      if (worker.remote.reserve(abandoned, 180000) != 0) throw new AssertionError("待释放任务未保留");
+      worker.remote.cancel(abandoned);
+      worker.remote.release(abandoned);
+      if (worker.merge(old, diff, out, size) != 0) throw new AssertionError("未进入 merge 的任务未释放");
+    }
+    ArtifactVerifier.verify(
+        output,
+        size,
+        ArtifactVerifier.sha256(
+            new File(base.getParentFile(), "new.bin"), new Cancellation(), Progress.NONE),
+        new Cancellation());
   }
 
   private void checkCancel(File base, File patch, File output) throws Exception {
@@ -307,6 +378,22 @@ public final class UpdateInstrumentation extends Instrumentation {
           connection,
           android.content.Context.BIND_AUTO_CREATE)) throw new AssertionError("无法绑定测试工作进程");
       remote = connected.get(15, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    int merge(
+        android.os.ParcelFileDescriptor base,
+        android.os.ParcelFileDescriptor patch,
+        android.os.ParcelFileDescriptor output,
+        long size)
+        throws Exception {
+      long token = System.nanoTime();
+      int reserved = remote.reserve(token, 180000);
+      if (reserved != 0) throw new AssertionError("测试合并任务未保留：" + reserved);
+      try {
+        return remote.merge(base, patch, output, size, 180000, token);
+      } finally {
+        remote.release(token);
+      }
     }
 
     @Override

@@ -19,6 +19,23 @@ import org.junit.Test;
 
 public final class UpdateCoreTest {
   @Test
+  public void cancellationBeforeReservedJobHookRegistrationIsDeliveredOnce() throws Exception {
+    Cancellation cancellation = new Cancellation();
+    java.util.concurrent.atomic.AtomicInteger deliveries =
+        new java.util.concurrent.atomic.AtomicInteger();
+    // reserve RPC 期间用户已经取消；注册后必须把取消传给已保留的 worker。
+    cancellation.cancel();
+    try (AutoCloseable ignored = cancellation.onCancel(deliveries::incrementAndGet)) {
+      cancellation.awaitClosures();
+      assertEquals(1, deliveries.get());
+      assertThrows(Cancellation.CancelledException.class, cancellation::check);
+    }
+    cancellation.cancel();
+    cancellation.awaitClosures();
+    assertEquals(1, deliveries.get());
+  }
+
+  @Test
   public void authenticationPrecedesParsingAndFailureCannotFallback() throws Exception {
     SignedDelivery invalid =
         new SignedDelivery(

@@ -15,9 +15,29 @@ import java.util.concurrent.atomic.AtomicLong;
 /** 无网络权限的隔离进程，仅持有宿主显式授予的三个描述符。 */
 public final class DeltaWorkerService extends Service {
   private final AtomicLong active = new AtomicLong();
+  private final Object jobLock = new Object();
+  private boolean merging, cancelled;
+  private long reservedTimeout;
+  private java.util.concurrent.ScheduledFuture<?> alarm;
   private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor();
   private final IDeltaWorker.Stub binder =
       new IDeltaWorker.Stub() {
+        @Override
+        public int reserve(long token, long timeoutMillis) {
+          if (token == 0 || timeoutMillis < 1000 || timeoutMillis > 180000) return -1;
+          synchronized (jobLock) {
+            if (!active.compareAndSet(0, token)) return -2;
+            merging = false;
+            cancelled = false;
+            reservedTimeout = timeoutMillis;
+            // 保留后尚未开始 merge 的异常客户端也不能永久占用 worker。
+            alarm =
+                watchdog.schedule(
+                    () -> killOwned(token), timeoutMillis + 2000, TimeUnit.MILLISECONDS);
+            return 0;
+          }
+        }
+
         @Override
         public int merge(
             ParcelFileDescriptor base,
@@ -26,49 +46,71 @@ public final class DeltaWorkerService extends Service {
             long targetSize,
             long timeoutMillis,
             long token) {
-          if (base == null
-              || patch == null
-              || output == null
-              || targetSize <= 0
-              || targetSize > 2L * 1024 * 1024 * 1024
-              || timeoutMillis < 1000
-              || timeoutMillis > 180000
-              || token == 0) return -1;
-          if (!active.compareAndSet(0, token)) return -2;
-          // 原生库即使遇到无法返回的异常，也只终止隔离工作进程。
-          java.util.concurrent.ScheduledFuture<?> alarm =
-              watchdog.schedule(
-                  () -> {
-                    if (active.get() == token) Process.killProcess(Process.myPid());
-                  },
-                  timeoutMillis + 2000,
-                  TimeUnit.MILLISECONDS);
+          boolean started = false;
+          // 所有参数拒绝、忙碌和已取消分支也必须关闭 Binder 转交的 FD。
           try (base;
               patch;
               output) {
+            if (base == null
+                || patch == null
+                || output == null
+                || targetSize <= 0
+                || targetSize > 2L * 1024 * 1024 * 1024
+                || timeoutMillis < 1000
+                || timeoutMillis > 180000
+                || token == 0) return -1;
+            synchronized (jobLock) {
+              if (active.get() != token || merging || reservedTimeout != timeoutMillis) return -2;
+              merging = true;
+              started = true;
+              if (cancelled) return -4;
+            }
             Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
             return NativePatch.merge(
-                base.getFd(), patch.getFd(), output.getFd(), targetSize, timeoutMillis);
+                base.getFd(), patch.getFd(), output.getFd(), targetSize, timeoutMillis, token);
           } catch (IOException | RuntimeException failure) {
             return -3;
           } finally {
-            active.compareAndSet(token, 0);
-            alarm.cancel(false);
+            if (started)
+              synchronized (jobLock) {
+                finishOwned(token);
+              }
           }
         }
 
         @Override
         public void cancel(long token) {
-          if (token == 0 || active.get() != token) return;
-          NativePatch.cancel();
-          watchdog.schedule(
-              () -> {
-                if (active.get() == token) Process.killProcess(Process.myPid());
-              },
-              2000,
-              TimeUnit.MILLISECONDS);
+          synchronized (jobLock) {
+            // idle、迟到或另一个任务的 token 都不留下预取消状态。
+            if (token == 0 || active.get() != token || cancelled) return;
+            cancelled = true;
+            NativePatch.cancel(token);
+            watchdog.schedule(() -> killOwned(token), 2000, TimeUnit.MILLISECONDS);
+          }
+        }
+
+        @Override
+        public void release(long token) {
+          synchronized (jobLock) {
+            if (active.get() == token && !merging) finishOwned(token);
+          }
         }
       };
+
+  private void killOwned(long token) {
+    synchronized (jobLock) {
+      if (active.get() == token) Process.killProcess(Process.myPid());
+    }
+  }
+
+  private void finishOwned(long token) {
+    if (!active.compareAndSet(token, 0)) return;
+    try {
+      NativePatch.finish(token);
+    } finally {
+      alarm.cancel(false);
+    }
+  }
 
   @Override
   public IBinder onBind(Intent intent) {
