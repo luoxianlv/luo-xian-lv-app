@@ -69,6 +69,9 @@ class FloatingControls(private val service: PlaybackSession) {
     private var displayedGeometry: FloatingDisplayGeometry? = null
     private var pendingGeometry: FloatingDisplayGeometry? = null
     private val applyGeometry = Runnable { applyDisplayGeometry() }
+    private val showWindow = Runnable {
+        if (!destroyed && displayRequested && root == null) render(expanded)
+    }
     var revision = 0L
         private set
 
@@ -137,7 +140,9 @@ class FloatingControls(private val service: PlaybackSession) {
         if (root != null) return
         val open = restoredExpanded ?: false
         restoredExpanded = null
-        handler.post { if (displayRequested && root == null) render(open) }
+        expanded = open
+        handler.removeCallbacks(showWindow)
+        handler.post(showWindow)
     }
 
     fun hide() {
@@ -151,6 +156,7 @@ class FloatingControls(private val service: PlaybackSession) {
         revision++
         cancelPanelPrewarm()
         handler.removeCallbacks(applyGeometry)
+        handler.removeCallbacks(showWindow)
         pendingGeometry = null
         displayedGeometry = null
         touching = false
@@ -164,6 +170,7 @@ class FloatingControls(private val service: PlaybackSession) {
         handler.removeCallbacks(tick)
         root?.let { view -> runCatching { wm.removeView(view) } }
         root = null
+        params = null
         panel = null
     }
 
@@ -244,16 +251,30 @@ class FloatingControls(private val service: PlaybackSession) {
             )
         layout.x = position.x
         layout.y = position.y
-        try {
-            wm.updateViewLayout(view, layout)
+        if (updateWindow(view, layout)) {
             displayedGeometry = geometry
             if (updateAnchor) {
                 x = position.x
                 y = position.y
             }
-        } catch (_: IllegalArgumentException) {
-            // 系统已移除窗口时才重新挂载，普通转屏保留现有内容与触摸状态。
-            render(expanded)
+        }
+    }
+
+    /** 窗口被系统回收时先结束旧手势和动画，再排队恢复，避免在回调栈中重建。 */
+    private fun updateWindow(view: View, layout: WindowManager.LayoutParams): Boolean {
+        if (root !== view) return false
+        return try {
+            wm.updateViewLayout(view, layout)
+            true
+        } catch (error: IllegalArgumentException) {
+            AppLog.w("悬浮窗", "系统窗口已失效，重新挂载播放器", error)
+            val requested = displayRequested
+            detachWindow()
+            if (requested && !destroyed) {
+                displayRequested = true
+                handler.post(showWindow)
+            }
+            false
         }
     }
 
@@ -334,7 +355,7 @@ class FloatingControls(private val service: PlaybackSession) {
             root = view
             displayedGeometry = geometry
             showRetries = 0
-            handler.post(tick)
+            if (open) handler.post(tick)
             if (!open) preparePanelWhenIdle()
         } catch (_: WindowManager.BadTokenException) {
             root = null
@@ -432,7 +453,8 @@ class FloatingControls(private val service: PlaybackSession) {
                 PlaybackBridge.isEnabled(service) &&
                 ++showRetries <= 3
         ) {
-            handler.postDelayed({ if (displayRequested && root == null) render(expanded) }, 500)
+            handler.removeCallbacks(showWindow)
+            handler.postDelayed(showWindow, 500)
         } else {
             // 重试也没挂上：认输并把显示意图清掉，
             // 否则 [isVisible] 会一直报「运行中」，界面上却什么都没有。
@@ -492,7 +514,7 @@ class FloatingControls(private val service: PlaybackSession) {
                                     0,
                                     (bounds.height() - (root?.height ?: 0)).coerceAtLeast(0),
                                 )
-                        root?.let { wm.updateViewLayout(it, p) }
+                        root?.let { updateWindow(it, p) }
                     }
                     true
                 }
@@ -560,7 +582,7 @@ class FloatingControls(private val service: PlaybackSession) {
                     if (root !== view || !view.isAttachedToWindow) return@addUpdateListener
                     p.x = (startX + (targetX - startX) * fraction).toInt()
                     view.alpha = startAlpha + (targetAlpha - startAlpha) * fraction
-                    wm.updateViewLayout(view, p)
+                    updateWindow(view, p)
                 }
                 start()
             }
@@ -595,24 +617,29 @@ class FloatingControls(private val service: PlaybackSession) {
         if (root != null) {
             panelHiddenForPicker = true
             handler.removeCallbacks(tick)
-            root?.let { wm.removeView(it) }
+            root?.let { runCatching { wm.removeView(it) } }
             root = null
         }
         val opened =
-            playlistWindow.show(
-                songs = songs,
-                selectedId = service.song.id,
-                palette = palette,
-                screenBounds = service::screenBounds,
-                onSelect = { song ->
-                    service.select(song)
-                    dismissPlaylist()
-                    refresh()
-                },
-                onDismiss = ::dismissPlaylist,
-            )
+            try {
+                playlistWindow.show(
+                    songs = songs,
+                    selectedId = service.song.id,
+                    palette = palette,
+                    screenBounds = service::screenBounds,
+                    onSelect = { song ->
+                        service.select(song)
+                        dismissPlaylist()
+                        refresh()
+                    },
+                    onDismiss = ::dismissPlaylist,
+                )
+            } catch (error: Exception) {
+                AppLog.w("悬浮窗", "选歌窗口未能打开，恢复播放器", error)
+                false
+            }
         if (opened) displayedGeometry = service.floatingGeometry()
-        if (!opened) panelHiddenForPicker = false
+        if (!opened) dismissPlaylist()
     }
 
     private fun dismissPlaylist() {

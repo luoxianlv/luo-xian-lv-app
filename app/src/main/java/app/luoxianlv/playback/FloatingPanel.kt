@@ -225,7 +225,7 @@ internal class FloatingPanel(
     }
 
     fun refresh() {
-        title?.text = service.song.title
+        title?.let { if (it.text.toString() != service.song.title) it.text = service.song.title }
         if (!speedTracking) {
             val speed = ((service.speed.coerceIn(.5f, 2f) - .5f) * 20).roundToInt()
             speedSlider?.let { if (it.progress != speed) it.progress = speed }
@@ -233,8 +233,11 @@ internal class FloatingPanel(
         refreshStatus()
         play?.apply {
             val pending = service.playing || service.waitingToPlay
-            setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)
-            contentDescription = if (pending) "暂停" else "播放"
+            val description = if (pending) "暂停" else "播放"
+            if (contentDescription?.toString() != description) {
+                setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)
+                contentDescription = description
+            }
         }
         progress?.update(service.positionMs, service.durationMs)
     }

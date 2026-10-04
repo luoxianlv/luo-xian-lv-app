@@ -8,6 +8,7 @@ import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import app.luoxianlv.diagnostics.AppLog
 import app.luoxianlv.library.Song
 import app.luoxianlv.playback.PlayerUi.dp
 
@@ -122,9 +123,17 @@ internal class FloatingPlaylistWindow(
         clear()
         current?.let {
             // 先收起键盘再移除窗口，避免输入法留在游戏画面上。
-            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
-                ?.hideSoftInputFromWindow(current.windowToken, 0)
-            windows.removeView(current)
+            try {
+                (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                    ?.hideSoftInputFromWindow(current.windowToken, 0)
+            } catch (error: RuntimeException) {
+                AppLog.w("悬浮窗", "收起选歌键盘失败，继续移除窗口", error)
+            }
+            try {
+                windows.removeView(current)
+            } catch (error: RuntimeException) {
+                AppLog.w("悬浮窗", "选歌窗口已失效，已清理本地引用", error)
+            }
         }
     }
 }

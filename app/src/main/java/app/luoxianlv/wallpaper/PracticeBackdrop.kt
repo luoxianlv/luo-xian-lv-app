@@ -139,7 +139,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                             BusinessJobs.post(
                                 android.os.Handler(android.os.Looper.getMainLooper())
                             ) {
-                                if (!closed) rejectOfficial(error)
+                                if (!closed && web === browser) rejectOfficial(error)
                             }
                         }
                     }
@@ -149,14 +149,19 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                     view: WebView,
                     detail: RenderProcessGoneDetail,
                 ): Boolean {
-                    fail("渲染进程退出：崩溃=${detail.didCrash()}，优先级=${detail.rendererPriorityAtExit()}")
+                    if (web === view)
+                        fail(
+                            "渲染进程退出：崩溃=${detail.didCrash()}，优先级=${detail.rendererPriorityAtExit()}",
+                            rendererGone = true,
+                        )
                     return true
                 }
             }
         browser.webChromeClient =
             object : WebChromeClient() {
                 override fun onReceivedTitle(view: WebView?, title: String?) {
-                    if (title == "wallpaper:ready" && !closed && renderState == "loading") {
+                    if (view == null || view !== web || closed) return
+                    if (title == "wallpaper:ready" && renderState == "loading") {
                         renderState = "ready"
                         AppLog.i("壁纸", "首帧已就绪")
                         (posterView.drawable as? Animatable)?.stop()
@@ -169,6 +174,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
                 }
 
                 override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    if (closed || web !== browser) return true
                     if (
                         message.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
                             (message.message().startsWith("Uncaught") ||
@@ -203,12 +209,12 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
         }
     }
 
-    private fun fail(reason: String) {
+    private fun fail(reason: String, rendererGone: Boolean = false) {
         if (closed || renderState == "error") return
         val wasPlaying = renderState == "ready"
         renderState = "error"
         AppLog.w("壁纸", "渲染失败，切换到预览背景：$reason")
-        releaseWeb()
+        releaseWeb(rendererGone)
         previewScope.launch {
             val preview = BusinessJobs.io { WallpaperPreview.load(context, project) }
             if (!closed && renderState == "error") {
@@ -233,14 +239,18 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
         fail("已声明官方资源失败")
     }
 
-    private fun releaseWeb() {
-        web?.let {
-            removeView(it)
-            it.stopLoading()
-            it.onPause()
-            it.destroy()
-        }
+    private fun releaseWeb(rendererGone: Boolean = false) {
+        val browser = web ?: return
+        // 清引用后再调用厂商代码，迟到回调或重入 close 不会再次操作已失效实例。
         web = null
+        cleanupWallpaperRenderer(
+            rendererGone,
+            remove = { removeView(browser) },
+            stop = browser::stopLoading,
+            pause = browser::onPause,
+            destroy = browser::destroy,
+            onFailure = { step, error -> AppLog.w("壁纸", "释放壁纸实例失败：$step", error) },
+        )
     }
 
     fun suspendRendering() {

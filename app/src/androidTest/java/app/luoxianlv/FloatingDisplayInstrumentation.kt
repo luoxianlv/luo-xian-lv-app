@@ -120,6 +120,10 @@ class FloatingDisplayInstrumentation : Instrumentation() {
                     connection.screenBounds().height() > connection.screenBounds().width() &&
                     !floating.interacting
             }
+            main {
+                val handler = value(floating, "handler") as android.os.Handler
+                check(!handler.hasCallbacks(value(floating, "tick") as Runnable)) { "收起气泡仍在周期刷新" }
+            }
             val listener = value(session, "displayListener") as DisplayManager.DisplayListener
             var bubble: View? = null
             var anchorX = 0
@@ -187,6 +191,50 @@ class FloatingDisplayInstrumentation : Instrumentation() {
                 await("再次展开保留面板") { value(floating, "root") === panel }
             }
             main {
+                val title = value(panel!!, "title") as android.widget.TextView
+                var titleWrites = 0
+                val watcher =
+                    object : android.text.TextWatcher {
+                        override fun beforeTextChanged(
+                            s: CharSequence?,
+                            start: Int,
+                            count: Int,
+                            after: Int,
+                        ) {}
+
+                        override fun onTextChanged(
+                            s: CharSequence?,
+                            start: Int,
+                            before: Int,
+                            count: Int,
+                        ) {
+                            titleWrites++
+                        }
+
+                        override fun afterTextChanged(s: android.text.Editable?) {}
+                    }
+                title.addTextChangedListener(watcher)
+                repeat(100) { floating.refresh() }
+                title.removeTextChangedListener(watcher)
+                check(titleWrites == 0) { "静态标题被重复设置 $titleWrites 次" }
+                val windows = value(floating, "wm") as WindowManager
+                val layout = value(floating, "params") as WindowManager.LayoutParams
+                windows.removeViewImmediate(panel!!)
+                val updated =
+                    floating.javaClass
+                        .getDeclaredMethod(
+                            "updateWindow",
+                            View::class.java,
+                            WindowManager.LayoutParams::class.java,
+                        )
+                        .apply { isAccessible = true }
+                        .invoke(floating, panel!!, layout) as Boolean
+                check(!updated && value(floating, "root") == null && floating.isVisible)
+            }
+            await("系统移除后恢复原面板") {
+                value(floating, "root") === panel && panel!!.isAttachedToWindow
+            }
+            main {
                 checkNotNull(described(panel!!, "展开倍速设置")).performClick()
                 host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             }
@@ -222,6 +270,34 @@ class FloatingDisplayInstrumentation : Instrumentation() {
                     .getDeclaredMethod("dismissPlaylist")
                     .apply { isAccessible = true }
                     .invoke(floating)
+                val windowsField =
+                    playlist.javaClass.getDeclaredField("windows").apply { isAccessible = true }
+                val realWindows = windowsField.get(playlist) as WindowManager
+                val failingWindows =
+                    java.lang.reflect.Proxy.newProxyInstance(
+                        WindowManager::class.java.classLoader,
+                        arrayOf(WindowManager::class.java),
+                    ) { _, method, args ->
+                        if (method.name == "addView")
+                            throw WindowManager.BadTokenException("injected expired token")
+                        try {
+                            method.invoke(realWindows, *(args ?: emptyArray()))
+                        } catch (error: java.lang.reflect.InvocationTargetException) {
+                            throw error.targetException
+                        }
+                    }
+                try {
+                    windowsField.set(playlist, failingWindows)
+                    floating.javaClass
+                        .getDeclaredMethod("showPlaylist", List::class.java)
+                        .apply { isAccessible = true }
+                        .invoke(floating, listOf(session.song))
+                    check(value(floating, "root") != null && value(playlist, "view") == null) {
+                        "选歌窗口打开失败后播放器未恢复"
+                    }
+                } finally {
+                    windowsField.set(playlist, realWindows)
+                }
                 host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             }
             await("真实几何变化已排队") { value(floating, "pendingGeometry") != null }
@@ -236,10 +312,14 @@ class FloatingDisplayInstrumentation : Instrumentation() {
                     "关闭悬浮窗未释放面板或预备任务"
                 }
                 check(!floating.isVisible && !floating.interacting) { "隐藏后仍有待处理窗口" }
+                val handler = value(floating, "handler") as android.os.Handler
+                check(!handler.hasCallbacks(value(floating, "showWindow") as Runnable)) {
+                    "隐藏后仍有重新挂载任务"
+                }
             }
             result.putString(
                 "stream",
-                "通过：200 次非几何通知零重建；三轮展开收起与倍速切换复用面板并保留气泡锚点；横竖屏保留面板与选歌搜索；隐藏取消布局并释放缓存。\n",
+                "通过：200 次非几何通知零重建；三轮展开收起与倍速切换复用面板并保留气泡锚点；横竖屏保留面板与选歌搜索；隐藏取消布局并释放缓存；收起时无周期刷新；100次刷新不重复设置标题；系统移除后恢复原面板；选歌窗口令牌失败后恢复播放器。\n",
             )
             success = true
         } catch (error: Throwable) {
