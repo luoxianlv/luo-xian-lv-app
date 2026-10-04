@@ -9,8 +9,11 @@ public final class LuoXianLvApp extends Application {
   @Override
   public void onCreate() {
     super.onCreate();
+    if (app.luoxianlv.update.DeltaWorkerService.isPatchProcess(this)) return;
     if (app.luoxianlv.host.RecoveryActivity.isRecoveryProcess(this)) return;
     CrashLog.install(this, Bootstrap::recordCrash);
+    app.luoxianlv.hot.ApkUpdateBridge.install(
+        this, Bootstrap::usageChanged, Bootstrap::ordinaryUpdateIdle);
     Bootstrap.start(this);
   }
 

@@ -91,6 +91,18 @@ public final class PreparationSpace {
       String residentRuntime,
       Map<String, File> local)
       throws Exception {
+    beforeDownload(store, downloads, manifest, residentRuntime, local, Collections.emptyList());
+  }
+
+  /** 补丁暂存与完整目标、对象库复制及资源展开共同检查，不能重复使用同卷空闲空间。 */
+  public void beforeDownload(
+      ContentStore store,
+      ObjectDownloader downloads,
+      HotManifest manifest,
+      String residentRuntime,
+      Map<String, File> local,
+      List<Demand> transport)
+      throws Exception {
     Map<String, File> sources = new HashMap<>();
     List<Demand> needs = new ArrayList<>();
     for (var entry : manifest.objects.entrySet()) {
@@ -119,6 +131,7 @@ public final class PreparationSpace {
       }
     }
     needs.addAll(materialization(store, manifest, sources, residentRuntime));
+    needs.addAll(transport);
     admit(needs);
   }
 

@@ -19,6 +19,7 @@ public final class HotApiClient {
   private final URI origin;
   private final boolean localTest;
   private boolean registered;
+  private boolean byteDeltaCapable;
   private int connectTimeout = 10000, readTimeout = 15000;
 
   /** 冷启动只给已缓存组合较短联网等待；普通后台检查随后恢复默认超时。 */
@@ -146,15 +147,21 @@ public final class HotApiClient {
     this(origin, installation, hostContract, hostIdentity, localTest, 0);
   }
 
-  public HotApiClient(URI origin, InstallationIdentity installation, long hostContract,
-      String hostIdentity, boolean localTest, long appVersionCode) {
+  public HotApiClient(
+      URI origin,
+      InstallationIdentity installation,
+      long hostContract,
+      String hostIdentity,
+      boolean localTest,
+      long appVersionCode) {
     HttpObjectSource.validateUrl(origin, localTest);
     StrictJson.require(
         (origin.getRawPath().isEmpty() || origin.getRawPath().equals("/"))
             && origin.getRawQuery() == null
             && hostContract > 0
             && hostContract <= Integer.MAX_VALUE
-            && appVersionCode >= 0 && appVersionCode <= Integer.MAX_VALUE
+            && appVersionCode >= 0
+            && appVersionCode <= Integer.MAX_VALUE
             && HotManifest.validHash(hostIdentity),
         "API 来源或宿主身份无效");
     this.origin = origin;
@@ -205,25 +212,33 @@ public final class HotApiClient {
   public synchronized void register(UpdateCancellation cancellation) throws Exception {
     cancellation.check();
     if (registered) return;
+    Map<String, Object> registration =
+        JsonWire.fields(
+            "installationId",
+            installation.id,
+            "secret",
+            installation.secret,
+            "applicationId",
+            installation.applicationId,
+            "environment",
+            installation.environment,
+            "hostContract",
+            hostContract,
+            "hostIdentity",
+            hostIdentity,
+            "appVersionCode",
+            appVersionCode);
+    if (byteDeltaCapable) registration.put("deltaCapability", HotByteDeltaPlan.ALGORITHM);
     Response response =
         post(
             "/installations",
-            JsonWire.fields(
-                "installationId",
-                installation.id,
-                "secret",
-                installation.secret,
-                "applicationId",
-                installation.applicationId,
-                "environment",
-                installation.environment,
-                "hostContract",
-                hostContract,
-                "hostIdentity",
-                hostIdentity,
-                "appVersionCode",
-                appVersionCode),
-            "register-" + installation.id + "-" + hostIdentity.substring(0, 16) + "-" + appVersionCode,
+            registration,
+            "register-"
+                + installation.id
+                + "-"
+                + hostIdentity.substring(0, 16)
+                + "-"
+                + appVersionCode,
             false,
             cancellation);
     response.value.only("installationId", "credentialFormat", "scope");
@@ -232,6 +247,75 @@ public final class HotApiClient {
             && response.value.string("scope").equals("installation"),
         "服务端安装身份不匹配");
     registered = true;
+  }
+
+  public synchronized void enableByteDeltas() {
+    if (byteDeltaCapable) return;
+    StrictJson.require(!registered, "字节增量能力必须在安装登记前声明");
+    byteDeltaCapable = true;
+  }
+
+  /** 仅取得适用此安装的可选传输说明，目标仍由正常签名快照决定。 */
+  public StrictJson.Obj byteDeltas(
+      SignedSnapshot snapshot, java.util.Collection<String> bases, UpdateCancellation cancellation)
+      throws Exception {
+    if (!byteDeltaCapable || bases.isEmpty()) return null;
+    StrictJson.require(
+        bases.size() <= 5000 && bases.stream().allMatch(HotManifest::validHash), "字节增量基线列表无效");
+    register(cancellation);
+    Response response =
+        post(
+            "/installations/" + installation.id + "/byte-deltas",
+            JsonWire.fields(
+                "snapshotId",
+                snapshot.manifest.snapshotId,
+                "baseHashes",
+                new java.util.ArrayList<>(bases)),
+            "",
+            true,
+            cancellation);
+    response.value.only("byteDeltaV1", "sources");
+    StrictJson.require(
+        response.value.has("byteDeltaV1") == response.value.has("sources"), "字节增量来源不完整");
+    return response.value.has("byteDeltaV1") ? response.value : null;
+  }
+
+  public HttpObjectSource bytePatch(String snapshot, String patchHash, long size, String location) {
+    URI expected =
+        origin.resolve("/api/hot/v2/byte-deltas/" + patchHash + "?snapshotId=" + snapshot);
+    StrictJson.require(
+        HotManifest.validHash(snapshot)
+            && HotManifest.validHash(patchHash)
+            && origin.resolve(location).equals(expected),
+        "字节补丁来源必须绑定同源准确对象");
+    return HttpObjectSource.withFreshGrant(
+        size,
+        cancellation -> {
+          register(cancellation);
+          HttpURLConnection connection = HttpObjectSource.connect(expected, localTest);
+          try (UpdateCancellation.Registration owned =
+              cancellation.register(connection::disconnect)) {
+            // HEAD 只取得当前下载许可，避免本地测试在真正的 Range 请求前重复下载补丁。
+            connection.setRequestMethod("HEAD");
+            connection.setUseCaches(false);
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(connectTimeout);
+            connection.setReadTimeout(readTimeout);
+            connection.setRequestProperty("Authorization", "Bearer " + installation.credential());
+            connection.setRequestProperty("Accept-Encoding", "identity");
+            cancellation.check();
+            int status = connection.getResponseCode();
+            if (status == 307) {
+              String redirected = connection.getHeaderField("Location");
+              StrictJson.require(redirected != null, "字节补丁授权缺少地址");
+              return new HttpObjectSource(URI.create(redirected), size, null, "", localTest);
+            }
+            StrictJson.require(localTest && status == 200, "字节补丁授权暂不可用");
+            return new HttpObjectSource(expected, size, origin, installation.credential(), true);
+          } finally {
+            connection.disconnect();
+          }
+        });
   }
 
   public Decision check(String currentSnapshot, long stateSchema) throws Exception {

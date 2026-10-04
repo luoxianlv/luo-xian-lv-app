@@ -156,6 +156,7 @@ public final class Bootstrap {
 
   static boolean canAutoActivate() {
     return source != null
+        && !app.luoxianlv.hot.ApkUpdateBridge.busy()
         && activation == null
         && (updates == null || !updates.coldPending())
         && !updateBlocked
@@ -164,6 +165,15 @@ public final class Bootstrap {
         && (!PAGES.isEmpty() || playback != null)
         && PAGES.keySet().stream().allMatch(PageSwapHost::canStage)
         && (playback == null || (playback.playbackCanReplace() && !playback.playbackRetiring()));
+  }
+
+  public static boolean ordinaryUpdateIdle() {
+    return !playbackInUse() && !playbackPreparing();
+  }
+
+  /** 业务 I/O 的既有租约也涵盖旧接口全包下载，热更准备应为其让路。 */
+  static boolean businessWorking() {
+    return process != null && !process.canReplace();
   }
 
   static boolean diagnosticsAllowed() {

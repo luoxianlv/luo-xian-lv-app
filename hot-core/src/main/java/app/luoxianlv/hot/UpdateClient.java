@@ -17,6 +17,11 @@ public final class UpdateClient {
   /** 只由宿主提供已安装 APK 的恢复对象；返回 null 表示本地没有准确匹配的内容。 */
   public interface LocalObjects {
     File find(String hash, long size) throws Exception;
+
+    /** 只由宿主列出当前实际安装包声明的对象，不能扫描任意历史缓存。 */
+    default Map<String, Long> baselines() throws Exception {
+      return Collections.emptyMap();
+    }
   }
 
   public static final class PreparedUpdate {
@@ -49,6 +54,7 @@ public final class UpdateClient {
   private final LongSupplier elapsed;
   private final PreparationSpace space;
   private final LocalObjects local;
+  private final HotObjectDeltaResolver deltas;
 
   public UpdateClient(
       HotApiClient api,
@@ -120,6 +126,38 @@ public final class UpdateClient {
       LongSupplier elapsed,
       PreparationSpace space,
       LocalObjects local) {
+    this(
+        api,
+        root,
+        store,
+        trust,
+        journal,
+        controller,
+        quarantine,
+        downloads,
+        budget,
+        mounts,
+        elapsed,
+        space,
+        local,
+        null);
+  }
+
+  public UpdateClient(
+      HotApiClient api,
+      HotSignatures.PublicKey root,
+      ContentStore store,
+      TrustStore trust,
+      ActivationJournal journal,
+      ActivationController controller,
+      ContentQuarantine quarantine,
+      ObjectDownloader downloads,
+      DownloadBudget budget,
+      Set<String> mounts,
+      LongSupplier elapsed,
+      PreparationSpace space,
+      LocalObjects local,
+      HotObjectDeltaResolver deltas) {
     this.api = api;
     this.root = root;
     this.store = store;
@@ -133,6 +171,7 @@ public final class UpdateClient {
     this.elapsed = elapsed;
     this.space = java.util.Objects.requireNonNull(space);
     this.local = java.util.Objects.requireNonNull(local);
+    this.deltas = deltas;
   }
 
   /** 返回 null 表示当前无需准备；计费网络超限、取消和网络失败均保留原稳定版本。 */
@@ -159,31 +198,53 @@ public final class UpdateClient {
         obtained.put(object.getKey(), installed);
       }
     }
-    LongSupplier remaining = () -> missingBytes(missing);
-    downloads.collect(candidate.manifest.objects.keySet(), 256L << 20);
-    space.beforeDownload(
-        store, downloads, candidate.manifest, NativeLoader.residentRuntimeHash(), obtained);
-    // 连接第一个对象前检查整组；对象下载器在切网和预留预算时继续检查。
-    budget.admit(candidate.manifest.contentId, remaining.getAsLong(), metered.getAsBoolean());
-    for (Map.Entry<String, Long> object : missing.entrySet()) {
+    try (HotObjectDeltaResolver.Session transfer =
+        deltas == null
+            ? null
+            : deltas.plan(candidate, missing.keySet(), token, decision.serverTime)) {
+      Map<String, Long> network = new LinkedHashMap<>(missing);
+      if (transfer != null) transfer.projectNetwork(network);
+      LongSupplier remaining = () -> missingBytes(network);
+      Set<String> protectedDownloads = new HashSet<>(candidate.manifest.objects.keySet());
+      if (transfer != null) protectedDownloads.addAll(transfer.patchHashes());
+      downloads.collect(protectedDownloads, 256L << 20);
+      space.beforeDownload(
+          store,
+          downloads,
+          candidate.manifest,
+          NativeLoader.residentRuntimeHash(),
+          obtained,
+          transfer == null ? Collections.emptyList() : transfer.spaceDemands(downloads));
+      budget.admit(candidate.manifest.contentId, remaining.getAsLong(), metered.getAsBoolean());
+      for (Map.Entry<String, Long> object : missing.entrySet()) {
+        token.check();
+        File result =
+            transfer == null
+                ? null
+                : transfer.reconstruct(object.getKey(), downloads, metered, token, remaining);
+        if (result == null) {
+          if (transfer != null) transfer.fallback(object.getKey(), network);
+          result =
+              downloads.download(
+                  candidate.manifest.contentId,
+                  object.getKey(),
+                  object.getValue(),
+                  api.object(candidate, object.getKey()),
+                  metered,
+                  token,
+                  remaining);
+        }
+        obtained.put(object.getKey(), result);
+        network.remove(object.getKey());
+        if (transfer != null) transfer.completed(object.getKey(), network);
+      }
       token.check();
-      obtained.put(
-          object.getKey(),
-          downloads.download(
-              candidate.manifest.contentId,
-              object.getKey(),
-              object.getValue(),
-              api.object(candidate, object.getKey()),
-              metered,
-              token,
-              remaining));
+      space.beforeCommit(store, candidate.manifest, obtained, NativeLoader.residentRuntimeHash());
+      ContentStore.Snapshot snapshot = store.prepare(new DownloadedSnapshot(candidate, obtained));
+      token.check();
+      downloads.committed(store, snapshot);
+      return new PreparedUpdate(snapshot, decision.kind.equals("recover"));
     }
-    token.check();
-    space.beforeCommit(store, candidate.manifest, obtained, NativeLoader.residentRuntimeHash());
-    ContentStore.Snapshot snapshot = store.prepare(new DownloadedSnapshot(candidate, obtained));
-    token.check();
-    downloads.committed(store, snapshot);
-    return new PreparedUpdate(snapshot, decision.kind.equals("recover"));
   }
 
   /** 调用者在安全点/冷启动满足后进入；下载时的许可或旧 revision 不会被复用。 */

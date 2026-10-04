@@ -19,5 +19,6 @@ android {
 
 dependencies {
     api(project(":hot-contract"))
+    api(project(":update-core"))
     testImplementation(libs.junit)
 }

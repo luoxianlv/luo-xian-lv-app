@@ -80,6 +80,8 @@ androidComponents.onVariants { variant ->
                 this.config.set(rootProject.layout.projectDirectory.file(configPath))
                 applicationId.set(variant.applicationId)
                 debuggable.set(variant.debuggable)
+                contractSdk.set(rootProject.project(":hot-contract").layout.buildDirectory.file("native-sdk/${variant.name}/host-contract-sdk.jar"))
+                dependsOn(":hot-contract:export${variant.name.replaceFirstChar(Char::uppercaseChar)}ContractSdk")
                 output.set(layout.buildDirectory.dir("generated/hotConfig/${variant.name}"))
             }
         variant.sources.assets!!.addGeneratedSourceDirectory(config) { it.output }

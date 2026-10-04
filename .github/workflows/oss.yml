@@ -28,6 +28,10 @@ jobs:
       RELEASE_TAG: ${{ inputs.release_tag }}
       GH_TOKEN: ${{ github.token }}
       DOWNLOAD_PROVIDER: ${{ vars.DOWNLOAD_PROVIDER || 'oss' }}
+      UPDATE_INCREMENTAL_PREPARE: ${{ vars.UPDATE_INCREMENTAL_PREPARE || 'false' }}
+      UPDATE_ROOT_PUBLIC_JSON: ${{ vars.UPDATE_ROOT_PUBLIC_JSON }}
+      UPDATE_TRUST_JSON: ${{ vars.UPDATE_TRUST_JSON }}
+      UPDATE_TRUST_SIGNATURE_JSON: ${{ vars.UPDATE_TRUST_SIGNATURE_JSON }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,6 +47,47 @@ jobs:
           esac
       - name: Download and verify published release
         run: python .github/scripts/release_package.py
+      - name: Validate incremental tooling revision
+        if: env.UPDATE_INCREMENTAL_PREPARE == 'true' && env.UPDATE_ROOT_PUBLIC_JSON != ''
+        env:
+          UPDATE_TOOLS_REF: ${{ vars.UPDATE_TOOLS_REF }}
+        run: '[[ "$UPDATE_TOOLS_REF" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.UPDATE_INCREMENTAL_PREPARE == 'true' && env.UPDATE_ROOT_PUBLIC_JSON != ''
+        with:
+          repository: luoxianlv/luo-xian-lv-hot-update
+          ref: ${{ vars.UPDATE_TOOLS_REF }}
+          token: ${{ secrets.HOT_UPDATE_REPO_TOKEN }}
+          path: incremental-tools
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: env.UPDATE_INCREMENTAL_PREPARE == 'true' && env.UPDATE_ROOT_PUBLIC_JSON != ''
+        with:
+          go-version: '1.25'
+          cache: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        if: env.UPDATE_INCREMENTAL_PREPARE == 'true' && env.UPDATE_ROOT_PUBLIC_JSON != ''
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Build pinned incremental tools
+        if: env.UPDATE_INCREMENTAL_PREPARE == 'true' && env.UPDATE_ROOT_PUBLIC_JSON != ''
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/lxupdate-tools"
+          (cd incremental-tools && go test ./pkg/update ./pkg/signing ./internal/updatecli && go build -o "$RUNNER_TEMP/lxupdate-tools/lxupdate" ./cmd/lxupdate)
+          export LXUPDATE_BIN="$RUNNER_TEMP/lxupdate-tools/lxupdate"
+          bash .github/scripts/build-hdiff-tools.sh "$RUNNER_TEMP/lxupdate-tools"
+          printf 'LXUPDATE_BIN=%s\nHDIFFZ=%s\nHPATCHZ=%s\nHDIFF_LOCK=%s\n' \
+            "$LXUPDATE_BIN" "$RUNNER_TEMP/lxupdate-tools/hdiffz" "$RUNNER_TEMP/lxupdate-tools/hpatchz" "$RUNNER_TEMP/lxupdate-tools/tools-lock.json" >> "$GITHUB_ENV"
+          sdk_tools="$ANDROID_HOME/build-tools/36.0.0"
+          [[ -x "$sdk_tools/aapt" && -x "$sdk_tools/apksigner" ]]
+          printf 'ANDROID_AAPT=%s\nANDROID_APKSIGNER=%s\n' "$sdk_tools/aapt" "$sdk_tools/apksigner" >> "$GITHUB_ENV"
+      - name: Prepare signed direct APK patches
+        env:
+          UPDATE_CONTENT_KEY_BASE64: ${{ secrets.UPDATE_CONTENT_KEY_BASE64 }}
+          UPDATE_CONTENT_KEY_PASSWORD: ${{ secrets.UPDATE_CONTENT_KEY_PASSWORD }}
+        run: python .github/scripts/prepare_incremental.py
       - name: Install upload SDKs
         run: python -m pip install --disable-pip-version-check oss2==2.19.1 boto3==1.43.108
       - name: Prepare upload network

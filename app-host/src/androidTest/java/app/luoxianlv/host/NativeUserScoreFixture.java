@@ -552,9 +552,10 @@ final class NativeUserScoreFixture {
               && (target.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
               && startup != null
               && startup.config.environment.equals("test")
-              && startup.config.origin.toString().equals("http://127.0.0.1:18472")
+              && java.util.Set.of("http://127.0.0.1:18472", "http://127.0.0.1:18476")
+                  .contains(startup.config.origin.toString())
               && Looper.myLooper() != Looper.getMainLooper(),
-          "真实曲谱夹具只允许 Debug / test / 18472 本机工作线程");
+          "真实曲谱夹具只允许 Debug / test 本机测试工作线程");
       Bootstrap.Source source = Bootstrap.source();
       AtomicReference<Context> module = new AtomicReference<>();
       AtomicReference<Throwable> failure = new AtomicReference<>();

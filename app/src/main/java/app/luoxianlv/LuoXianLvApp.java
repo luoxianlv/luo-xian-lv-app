@@ -12,7 +12,17 @@ public final class LuoXianLvApp extends Application {
   @Override
   public void onCreate() {
     super.onCreate();
+    if (app.luoxianlv.update.DeltaWorkerService.isPatchProcess(this)) return;
     CrashLog.install(this);
+    app.luoxianlv.hot.ApkUpdateBridge.install(
+        this,
+        () -> {},
+        () -> {
+          var port = app.luoxianlv.hot.contract.PlaybackBridge.current();
+          if (port == null) return true;
+          var value = port.query("state");
+          return value != null && !value.getBoolean("playing") && !value.getBoolean("preparing");
+        });
     business = new AppProcess(this);
     business.initialize();
   }

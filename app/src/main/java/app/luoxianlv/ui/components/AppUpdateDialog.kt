@@ -17,7 +17,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
-import app.luoxianlv.BuildConfig
 import app.luoxianlv.business.ui.PageDialog as Dialog
 import app.luoxianlv.core.Analytics
 import app.luoxianlv.update.AppUpdateState
@@ -29,6 +28,7 @@ fun AppUpdateDialog(
     onSource: (String) -> Unit,
     onDownload: () -> Unit,
     onInstall: () -> Unit,
+    onPauseDownload: () -> Unit,
 ) {
     val release = state.release ?: return
     val context = LocalContext.current
@@ -76,8 +76,11 @@ fun AppUpdateDialog(
                         modifier = Modifier.padding(top = 6.dp),
                     )
                     Text(
-                        "当前 ${BuildConfig.VERSION_NAME}" +
-                            if (release.size > 0) "  ·  %.1f MB".format(release.size / 1048576.0)
+                        "当前 ${state.installedVersionName}" +
+                            if (state.downloadSize > 0)
+                                "  ·  下载 %.1f MB".format(state.downloadSize / 1048576.0)
+                            else if (release.size > 0)
+                                "  ·  完整包 %.1f MB".format(release.size / 1048576.0)
                             else "",
                         color = colors.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
@@ -121,12 +124,32 @@ fun AppUpdateDialog(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
-                            "${state.source} · 已下载 ${(state.progress * 100).toInt()}%",
+                            when (state.phase) {
+                                "merging",
+                                "verifying",
+                                "baseline",
+                                "waiting",
+                                "fallback",
+                                "pausing" -> state.source
+                                else ->
+                                    "${state.source} · 已下载 %.1f MB (%d%%)"
+                                        .format(
+                                            state.downloadedBytes / 1048576.0,
+                                            (state.progress * 100).toInt(),
+                                        )
+                            },
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
                     if (state.needsPermission)
                         Text("请允许安装未知应用，返回后继续安装。", style = MaterialTheme.typography.bodySmall)
+                    if (!state.downloading && state.phase == "paused")
+                        Text(state.source, style = MaterialTheme.typography.bodySmall)
+                    if (state.ready && state.downloadedBytes > 0)
+                        Text(
+                            "更新包已验证 · 已下载 %.1f MB".format(state.downloadedBytes / 1048576.0),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                     state.error?.let {
                         Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall)
                     }
@@ -136,18 +159,29 @@ fun AppUpdateDialog(
                             Analytics.logEvent(context, "update_accept")
                             if (state.ready) onInstall() else onDownload()
                         },
-                        enabled = !state.downloading,
+                        enabled = !state.downloading && !state.installing,
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(24.dp),
                     ) {
                         Text(
                             when {
                                 state.downloading -> "正在下载…"
+                                state.installing -> "正在验证安装文件…"
                                 state.ready -> "安装更新"
+                                state.phase == "paused" -> "继续下载"
                                 state.error != null -> "重新下载"
                                 else -> "立即更新"
                             }
                         )
+                    }
+                    if (state.downloading) {
+                        TextButton(
+                            onClick = onPauseDownload,
+                            enabled = state.phase != "pausing",
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        ) {
+                            Text("暂停下载")
+                        }
                     }
                     if (dismissible)
                         TextButton(

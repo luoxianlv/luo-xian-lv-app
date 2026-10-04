@@ -49,6 +49,30 @@ public final class BundledBaseline {
   public static UpdateClient.LocalObjects objects(Context context) {
     return new UpdateClient.LocalObjects() {
       @Override
+      public synchronized Map<String, Long> baselines() throws Exception {
+        StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "安装包基线检查必须在后台执行");
+        Context installed = context.createPackageContext(context.getPackageName(), 0);
+        try (InputStream input = installed.getAssets().open("baseline/index.json")) {
+          var index =
+              StrictJson.object(HotPackage.read(input, 8192))
+                  .only("schema", "runtimeAbi", "entryClass", "runtime", "business");
+          StrictJson.require(index.number("schema") == 1, "安装包恢复索引无效");
+          Map<String, Long> result = new LinkedHashMap<>();
+          for (String role : List.of("runtime", "business")) {
+            var artifact = index.object(role).only("sha256", "size");
+            String hash = artifact.string("sha256");
+            long size = artifact.number("size");
+            StrictJson.require(
+                HotManifest.validHash(hash) && size > 0 && size <= HotManifest.MAX_EXPANDED,
+                "安装包恢复对象身份无效");
+            Long prior = result.put(hash, size);
+            StrictJson.require(prior == null || prior == size, "安装包恢复对象大小冲突");
+          }
+          return Collections.unmodifiableMap(result);
+        }
+      }
+
+      @Override
       public synchronized File find(String hash, long size) throws Exception {
         StrictJson.require(Looper.myLooper() != Looper.getMainLooper(), "安装包对象检查必须在后台执行");
         Context installed = context.createPackageContext(context.getPackageName(), 0);

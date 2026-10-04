@@ -64,4 +64,18 @@ public final class TrustStoreTest {
     assertThrows(Exception.class, store::current);
     assertEquals(1, journal.state().trustVersion);
   }
+
+  @Test
+  public void ordinaryUpdateTrustDoesNotCreateHotActivationState() throws Exception {
+    TrustStore store = new TrustStore(directory.newFolder(), root());
+    ActivationJournal journal = new ActivationJournal(directory.newFolder());
+    Instant now = Instant.parse("2026-09-29T00:00:00Z");
+    store.accept(read("trust.json"), read("trust.sig.json"), 1, now);
+    assertEquals(0, journal.state().trustVersion);
+    assertEquals(ActivationJournal.Phase.STABLE, journal.state().phase);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> store.accept(read("trust.json"), read("trust.sig.json"), 2, now));
+    assertArrayEquals(read("trust.json"), store.current().document());
+  }
 }

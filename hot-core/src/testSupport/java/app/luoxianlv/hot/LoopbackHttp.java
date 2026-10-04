@@ -57,7 +57,9 @@ final class LoopbackHttp implements AutoCloseable {
                         new String(requestBytes.toByteArray(), StandardCharsets.US_ASCII)
                             .split("\r\n");
                     String line = lines[0];
-                    if (!line.startsWith("GET ") && !line.startsWith("POST "))
+                    if (!line.startsWith("GET ")
+                        && !line.startsWith("POST ")
+                        && !line.startsWith("HEAD "))
                       throw new IllegalArgumentException("测试只接受 GET/POST");
                     Request request = new Request(line.split(" ")[0], line.split(" ")[1]);
                     for (int index = 1; index < lines.length; index++) {

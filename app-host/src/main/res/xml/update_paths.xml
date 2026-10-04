@@ -4,5 +4,6 @@
     <external-files-path name="external_updates" path="updates/" />
     <external-files-path name="diagnostics" path="diagnostics/" />
     <files-path name="fallback_updates" path="updates/" />
+    <files-path name="verified_apk_updates" path="apk-updates/" />
     <files-path name="fallback_diagnostics" path="diagnostics/" />
 </paths>

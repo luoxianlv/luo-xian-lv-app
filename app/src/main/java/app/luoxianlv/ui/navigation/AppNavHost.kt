@@ -382,6 +382,7 @@ fun AppNavHost(
                 onSource = appUpdates::selectSource,
                 onDownload = appUpdates::download,
                 onInstall = { appUpdates.install(activity) },
+                onPauseDownload = appUpdates::pauseDownload,
             )
         }
     }

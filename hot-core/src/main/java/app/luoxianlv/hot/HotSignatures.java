@@ -17,6 +17,7 @@ public final class HotSignatures {
   public static final String TRANSPORT = "LXHOT-TRANSPORT-V1";
   public static final String TRUST = "LXHOT-TRUST-V1";
   public static final String ACTIVATION = "LXHOT-ACTIVATION-V1";
+  public static final String APK_UPDATE = "LXUPDATE-MANIFEST-V1";
   public static final String ALGORITHM = "ecdsa-p256-sha256";
 
   private HotSignatures() {}
@@ -75,7 +76,8 @@ public final class HotSignatures {
             ? "root"
             : domain.equals(ACTIVATION)
                 ? "activation"
-                : domain.equals(MANIFEST) || domain.equals(TRANSPORT) ? "content" : "";
+                : domain.equals(MANIFEST) || domain.equals(TRANSPORT) || domain.equals(APK_UPDATE)
+                    ? "content" : "";
     StrictJson.require(!purpose.isEmpty() && key.purpose.equals(purpose), "密钥用途不允许该签名");
     StrictJson.require(raw.length > 0 && raw.length <= StrictJson.MAX_BYTES, "签名内容长度无效");
     StrictJson.Obj envelope = StrictJson.object(signature).only("algorithm", "keyId", "signature");

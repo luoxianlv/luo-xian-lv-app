@@ -70,6 +70,15 @@ public final class TrustStore {
 
   public synchronized Record accept(
       byte[] document, byte[] signature, ActivationJournal journal, Instant now) throws Exception {
+    Record candidate = accept(document, signature, journal.state().trustVersion, now);
+    // 完整授权先落盘，再推进激活日志下限；普通 APK 更新不需要修改激活日志。
+    journal.observeVersions(journal.state().revision, candidate.authority.version);
+    return candidate;
+  }
+
+  /** 普通更新只共享根授权下限，不能触碰热更候选和激活状态。 */
+  public synchronized Record accept(
+      byte[] document, byte[] signature, long minimumVersion, Instant now) throws Exception {
     Record candidate = new Record(new HotTrust(root, document, signature), document, signature);
     try (FileChannel channel =
             FileChannel.open(
@@ -79,7 +88,7 @@ public final class TrustStore {
         FileLock lock = channel.tryLock()) {
       StrictJson.require(lock != null, "另一个控制器正在更新根授权");
       Record existing = current();
-      long floor = journal.state().trustVersion;
+      long floor = minimumVersion;
       if (existing != null) floor = Math.max(floor, existing.authority.version);
       candidate.authority.current(Math.max(1, floor), now);
       if (existing != null && candidate.authority.version == existing.authority.version) {
@@ -102,8 +111,6 @@ public final class TrustStore {
           Files.deleteIfExists(temporary.toPath());
         }
       }
-      // 先保存完整授权再推进下限，断电后不会只剩下“需要新版本”却没有对应授权的指针。
-      journal.observeVersions(journal.state().revision, candidate.authority.version);
       return candidate;
     }
   }

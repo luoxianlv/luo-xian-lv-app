@@ -4,3 +4,6 @@ hot-core/**/*.md text eol=lf
 hot-core/src/test/resources/protocol-v1/* -text
 hot-core/src/test/resources/permit-v1/* -text
 *.lxhp binary
+# 固定第三方源码依赖逐文件原始摘要，Git 不转换行尾，也不格式化上游空白。
+update-core/src/main/cpp/vendor/** -text whitespace=-trailing-space
+update-core/src/test/resources/w26/** -text

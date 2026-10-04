@@ -612,7 +612,8 @@ final class NativeUserWallpaperFixture {
             && (target.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0
             && startup != null
             && startup.config.environment.equals("test")
-            && startup.config.origin.toString().equals("http://127.0.0.1:18472")
+            && java.util.Set.of("http://127.0.0.1:18472", "http://127.0.0.1:18476")
+                .contains(startup.config.origin.toString())
             && Looper.myLooper() != Looper.getMainLooper(),
         "用户壁纸 fixture 仅允许 Debug 本机测试工作线程");
     return target;

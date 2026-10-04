@@ -25,6 +25,8 @@ data class AppRelease(
     val notes: List<ReleaseNoteSection>,
     val mandatory: Boolean,
     val sources: List<UpdateSource>,
+    val deliveryJson: String? = null,
+    val certificateSha256: String? = null,
 )
 
 data class ReleaseNoteSection(
@@ -67,6 +69,10 @@ fun parseAppRelease(
     val code = json.getInt("latestVersionCode")
     if (code <= currentCode) return null
     val sha = json.getString("apkSha256").lowercase()
+    val delivery =
+        if (json.has("deliveryV1")) {
+            requireNotNull(json.optJSONObject("deliveryV1")) { "增量更新说明格式无效" }
+        } else null
     require(sha.matches(Regex("[a-f0-9]{64}"))) { "更新信息缺少有效的安装包校验值" }
     val sources = mutableListOf<UpdateSource>()
     val channels = json.optJSONObject("channels")
@@ -78,6 +84,10 @@ fun parseAppRelease(
             channel.optString("sha256").lowercase().takeIf { it.matches(Regex("[a-f0-9]{64}")) }
                 ?: sha
         val channelSize = channel.optLong("size", 0).takeIf { it > 0 } ?: topSize
+        if (delivery != null)
+            require(channelSha == sha && channelSize == topSize) {
+                "下载渠道与签名目标不一致"
+            }
         sources +=
             UpdateSource(id, validatedUpdateUrl(url, baseUrl, allowLocal), channelSha, channelSize)
     }
@@ -98,6 +108,8 @@ fun parseAppRelease(
         notes,
         true,
         sources,
+        delivery?.toString(),
+        json.optString("apkCertificateSha256").takeIf { it.matches(Regex("[a-f0-9]{64}")) },
     ) // 检测到更高版本后必须更新，不允许跳过。
 }
 

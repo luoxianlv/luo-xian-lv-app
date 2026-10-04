@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service android:name="app.luoxianlv.update.DeltaWorkerService"
+            android:exported="false" android:isolatedProcess="true"
+            android:process=":delta_worker" />
+    </application>
+</manifest>

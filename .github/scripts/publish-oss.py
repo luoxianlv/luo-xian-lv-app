@@ -100,14 +100,19 @@ def main():
     if provider not in ("oss", "r2", "cf"):
         raise ValueError("DOWNLOAD_PROVIDER 只能为 oss 或 r2")
     object_key = f"luoxianlv/release/{package['versionName']}/{sha}/app-release.apk"
+    incremental = None
     if provider in ("r2", "cf"):
         from publish_r2 import create_client, upload_and_verify as upload_r2
         client, bucket = create_client()
         try:
             transfer_with_retry(lambda: upload_r2(client, bucket, apk, object_key, sha))
+            from publish_incremental import verify_and_upload
+            incremental = verify_and_upload(client, bucket, apk, package, sha, transfer_with_retry)
         finally:
             client.close()
     else:
+        if (directory / "incremental" / "delivery.json").exists():
+            raise ValueError("增量 APK 必须使用私有 R2／EO 发布路线")
         upload_oss(apk, object_key, sha)
     manifest = {
         "enabled": True, "channel": "stable",
@@ -120,6 +125,8 @@ def main():
             "github": {"url": github_asset["browser_download_url"], "assetId": github_asset["id"], "sha256": sha, "size": size},
         },
     }
+    if incremental is not None:
+        manifest["deliveryV1"], manifest["apkCertificateSha256"] = incremental
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"官方存储上传及回读校验通过（{provider}）：{sha} ({size} bytes)")
 

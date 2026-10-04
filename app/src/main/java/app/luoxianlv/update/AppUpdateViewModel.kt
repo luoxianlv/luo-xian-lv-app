@@ -14,6 +14,7 @@ import app.luoxianlv.BuildConfig
 import app.luoxianlv.business.BusinessJobs
 import app.luoxianlv.data.Kv
 import app.luoxianlv.hot.contract.SharedFiles
+import app.luoxianlv.hot.contract.SharedUpdate
 import app.luoxianlv.storage.AppStorage
 import java.io.File
 import java.net.HttpURLConnection
@@ -39,6 +40,11 @@ data class AppUpdateState(
     val needsPermission: Boolean = false,
     val error: String? = null,
     val message: String? = null,
+    val phase: String = "",
+    val downloadedBytes: Long = 0,
+    val downloadSize: Long = 0,
+    val installing: Boolean = false,
+    val installedVersionName: String = BuildConfig.VERSION_NAME,
 )
 
 /** Activity 级更新状态，由前台检查、关于页和唯一弹窗宿主共享。 */
@@ -49,9 +55,79 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
     private var job: Job? = null
     private val baseUrl = BuildConfig.UPDATE_BASE_URL.trimEnd('/')
     private val cacheDir = AppStorage.updates(app)
+    private var readyApk: File? = null
+    @Volatile private var downloadGeneration = 0L
+    @Volatile private var pauseRequested = false
+    private var restoring = true
+    private var pendingCheck: Pair<Boolean, Boolean>? = null
+    private val installedVersionCode: Int
+        get() =
+            app.packageManager.getPackageInfo(app.packageName, 0).let {
+                if (Build.VERSION.SDK_INT >= 28) it.longVersionCode.toInt() else it.versionCode
+            }
 
     init {
         cleanupCache()
+        _state.update {
+            it.copy(
+                installedVersionName =
+                    app.packageManager.getPackageInfo(app.packageName, 0).versionName
+                        ?: BuildConfig.VERSION_NAME
+            )
+        }
+        restorePending()
+    }
+
+    /** 在检查间隔之外发现已认证断点，用户点击继续后才下载。 */
+    private fun restorePending() {
+        viewModelScope.launch {
+            try {
+                val recovered = BusinessJobs.io {
+                    val pending = SharedUpdate.current()?.pending() ?: return@io null
+                    val request = pending.request
+                    require(request.versionCode in 1..Int.MAX_VALUE.toLong()) { "恢复任务版本无效" }
+                    val sources =
+                        request.fullUrls.mapIndexed { index, url ->
+                            UpdateSource(
+                                if (index == 0) "oss" else "resume-$index",
+                                validatedUpdateUrl(url, baseUrl, BuildConfig.INTERNAL_BUILD),
+                                request.sha256,
+                                request.size,
+                            )
+                        }
+                    require(sources.isNotEmpty()) { "恢复任务没有完整包来源" }
+                    AppRelease(
+                        request.versionCode.toInt(),
+                        pending.versionName,
+                        request.sha256,
+                        request.size,
+                        emptyList(),
+                        false,
+                        sources,
+                        request.signedEnvelope,
+                    )
+                }
+                coroutineContext.ensureActive()
+                if (recovered != null)
+                    _state.update {
+                        it.copy(
+                            release = recovered,
+                            selectedSource = recovered.sources.first().id,
+                            phase = "paused",
+                            source = "上次更新已保留，可继续下载",
+                        )
+                    }
+            } catch (failure: Exception) {
+                coroutineContext.ensureActive()
+                _state.update { it.copy(message = "上次更新未通过验证，请重新检查更新") }
+            } finally {
+                restoring = false
+                val queued = pendingCheck
+                pendingCheck = null
+                if (queued != null && coroutineContext[Job]?.isActive == true)
+                    check(queued.first, queued.second)
+            }
+        }
     }
 
     private fun apk(
@@ -60,6 +136,11 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
     ) = File(cacheDir, "${release.versionCode}-${source.sha256.ifBlank { release.sha256 }}.apk")
 
     fun check(manual: Boolean = false, force: Boolean = false) {
+        if (restoring) {
+            pendingCheck =
+                (manual || pendingCheck?.first == true) to (force || pendingCheck?.second == true)
+            return
+        }
         if (_state.value.checking || _state.value.downloading) return
         if (!manual && _state.value.release != null) return
         val now = System.currentTimeMillis()
@@ -70,7 +151,12 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
             try {
                 val release = BusinessJobs.io {
                     val connection =
-                        open("$baseUrl/api/update/stable?versionCode=${BuildConfig.VERSION_CODE}")
+                        open(
+                            "$baseUrl/api/update/stable?versionCode=$installedVersionCode" +
+                                if (SharedUpdate.current()?.supportsIncremental() == true)
+                                    "&deltaCapability=hdiff-w26-zstd-v1&installationId=${updateInstallationId()}"
+                                else ""
+                        )
                     try {
                         check(connection.responseCode == 200) {
                             "更新服务暂时不可用 (${connection.responseCode})"
@@ -89,7 +175,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                         require(text.size <= 256 * 1024) { "更新信息过大" }
                         parseAppRelease(
                             JSONObject(text.toString(Charsets.UTF_8)),
-                            BuildConfig.VERSION_CODE,
+                            installedVersionCode,
                             baseUrl,
                             BuildConfig.UPDATE_SOURCE,
                             BuildConfig.INTERNAL_BUILD,
@@ -99,6 +185,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                     }
                 }
                 prefs.edit().putLong("last_check", now).apply()
+                readyApk = null
                 _state.update {
                     it.copy(
                         release = release,
@@ -129,12 +216,77 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         val release = _state.value.release ?: return
         if (job?.isActive == true) return
         val selected = _state.value.selectedSource
-        _state.update { it.copy(downloading = true, error = null, progress = 0f, ready = false) }
+        val generation = ++downloadGeneration
+        pauseRequested = false
+        readyApk = null
+        _state.update {
+            it.copy(
+                downloading = true,
+                error = null,
+                progress = 0f,
+                ready = false,
+                phase = "downloading",
+                downloadedBytes = 0,
+                downloadSize = 0,
+            )
+        }
         cleanupCache()
         job = viewModelScope.launch {
             try {
                 BusinessJobs.io {
+                    coroutineContext.ensureActive()
                     val sources = release.sources.sortedBy { if (it.id == selected) 0 else 1 }
+                    val bridge = SharedUpdate.current()
+                    if (release.deliveryJson != null) {
+                        check(bridge != null) { "当前安装包不支持此更新说明，请下载完整安装包" }
+                        var lastPhase = ""
+                        var lastProgressAt = 0L
+                        try {
+                            val result =
+                                bridge.prepare(
+                                    SharedUpdate.Request(
+                                        release.deliveryJson,
+                                        sources.map { it.url },
+                                        release.versionCode.toLong(),
+                                        release.sha256,
+                                        release.size,
+                                    )
+                                ) { phase, completed, total, downloaded, detail ->
+                                    if (generation != downloadGeneration || pauseRequested) {
+                                        bridge.cancel()
+                                        return@prepare
+                                    }
+                                    val progressAt = System.nanoTime()
+                                    if (
+                                        phase == lastPhase &&
+                                            completed < total &&
+                                            progressAt - lastProgressAt < 100_000_000L
+                                    )
+                                        return@prepare
+                                    lastPhase = phase
+                                    lastProgressAt = progressAt
+                                    _state.update {
+                                        it.copy(
+                                            phase = phase,
+                                            source = detail,
+                                            progress =
+                                                if (total > 0)
+                                                    (completed.toFloat() / total).coerceIn(0f, 1f)
+                                                else 0f,
+                                            downloadedBytes = downloaded,
+                                            downloadSize =
+                                                if (phase == "downloading") total
+                                                else it.downloadSize,
+                                        )
+                                    }
+                                }
+                            readyApk = result.file
+                            _state.update { it.copy(downloadedBytes = result.downloadedBytes) }
+                            return@io
+                        } finally {
+                            coroutineContext.ensureActive()
+                        }
+                    }
                     var failure: Exception? = null
                     for (source in sources) {
                         coroutineContext.ensureActive()
@@ -142,12 +294,15 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                         if (
                             target.exists() &&
                                 runCatching { verify(target, release, source) }.isSuccess
-                        )
+                        ) {
+                            readyApk = target
                             return@io
+                        }
                         if (target.exists()) check(target.delete()) { "无法清理失效的更新包，请重试" }
                         _state.update { it.copy(source = source.label, progress = 0f) }
                         try {
                             downloadFile(source.url, target, release, source)
+                            readyApk = target
                             return@io
                         } catch (e: Exception) {
                             coroutineContext.ensureActive()
@@ -158,9 +313,29 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                     throw failure ?: IllegalStateException("没有可用下载源")
                 }
                 _state.update { it.copy(downloading = false, ready = true, progress = 1f) }
+            } catch (e: SharedUpdate.DeferredException) {
+                coroutineContext.ensureActive()
+                _state.update {
+                    it.copy(
+                        downloading = false,
+                        phase = "paused",
+                        source = e.message ?: "更新已暂停",
+                        error = null,
+                    )
+                }
             } catch (e: Exception) {
                 coroutineContext.ensureActive()
                 _state.update { it.copy(downloading = false, error = e.message ?: "下载失败，请重试") }
+            } finally {
+                if (generation == downloadGeneration && pauseRequested)
+                    _state.update {
+                        it.copy(
+                            downloading = false,
+                            phase = "paused",
+                            source = "下载已暂停",
+                            error = null,
+                        )
+                    }
             }
         }
     }
@@ -172,6 +347,8 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         source: UpdateSource,
     ) {
         val partial = File(cacheDir, target.name + ".part")
+        val savedPriority = android.os.Process.getThreadPriority(android.os.Process.myTid())
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
         var connection: HttpURLConnection? = null
         try {
             // 逐次校验重定向；GitHub 会跳至 release-assets.githubusercontent.com。
@@ -197,6 +374,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                 partial.outputStream().use { output ->
                     val bytes = ByteArray(64 * 1024)
                     var total = 0L
+                    var reportedAt = 0L
                     while (true) {
                         coroutineContext.ensureActive()
                         val count = input.read(bytes)
@@ -204,18 +382,32 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                         total += count
                         require(total <= 512L * 1024 * 1024) { "安装包大小超出限制" }
                         output.write(bytes, 0, count)
-                        if (length > 0)
+                        val progressAt = System.nanoTime()
+                        if (
+                            length > 0 &&
+                                (total == length || progressAt - reportedAt >= 100_000_000L)
+                        ) {
+                            reportedAt = progressAt
                             _state.update {
-                                it.copy(progress = (total.toFloat() / length).coerceIn(0f, 1f))
+                                it.copy(
+                                    progress = (total.toFloat() / length).coerceIn(0f, 1f),
+                                    downloadedBytes = total,
+                                    downloadSize = length,
+                                )
                             }
+                        }
                     }
                 }
             }
             verify(partial, release, source)
             check(partial.renameTo(target)) { "无法保存安装包" }
         } finally {
-            connection?.disconnect()
-            partial.delete()
+            try {
+                connection?.disconnect()
+                partial.delete()
+            } finally {
+                android.os.Process.setThreadPriority(savedPriority)
+            }
         }
     }
 
@@ -235,7 +427,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         require(info.packageName == app.packageName) { "安装包不属于落弦律" }
         val code =
             if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
-        require(code == release.versionCode.toLong() && code > BuildConfig.VERSION_CODE) {
+        require(code == release.versionCode.toLong() && code > installedVersionCode) {
             "安装包版本与更新信息不一致"
         }
         val incoming = signerDigests { pm, flags -> pm.getPackageArchiveInfo(file.path, flags) }
@@ -303,7 +495,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun install(activity: Activity) {
         val release = _state.value.release ?: return
-        if (!_state.value.ready) return
+        if (!_state.value.ready || _state.value.installing) return
         try {
             if (!activity.packageManager.canRequestPackageInstalls()) {
                 _state.update { it.copy(needsPermission = true) }
@@ -318,14 +510,28 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
             val source =
                 release.sources.firstOrNull { it.id == _state.value.selectedSource }
                     ?: release.sources.first()
-            val uri =
-                SharedFiles.getUriForFile(app, "${app.packageName}.updates", apk(release, source))
-            activity.startActivity(
-                Intent(Intent.ACTION_VIEW)
-                    .setDataAndType(uri, "application/vnd.android.package-archive")
-                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            )
-            _state.update { it.copy(needsPermission = false, error = null) }
+            val file = readyApk ?: apk(release, source)
+            _state.update { it.copy(installing = true) }
+            // 系统安装前重新认证最终文件；哈希及归档读取不占主线程。
+            viewModelScope.launch {
+                try {
+                    BusinessJobs.io { verify(file, release, source) }
+                    val uri = SharedFiles.getUriForFile(app, "${app.packageName}.updates", file)
+                    activity.startActivity(
+                        Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(uri, "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    )
+                    _state.update {
+                        it.copy(needsPermission = false, error = null, installing = false)
+                    }
+                } catch (failure: Exception) {
+                    coroutineContext.ensureActive()
+                    _state.update {
+                        it.copy(ready = false, installing = false, error = "安装文件验证失败，请重新下载")
+                    }
+                }
+            }
         } catch (e: Exception) {
             _state.update { it.copy(error = "无法打开安装程序：${e.message}") }
         }
@@ -349,6 +555,29 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
 
     fun consumeMessage() = _state.update { it.copy(message = null) }
 
+    /** 仅取消本次运行，保留已认证的断点；再次下载按相同目标恢复。 */
+    fun pauseDownload() {
+        pauseRequested = true
+        SharedUpdate.current()?.cancel()
+        job?.cancel()
+        _state.update { it.copy(phase = "pausing", source = "正在暂停下载", error = null) }
+    }
+
+    private fun updateInstallationId(): String {
+        val existing = prefs.getString("delta_installation_id", "") ?: ""
+        if (existing.isNotBlank()) return existing
+        return java.util.UUID.randomUUID().toString().also {
+            prefs.edit().putString("delta_installation_id", it).apply()
+        }
+    }
+
+    override fun onCleared() {
+        downloadGeneration++
+        SharedUpdate.current()?.cancel()
+        job?.cancel()
+        super.onCleared()
+    }
+
     /** 仅内部测试版: adb 可主动触发更新弹窗（am broadcast -a app.luoxianlv.DEBUG_TRIGGER_UPDATE）。 */
     fun debugTriggerUpdate() {
         if (!BuildConfig.INTERNAL_BUILD) return
@@ -370,8 +599,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                                 )
                             ),
                         mandatory = false,
-                        sources =
-                            listOf(UpdateSource("oss", "$baseUrl/api/update/oss")),
+                        sources = listOf(UpdateSource("oss", "$baseUrl/api/update/oss")),
                     ),
                 selectedSource = "oss",
             )

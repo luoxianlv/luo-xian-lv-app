@@ -7,6 +7,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AppReleaseTest {
+    @Test
+    fun malformedPresentDeliveryCannotDowngradeToUnsignedFull() {
+        for (value in listOf("not-an-envelope", org.json.JSONArray(), JSONObject.NULL)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                parseAppRelease(
+                    manifest().put("deliveryV1", value),
+                    4,
+                    "https://example.com",
+                    "oss",
+                    false,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun signedDeliveryRequiresAllChannelsToMatchTarget() {
+        val json = manifest().put("deliveryV1", JSONObject().put("schema", 1))
+        json.getJSONObject("channels").getJSONObject("github").put("sha256", "b".repeat(64))
+        assertThrows(IllegalArgumentException::class.java) {
+            parseAppRelease(json, 4, "https://example.com", "oss", false)
+        }
+        json.getJSONObject("channels").getJSONObject("github").put("sha256", "a".repeat(64))
+        assertNotNull(parseAppRelease(json, 4, "https://example.com", "oss", false)!!.deliveryJson)
+    }
+
     private fun manifest() =
         JSONObject(
             """{

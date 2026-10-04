@@ -334,8 +334,10 @@ final class HostUpdates {
         InstallationIdentity.open(
             new File(root, "installation"), state.config.applicationId, state.config.environment);
     var installed = application.getPackageManager().getPackageInfo(application.getPackageName(), 0);
-    long versionCode = android.os.Build.VERSION.SDK_INT >= 28
-        ? installed.getLongVersionCode() : installed.versionCode;
+    long versionCode =
+        android.os.Build.VERSION.SDK_INT >= 28
+            ? installed.getLongVersionCode()
+            : installed.versionCode;
     api =
         new HotApiClient(
             state.config.origin,
@@ -363,6 +365,17 @@ final class HostUpdates {
     var downloads =
         new ObjectDownloader(
             new File(root, "downloads"), budget, new File(root, "download-records-private-v1"));
+    var installedObjects = BundledBaseline.objects(application);
+    var byteDeltas =
+        new HotObjectDeltaResolver(
+            api,
+            state.config.root,
+            state.store,
+            state.trust,
+            state.journal,
+            installedObjects,
+            new app.luoxianlv.update.IsolatedPatchMerger(application),
+            new File(root, "byte-delta"));
     client =
         new UpdateClient(
             api,
@@ -377,7 +390,8 @@ final class HostUpdates {
             state.config.mounts,
             SystemClock::elapsedRealtime,
             new PreparationSpace(application),
-            BundledBaseline.objects(application));
+            installedObjects,
+            byteDeltas);
     connectivity = application.getSystemService(ConnectivityManager.class);
     if (connectivity != null) {
       networkCallback =
@@ -432,7 +446,10 @@ final class HostUpdates {
     boolean playback = Bootstrap.playbackInUse();
     active = foreground || playback;
     online = connected();
-    priorityWork = Bootstrap.playbackPreparing();
+    priorityWork =
+        Bootstrap.playbackPreparing()
+            || Bootstrap.businessWorking()
+            || app.luoxianlv.hot.ApkUpdateBridge.busy();
     if (cancelled()) cancelRequest();
     schedule.availability(foreground, playback, online, priorityWork);
     long delay = schedule.delayMillis();
