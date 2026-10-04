@@ -21,7 +21,7 @@ internal class FloatingPanel(
     context: Context,
     private val palette: PlayerUiPalette,
     private val service: PlaybackSession,
-    private val speedControlsVisible: Boolean,
+    private var speedControlsVisible: Boolean,
     private val onSelectSong: () -> Unit,
     private val onToggleSpeed: () -> Unit,
     private val onCollapse: () -> Unit,
@@ -48,6 +48,10 @@ internal class FloatingPanel(
     private var play: ImageView? = null
     private var progress: FloatingProgressView? = null
     private var previewPositionMs: Long? = null
+    private var speedRow: View? = null
+    private var speedToggle: ImageView? = null
+    private var speedSlider: SeekBar? = null
+    private var speedTracking = false
 
     init {
         build()
@@ -117,6 +121,7 @@ internal class FloatingPanel(
                 contentDescription = if (speedControlsVisible) "收起倍速设置" else "展开倍速设置"
                 setOnClickListener { onToggleSpeed() }
             }
+        this.speedToggle = speedToggle
         row.addView(speedToggle, LinearLayout.LayoutParams(context.dp(28), context.dp(32)))
         // 收起
         val collapse =
@@ -150,17 +155,22 @@ internal class FloatingPanel(
                             speedLabel.text = "倍速 %.2f×".format(speed)
                         }
 
-                        override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+                        override fun onStartTrackingTouch(seekBar: SeekBar) {
+                            speedTracking = true
+                        }
 
                         override fun onStopTrackingTouch(seekBar: SeekBar) {
+                            speedTracking = false
                             service.setSpeed(.5f + seekBar.progress * .05f)
                         }
                     }
                 )
                 speedLabel.text = "倍速 %.2f×".format(.5f + progress * .05f)
             }
+        this.speedSlider = speedSlider
         val speedRow =
             PlayerUi.row(context).apply { setPadding(context.dp(12), 0, context.dp(12), 0) }
+        this.speedRow = speedRow
         speedRow.addView(speedLabel, LinearLayout.LayoutParams(context.dp(78), -2))
         speedRow.addView(speedSlider, LinearLayout.LayoutParams(0, context.dp(32), 1f))
         val strip =
@@ -181,14 +191,13 @@ internal class FloatingPanel(
                 .also { progress = it }
         val progressTop = context.dp(46 + if (speedControlsVisible) 32 else 0)
         panel.addView(row, android.widget.FrameLayout.LayoutParams(-1, context.dp(46)))
-        if (speedControlsVisible) {
-            panel.addView(
-                speedRow,
-                android.widget.FrameLayout.LayoutParams(-1, context.dp(32)).apply {
-                    topMargin = context.dp(46)
-                },
-            )
-        }
+        speedRow.visibility = if (speedControlsVisible) View.VISIBLE else View.GONE
+        panel.addView(
+            speedRow,
+            android.widget.FrameLayout.LayoutParams(-1, context.dp(32)).apply {
+                topMargin = context.dp(46)
+            },
+        )
         panel.addView(
             strip,
             android.widget.FrameLayout.LayoutParams(
@@ -201,8 +210,28 @@ internal class FloatingPanel(
         return panel
     }
 
+    /** 倍速区只调整显隐和进度条位置，不重新创建系统滑块。 */
+    fun showSpeedControls(visible: Boolean) {
+        if (speedControlsVisible == visible) return
+        speedControlsVisible = visible
+        speedRow?.visibility = if (visible) View.VISIBLE else View.GONE
+        speedToggle?.apply {
+            rotation = if (visible) 180f else 0f
+            contentDescription = if (visible) "收起倍速设置" else "展开倍速设置"
+        }
+        val top = context.dp(46 + if (visible) 32 else 0)
+        progress?.apply {
+            layoutParams = (layoutParams as FrameLayout.LayoutParams).apply { topMargin = top }
+        }
+        minimumHeight = top + context.dp(FloatingProgressView.TOUCH_HEIGHT_DP)
+    }
+
     fun refresh() {
         title?.text = service.song.title
+        if (!speedTracking) {
+            val speed = ((service.speed.coerceIn(.5f, 2f) - .5f) * 20).roundToInt()
+            speedSlider?.let { if (it.progress != speed) it.progress = speed }
+        }
         refreshStatus()
         play?.apply {
             val pending = service.playing || service.waitingToPlay

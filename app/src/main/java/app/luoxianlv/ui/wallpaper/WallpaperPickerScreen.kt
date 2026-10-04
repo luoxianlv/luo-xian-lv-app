@@ -75,6 +75,21 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
             }
         }
     }
+    fun select(entry: WallpaperProjectStore.Entry) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            try {
+                BusinessJobs.io { WallpaperProjectStore.select(context, entry) }
+                selected = entry.id
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                error = e.message ?: "选择壁纸失败"
+            } finally {
+                busy = false
+            }
+        }
+    }
     val zip = rememberPageLauncher("wallpaper.import", ImportFilePicker("选择壁纸 ZIP")) { import(it) }
     Box(Modifier.fillMaxSize()) {
         GradientBackdrop()
@@ -193,12 +208,7 @@ internal fun WallpaperPickerScreen(onBack: () -> Unit, onEnterPractice: () -> Un
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(entries, key = { it.id ?: "default" }) { entry ->
-                    WallpaperCard(entry, selected == entry.id) {
-                        if (!busy) {
-                            WallpaperProjectStore.select(context, entry)
-                            selected = entry.id
-                        }
-                    }
+                    WallpaperCard(entry, selected == entry.id) { select(entry) }
                 }
             }
             ActionPill(

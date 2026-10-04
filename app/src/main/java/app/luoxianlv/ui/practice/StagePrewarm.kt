@@ -2,53 +2,179 @@ package app.luoxianlv.ui.practice
 
 import android.content.Context
 import android.graphics.RectF
+import android.os.Looper
+import android.os.MessageQueue
+import android.view.View
+import android.view.ViewTreeObserver
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.luoxianlv.business.ui.findActivity
+import app.luoxianlv.wallpaper.render.PreparedWallpaper
 
-/** 导航宿主恢复后延迟预热；暂停时挂起，销毁时清理，不随 Tab 切换重建。 */
+/** 首次绘制后等主队列空闲再预热；交互和切页先让路，缓存不随 Tab 切换重建。 */
 @Composable
-fun StagePrewarmEffect() {
+fun StagePrewarmEffect(enabled: Boolean = true, moving: Boolean = false): Modifier {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(context, lifecycleOwner) {
-        val lease = Any()
-        val activity = context.findActivity()
-        val prepare = Runnable {
-            if (
-                activity != null &&
-                    lifecycleOwner.lifecycle.currentState.isAtLeast(
-                        androidx.lifecycle.Lifecycle.State.RESUMED
-                    )
-            ) {
-                app.luoxianlv.wallpaper.render.PreparedWallpaper.prepare(activity, context, lease)
-            }
+    val activity = context.findActivity() ?: return Modifier
+    val controller =
+        remember(context, lifecycleOwner, activity) {
+            val lease = Any()
+            val queue = PrewarmFrameQueue(activity.window.decorView)
+            StagePrewarmController(
+                schedule =
+                    IdlePrewarmSchedule(
+                        enqueue = queue::enqueue,
+                        cancel = queue::cancel,
+                        pause = { PreparedWallpaper.pause(lease) },
+                        prepare = {
+                            if (!activity.isFinishing && !activity.isDestroyed) {
+                                PreparedWallpaper.prepare(activity, context, lease)
+                            }
+                        },
+                    ),
+                claim = { PreparedWallpaper.claim(lease) },
+                clear = { PreparedWallpaper.clear(lease) },
+            )
         }
+    SideEffect { controller.update(enabled, moving) }
+    DisposableEffect(controller, lifecycleOwner) {
         val observer =
             object : androidx.lifecycle.DefaultLifecycleObserver {
                 override fun onResume(owner: androidx.lifecycle.LifecycleOwner) {
-                    app.luoxianlv.wallpaper.render.PreparedWallpaper.claim(lease)
-                    activity?.window?.decorView?.postDelayed(prepare, 500)
+                    controller.resume()
                 }
 
                 override fun onPause(owner: androidx.lifecycle.LifecycleOwner) {
-                    activity?.window?.decorView?.removeCallbacks(prepare)
-                    app.luoxianlv.wallpaper.render.PreparedWallpaper.pause(lease)
+                    controller.pause()
                 }
 
                 override fun onDestroy(owner: androidx.lifecycle.LifecycleOwner) {
-                    app.luoxianlv.wallpaper.render.PreparedWallpaper.clear(lease)
+                    controller.close()
                 }
             }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
-            activity?.window?.decorView?.removeCallbacks(prepare)
             lifecycleOwner.lifecycle.removeObserver(observer)
-            app.luoxianlv.wallpaper.render.PreparedWallpaper.clear(lease)
+            controller.close()
         }
+    }
+    // Initial 阶段只观察按下状态；不消费事件，也不影响按钮、列表和 Pager 的手势。
+    return Modifier.pointerInput(controller) {
+        try {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    controller.touching(event.changes.any { it.pressed })
+                }
+            }
+        } finally {
+            controller.touching(false)
+        }
+    }
+}
+
+private class StagePrewarmController(
+    private val schedule: IdlePrewarmSchedule,
+    private val claim: () -> Unit,
+    private val clear: () -> Unit,
+) {
+    private var resumed = false
+    private var enabled = false
+    private var moving = false
+    private var touching = false
+    private var closed = false
+
+    fun update(enabled: Boolean, moving: Boolean) {
+        this.enabled = enabled
+        this.moving = moving
+        refresh()
+    }
+
+    fun touching(pressed: Boolean) {
+        touching = pressed
+        refresh()
+    }
+
+    fun resume() {
+        if (closed) return
+        claim()
+        resumed = true
+        refresh()
+    }
+
+    fun pause() {
+        resumed = false
+        refresh()
+    }
+
+    private fun refresh() = schedule.update(resumed && enabled && !moving && !touching)
+
+    fun close() {
+        if (closed) return
+        closed = true
+        schedule.close()
+        clear()
+    }
+}
+
+/** 绘制监听不能在回调中移除；先 post 到绘制结束，再等待主线程 MessageQueue 空闲。 */
+private class PrewarmFrameQueue(private val decor: View) {
+    private val queue = Looper.myQueue()
+    private var observer: ViewTreeObserver? = null
+    private var draw: ViewTreeObserver.OnDrawListener? = null
+    private var afterDraw: Runnable? = null
+    private var idle: MessageQueue.IdleHandler? = null
+
+    fun enqueue(prepare: Runnable) {
+        cancel()
+        val next = decor.viewTreeObserver
+        val after = Runnable {
+            removeDrawListener()
+            afterDraw = null
+            val handler = MessageQueue.IdleHandler {
+                idle = null
+                prepare.run()
+                false
+            }
+            idle = handler
+            queue.addIdleHandler(handler)
+        }
+        var posted = false
+        val listener = ViewTreeObserver.OnDrawListener {
+            if (!posted) {
+                posted = true
+                decor.post(after)
+            }
+        }
+        observer = next
+        draw = listener
+        afterDraw = after
+        next.addOnDrawListener(listener)
+        decor.invalidate()
+    }
+
+    fun cancel() {
+        afterDraw?.let(decor::removeCallbacks)
+        afterDraw = null
+        idle?.let(queue::removeIdleHandler)
+        idle = null
+        removeDrawListener()
+    }
+
+    private fun removeDrawListener() {
+        val listener = draw
+        if (listener != null && observer?.isAlive == true) observer?.removeOnDrawListener(listener)
+        draw = null
+        observer = null
     }
 }
 

@@ -131,6 +131,7 @@ dependencies {
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.navigation.compose)
     implementation(libs.fastkv)
+    implementation(libs.webkit)
     releaseImplementation(libs.umeng.common)
     releaseImplementation(libs.umeng.asms)
     releaseImplementation(libs.umeng.uyumao)

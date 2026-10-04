@@ -5,6 +5,7 @@ import android.content.res.ColorStateList
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.MessageQueue
 import android.view.ContextThemeWrapper
 import android.view.MotionEvent
 import android.view.View
@@ -65,9 +66,16 @@ class FloatingControls(private val service: PlaybackSession) {
     private var restoredExpanded: Boolean? = null
     private var speedControlsVisible = false
     private var panel: FloatingPanel? = null
+    private var cachedPanel: FloatingPanel? = null
+    private var cachedPanelGeometry: FloatingDisplayGeometry? = null
+    private var cachedPanelPalette: PlayerUiPalette? = null
+    private var panelPrewarm: MessageQueue.IdleHandler? = null
     private var displayRequested = false
     private var showRetries = 0
     private var destroyed = false
+    private var displayedGeometry: FloatingDisplayGeometry? = null
+    private var pendingGeometry: FloatingDisplayGeometry? = null
+    private val applyGeometry = Runnable { applyDisplayGeometry() }
     var revision = 0L
         private set
 
@@ -78,7 +86,9 @@ class FloatingControls(private val service: PlaybackSession) {
                 panel?.touching == true ||
                 playlistWindow.isShowing ||
                 playlistJob?.isActive == true ||
-                dockAnimator?.isRunning == true
+                dockAnimator?.isRunning == true ||
+                pendingGeometry != null ||
+                panelPrewarm != null
 
     val released
         get() = destroyed && scope.coroutineContext[Job]?.isCompleted == true
@@ -138,7 +148,18 @@ class FloatingControls(private val service: PlaybackSession) {
     }
 
     fun hide() {
+        detachWindow()
+        cachedPanel = null
+        cachedPanelGeometry = null
+        cachedPanelPalette = null
+    }
+
+    private fun detachWindow() {
         revision++
+        cancelPanelPrewarm()
+        handler.removeCallbacks(applyGeometry)
+        pendingGeometry = null
+        displayedGeometry = null
         touching = false
         displayRequested = false
         dockAnimator?.cancel()
@@ -162,7 +183,85 @@ class FloatingControls(private val service: PlaybackSession) {
     }
 
     fun reposition() {
-        if (root != null) render(expanded)
+        if (destroyed || !displayRequested) return
+        val geometry = service.floatingGeometry()
+        if (geometry == displayedGeometry || geometry == pendingGeometry) return
+        revision++
+        cancelPanelPrewarm()
+        pendingGeometry = geometry
+        handler.removeCallbacks(applyGeometry)
+        // 合并转屏的短时连发通知，亮度和刷新率变化不会进入此路径。
+        handler.postDelayed(applyGeometry, DISPLAY_SETTLE_MS)
+    }
+
+    private fun applyDisplayGeometry() {
+        if (destroyed || !displayRequested) {
+            pendingGeometry = null
+            return
+        }
+        if (touching || panel?.touching == true || dockAnimator?.isRunning == true) {
+            handler.postDelayed(applyGeometry, DISPLAY_SETTLE_MS)
+            return
+        }
+        val geometry = service.floatingGeometry()
+        pendingGeometry = null
+        if (geometry == displayedGeometry) return
+        if (playlistWindow.isShowing) {
+            if (geometry.needsNewContent(displayedGeometry) || !playlistWindow.reposition()) {
+                dismissPlaylist()
+                return
+            }
+            displayedGeometry = geometry
+            return
+        }
+        val view = root ?: return
+        val layout = params ?: return
+        if (geometry.needsNewContent(displayedGeometry)) {
+            render(expanded)
+            return
+        }
+        updateLayout(view, layout, geometry)
+        preparePanelWhenIdle()
+    }
+
+    private fun updateLayout(
+        view: View,
+        layout: WindowManager.LayoutParams,
+        geometry: FloatingDisplayGeometry,
+        remeasure: Boolean = false,
+        updateAnchor: Boolean = true,
+    ) {
+        val width = geometry.windowWidth(expanded, context.dp(44), context.dp(236), context.dp(16))
+        if (layout.width != width || remeasure) {
+            layout.width = width
+            view.measure(
+                View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+        }
+        val position =
+            geometry.position(
+                layout.x,
+                layout.y,
+                layout.width,
+                view.measuredHeight,
+                context.dp(24),
+                expanded,
+                dock,
+            )
+        layout.x = position.x
+        layout.y = position.y
+        try {
+            wm.updateViewLayout(view, layout)
+            displayedGeometry = geometry
+            if (updateAnchor) {
+                x = position.x
+                y = position.y
+            }
+        } catch (_: IllegalArgumentException) {
+            // 系统已移除窗口时才重新挂载，普通转屏保留现有内容与触摸状态。
+            render(expanded)
+        }
     }
 
     /**
@@ -183,16 +282,17 @@ class FloatingControls(private val service: PlaybackSession) {
         if (destroyed || !displayRequested || !PlaybackBridge.isEnabled(service)) return
         if (!open) speedControlsVisible = false
         palette = PlayerUi.palette(context)
-        // render 会先 hide() → dismissPlaylist()，先清标记避免在里面递归恢复面板。
+        // 先清标记再摘下窗口，避免关闭选歌窗时递归恢复面板。
         panelHiddenForPicker = false
-        hide()
+        detachWindow()
         displayRequested = true
         expanded = open
-        val bounds = service.screenBounds()
+        val geometry = service.floatingGeometry()
+        discardOldPanel(geometry)
         val view: View
         val width: Int
         if (!open) {
-            width = context.dp(44)
+            width = geometry.windowWidth(false, context.dp(44), context.dp(236), context.dp(16))
             view =
                 ImageView(context).apply {
                     setImageResource(R.drawable.ic_music_note)
@@ -206,24 +306,13 @@ class FloatingControls(private val service: PlaybackSession) {
                 }
             attachDrag(view, true)
         } else {
-            width = minOf(context.dp(236), bounds.width() - context.dp(16))
+            width = geometry.windowWidth(true, context.dp(44), context.dp(236), context.dp(16))
             view =
-                FloatingPanel(
-                        context,
-                        palette,
-                        service,
-                        speedControlsVisible,
-                        onSelectSong = {
-                            if (!playlistWindow.isShowing) showPlaylist() else dismissPlaylist()
-                        },
-                        onToggleSpeed = {
-                            speedControlsVisible = !speedControlsVisible
-                            render(true)
-                        },
-                        onCollapse = { render(false) },
-                        onAttachDrag = { attachDrag(it, false) },
-                    )
-                    .also { panel = it }
+                panelFor(geometry).also {
+                    it.showSpeedControls(speedControlsVisible)
+                    it.refresh()
+                    panel = it
+                }
         }
         view.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -233,27 +322,27 @@ class FloatingControls(private val service: PlaybackSession) {
             FloatingWindowLayout.create(width, if (open) -2 else context.dp(44)).apply {
                 // 仅气泡允许越过屏幕边缘，面板和选歌窗始终完整可见。
                 if (!open) flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                x =
-                    (if (open) FloatingDock.NONE else dock).position(
-                        if (dock == FloatingDock.RIGHT) bounds.width() - width
-                        else this@FloatingControls.x,
-                        bounds.width(),
+                val position =
+                    geometry.position(
+                        this@FloatingControls.x,
+                        this@FloatingControls.y,
                         width,
-                    )
-                y =
-                    this@FloatingControls.y.coerceIn(
+                        view.measuredHeight,
                         context.dp(24),
-                        (bounds.height() - view.measuredHeight - context.dp(24)).coerceAtLeast(
-                            context.dp(24)
-                        ),
+                        open,
+                        dock,
                     )
+                x = position.x
+                y = position.y
             }
         view.alpha = if (!open && dock != FloatingDock.NONE) DOCK_ALPHA else 1f
         try {
             wm.addView(view, params)
             root = view
+            displayedGeometry = geometry
             showRetries = 0
             handler.post(tick)
+            if (!open) preparePanelWhenIdle()
         } catch (_: WindowManager.BadTokenException) {
             root = null
             // 部分系统稍后才绑定无障碍窗口；取得窗口令牌后重试。
@@ -262,6 +351,85 @@ class FloatingControls(private val service: PlaybackSession) {
             root = null
             retryShow()
         }
+    }
+
+    private fun discardOldPanel(geometry: FloatingDisplayGeometry) {
+        if (geometry.needsNewContent(cachedPanelGeometry) || palette != cachedPanelPalette) {
+            cachedPanel = null
+            cachedPanelGeometry = null
+            cachedPanelPalette = null
+        }
+    }
+
+    private fun panelFor(geometry: FloatingDisplayGeometry): FloatingPanel {
+        discardOldPanel(geometry)
+        return cachedPanel
+            ?: FloatingPanel(
+                    context,
+                    palette,
+                    service,
+                    speedControlsVisible,
+                    onSelectSong = {
+                        if (!playlistWindow.isShowing) showPlaylist() else dismissPlaylist()
+                    },
+                    onToggleSpeed = {
+                        revision++
+                        speedControlsVisible = !speedControlsVisible
+                        panel?.let { view ->
+                            view.showSpeedControls(speedControlsVisible)
+                            params?.let {
+                                // 倍速区变高只钳制面板，不改变气泡的拖动锚点。
+                                updateLayout(view, it, service.floatingGeometry(), true, false)
+                            }
+                        }
+                    },
+                    onCollapse = { render(false) },
+                    onAttachDrag = { attachDrag(it, false) },
+                )
+                .also {
+                    cachedPanel = it
+                    cachedPanelGeometry = geometry
+                    cachedPanelPalette = palette
+                }
+    }
+
+    private fun cancelPanelPrewarm() {
+        panelPrewarm?.let { Looper.myQueue().removeIdleHandler(it) }
+        panelPrewarm = null
+    }
+
+    private fun preparePanelWhenIdle() {
+        if (
+            destroyed ||
+                !displayRequested ||
+                expanded ||
+                root == null ||
+                cachedPanel != null ||
+                panelPrewarm != null
+        )
+            return
+        panelPrewarm = MessageQueue.IdleHandler {
+            panelPrewarm = null
+            if (
+                !destroyed &&
+                    displayRequested &&
+                    !expanded &&
+                    root != null &&
+                    !interacting &&
+                    !service.playing &&
+                    !service.preparing
+            ) {
+                // View 仍在主线程创建；空闲时提前准备，不附加系统窗口。
+                try {
+                    palette = PlayerUi.palette(context)
+                    panelFor(service.floatingGeometry())
+                } catch (error: Exception) {
+                    AppLog.w("悬浮窗", "提前准备播放器失败，将在展开时重试", error)
+                }
+            }
+            false
+        }
+        Looper.myQueue().addIdleHandler(panelPrewarm!!)
     }
 
     private fun retryShow() {
@@ -294,6 +462,7 @@ class FloatingControls(private val service: PlaybackSession) {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     revision++
+                    cancelPanelPrewarm()
                     touching = true
                     dockAnimator?.cancel()
                     dockAnimator = null
@@ -351,6 +520,7 @@ class FloatingControls(private val service: PlaybackSession) {
                     } else if (clickable) {
                         v.performClick()
                     }
+                    preparePanelWhenIdle()
                     true
                 }
 
@@ -361,6 +531,7 @@ class FloatingControls(private val service: PlaybackSession) {
                     p.x = bx
                     p.y = by
                     settleDock()
+                    preparePanelWhenIdle()
                     true
                 }
 
@@ -404,6 +575,7 @@ class FloatingControls(private val service: PlaybackSession) {
 
     private companion object {
         const val DOCK_ALPHA = 0.45f
+        const val DISPLAY_SETTLE_MS = 80L
     }
 
     fun refresh() {
@@ -446,6 +618,7 @@ class FloatingControls(private val service: PlaybackSession) {
                 },
                 onDismiss = ::dismissPlaylist,
             )
+        if (opened) displayedGeometry = service.floatingGeometry()
         if (!opened) panelHiddenForPicker = false
     }
 

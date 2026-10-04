@@ -17,11 +17,15 @@ import app.luoxianlv.business.ui.findActivity
 import app.luoxianlv.hot.contract.OfficialAssets
 import app.luoxianlv.hot.contract.OfficialResources
 import java.io.ByteArrayInputStream
+import app.luoxianlv.wallpaper.render.WebViewStartup
+import kotlinx.coroutines.*
 
 /** 一个业务加载器至多持有一个验证WebView；窗口共享结果，退役取消并释放所有回调。 */
 internal object OfficialRendererGate {
     private var source: OfficialResources? = null
     private var job: Check? = null
+    private var startup: Job? = null
+    private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var retired = false
     private var jsPassed = false
     private var visualPassed = false
@@ -37,7 +41,7 @@ internal object OfficialRendererGate {
     }
     fun required() = !retired && source?.mounted("wallpaperengine") == true
     fun resourcesReady() = !retired && (!required() || (visualPassed && failure == null))
-    fun released() = job == null && waiters.isEmpty() && failures.isEmpty()
+    fun released() = job == null && startup?.isActive != true && waiters.isEmpty() && failures.isEmpty()
 
     fun verify(context: Context, parent: ViewGroup?, visual: Boolean, complete: (Throwable?) -> Unit): AutoCloseable {
         check(Looper.myLooper() == Looper.getMainLooper() && !retired)
@@ -51,15 +55,23 @@ internal object OfficialRendererGate {
         if ((visual && visualPassed) || (!visual && jsPassed)) complete(null)
         else {
             waiters[token] = Waiter(visual, parent, activity, complete)
-            try {
-                if (job == null) job = Check(context)
-                job?.start()
-                job?.refreshWindow()
-            } catch (error: Throwable) { finish(false, false, error) }
+            if (job != null) job?.refreshWindow()
+            else if (startup?.isActive != true) startup = startupScope.launch {
+                try {
+                    WebViewStartup.await(context)
+                    if (!retired && waiters.isNotEmpty()) {
+                        job = Check(context)
+                        job?.start()
+                        job?.refreshWindow()
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Throwable) { if (!retired && waiters.isNotEmpty()) finish(false, false, error) }
+                finally { if (startup === coroutineContext[Job]) startup = null }
+            }
         }
         return AutoCloseable {
             waiters.remove(token); failures.remove(token)
-            if (waiters.isEmpty()) { job?.close(); job = null }
+            if (waiters.isEmpty()) { startup?.cancel(); job?.close(); job = null }
             else job?.refreshWindow()
         }
     }
@@ -78,7 +90,7 @@ internal object OfficialRendererGate {
         }
     }
     fun retire() {
-        retired = true; waiters.clear(); failures.clear(); job?.close(); job = null
+        retired = true; startupScope.cancel(); waiters.clear(); failures.clear(); job?.close(); job = null
     }
     fun reject(error: Throwable) { visualPassed = false; finish(false, false, error) }
 

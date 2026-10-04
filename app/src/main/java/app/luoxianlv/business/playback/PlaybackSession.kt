@@ -33,6 +33,7 @@ import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.service.DisplayStability
 import app.luoxianlv.service.DisplayState
 import app.luoxianlv.service.FloatingControls
+import app.luoxianlv.service.FloatingDisplayGeometry
 import app.luoxianlv.service.PlaybackCoordinates
 import app.luoxianlv.service.PlaybackInterruptionGuard
 import app.luoxianlv.ui.practice.PracticeGeometry
@@ -59,6 +60,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private var active = false
     private var monitoring = false
     private var changeRevision = 0L
+    private var listenerGeometry: FloatingDisplayGeometry? = null
     private var restoredFloating = false
     private var handoverPrepared = false
     private val current
@@ -152,15 +154,13 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             override fun onDisplayRemoved(displayId: Int) = Unit
 
             override fun onDisplayChanged(displayId: Int) {
-                if (!current) return
+                if (!current || displayId != Display.DEFAULT_DISPLAY) return
+                val geometry = floatingGeometry()
+                if (geometry == listenerGeometry) return
+                listenerGeometry = geometry
                 changeRevision++
-                if (displayId == Display.DEFAULT_DISPLAY && ::floating.isInitialized)
-                    floating.reposition()
-                if (
-                    displayId == Display.DEFAULT_DISPLAY &&
-                        (playing || preparing) &&
-                        playbackDisplay != displayState()
-                ) {
+                if (::floating.isInitialized) floating.reposition()
+                if ((playing || preparing) && playbackDisplay != displayState()) {
                     beginDisplayRecovery()
                 }
             }
@@ -299,6 +299,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     private fun monitor() {
         if (monitoring) return
+        listenerGeometry = floatingGeometry()
         getSystemService(DisplayManager::class.java)
             .registerDisplayListener(displayListener, handler)
         monitoring = true
@@ -862,6 +863,18 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         val display = displayState()
         val frame = coordinateFrame?.takeIf { playbackDisplay == display }
         return Rect(0, 0, frame?.width ?: display.width, frame?.height ?: display.height)
+    }
+
+    internal fun floatingGeometry(): FloatingDisplayGeometry {
+        val display = displayState()
+        val frame = coordinateFrame?.takeIf { playbackDisplay == display }
+        return FloatingDisplayGeometry(
+            frame?.width ?: display.width,
+            frame?.height ?: display.height,
+            display.rotation,
+            resources.displayMetrics.densityDpi,
+            resources.configuration.fontScale,
+        )
     }
 
     fun diagnostics(): PlaybackConnection.Diagnostics =

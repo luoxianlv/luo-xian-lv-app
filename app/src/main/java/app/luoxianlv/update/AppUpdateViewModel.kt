@@ -193,6 +193,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                 source.size.takeIf { it > 0 }
                     ?: release.size.takeIf { it > 0 }
                     ?: active.contentLengthLong
+            val progress = DownloadProgressThrottle()
             active.inputStream.use { input ->
                 partial.outputStream().use { output ->
                     val bytes = ByteArray(64 * 1024)
@@ -204,7 +205,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                         total += count
                         require(total <= 512L * 1024 * 1024) { "安装包大小超出限制" }
                         output.write(bytes, 0, count)
-                        if (length > 0)
+                        if (length > 0 && progress.shouldPublish(System.nanoTime()))
                             _state.update {
                                 it.copy(progress = (total.toFloat() / length).coerceIn(0f, 1f))
                             }
@@ -370,8 +371,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
                                 )
                             ),
                         mandatory = false,
-                        sources =
-                            listOf(UpdateSource("oss", "$baseUrl/api/update/oss")),
+                        sources = listOf(UpdateSource("oss", "$baseUrl/api/update/oss")),
                     ),
                 selectedSource = "oss",
             )

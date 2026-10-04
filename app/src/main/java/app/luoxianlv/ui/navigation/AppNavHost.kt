@@ -53,8 +53,10 @@ import app.luoxianlv.update.AppUpdateViewModel
 import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -96,7 +98,11 @@ fun AppNavHost(
     }
 
     // 预加载跟随导航宿主，不能随首页被 Pager 回收而反复销毁、重建 WebView。
-    StagePrewarmEffect()
+    val prewarmInteraction =
+        StagePrewarmEffect(
+            enabled = pageVisible && subPage == null,
+            moving = pagerState.isScrollInProgress,
+        )
 
     fun goTab(route: String) {
         val index = tabs.indexOf(route)
@@ -134,7 +140,6 @@ fun AppNavHost(
             }
         }
     val libraryActive = pagerState.currentPage == HOME_INDEX
-    val updateState by appUpdates.state.collectAsState()
     val activity = checkNotNull(LocalContext.current.findActivity())
     val updater = remember { PlatformClient(activity) }
     // U-App 页面统计：单 Activity + Compose 只能手动按页面名打点（U-APM 的页面维度是 Activity）。
@@ -144,11 +149,7 @@ fun AppNavHost(
         Analytics.pageStart(currentPage)
         onDispose { Analytics.pageEnd(currentPage) }
     }
-    app.luoxianlv.ui.components.SnackbarNotice(
-        updateState.message,
-        snackbarHostState,
-        appUpdates::consumeMessage,
-    )
+    UpdateNoticeHost(appUpdates, snackbarHostState)
 
     // 仅内部测试版：注册导出广播，adb 可主动触发更新弹窗用于 UI 验证。
     if (app.luoxianlv.BuildConfig.INTERNAL_BUILD) {
@@ -190,7 +191,7 @@ fun AppNavHost(
     ) { padding ->
         // 外层不加内边距：渐变底要顶到屏幕边缘。
         // 内边距加在内层，与参考实现 HomeScaffold 的 windowInsetsPadding 位置一致。
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.fillMaxSize().then(prewarmInteraction)) {
             // 四个顶级页面共用同一张渐变底，所以常驻绘制，
             // 不需要再跟滑动位置做淡入淡出。
             GradientBackdrop()
@@ -322,11 +323,10 @@ fun AppNavHost(
                                     }
 
                                     Routes.ABOUT -> {
-                                        AboutScreen(
+                                        UpdateAboutScreen(
+                                            appUpdates = appUpdates,
                                             onBack = { subPage = null },
                                             snackbarHostState = snackbarHostState,
-                                            onCheckUpdate = { appUpdates.check(manual = true) },
-                                            checkingUpdate = updateState.checking,
                                         )
                                     }
 
@@ -376,13 +376,53 @@ fun AppNavHost(
                 FloatingNavBar(position = position, onNavigate = ::goTab)
             }
 
-            app.luoxianlv.ui.components.AppUpdateDialog(
-                state = updateState,
-                onDismiss = appUpdates::dismiss,
-                onSource = appUpdates::selectSource,
-                onDownload = appUpdates::download,
-                onInstall = { appUpdates.install(activity) },
-            )
+            UpdateDialogHost(appUpdates)
         }
     }
+}
+
+/** 下载进度只重组弹窗，不能沿着 Scaffold 使整个导航树失效。 */
+@Composable
+private fun UpdateDialogHost(appUpdates: AppUpdateViewModel) {
+    val state by appUpdates.state.collectAsState()
+    val activity = checkNotNull(LocalContext.current.findActivity())
+    app.luoxianlv.ui.components.AppUpdateDialog(
+        state = state,
+        onDismiss = appUpdates::dismiss,
+        onSource = appUpdates::selectSource,
+        onDownload = appUpdates::download,
+        onInstall = { appUpdates.install(activity) },
+    )
+}
+
+@Composable
+private fun UpdateNoticeHost(
+    appUpdates: AppUpdateViewModel,
+    snackbarHostState: SnackbarHostState,
+) {
+    val messages =
+        remember(appUpdates) { appUpdates.state.map { it.message }.distinctUntilChanged() }
+    val message by messages.collectAsState(initial = appUpdates.state.value.message)
+    app.luoxianlv.ui.components.SnackbarNotice(
+        message,
+        snackbarHostState,
+        appUpdates::consumeMessage,
+    )
+}
+
+@Composable
+private fun UpdateAboutScreen(
+    appUpdates: AppUpdateViewModel,
+    onBack: () -> Unit,
+    snackbarHostState: SnackbarHostState,
+) {
+    val checks =
+        remember(appUpdates) { appUpdates.state.map { it.checking }.distinctUntilChanged() }
+    val checking by checks.collectAsState(initial = appUpdates.state.value.checking)
+    AboutScreen(
+        onBack = onBack,
+        snackbarHostState = snackbarHostState,
+        onCheckUpdate = { appUpdates.check(manual = true) },
+        checkingUpdate = checking,
+    )
 }

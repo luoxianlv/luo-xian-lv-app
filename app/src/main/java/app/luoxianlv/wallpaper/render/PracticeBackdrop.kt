@@ -24,13 +24,18 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     private var suspended = false
     private var soundEnabled = false
     private var initialized = false
+    private var enginePrepared = false
+    private var enginePreparation: Job? = null
     private var renderingRequested = !deferRendering
     var onPrepared: (() -> Unit)? = null
     var onOfficialFailure: ((Throwable) -> Unit)? = null
     var officialFailure: Throwable? = null
         private set
+
     val prepared
-        get() = officialFailure == null && (renderState == "ready" || renderState == "static" || renderState == "error")
+        get() =
+            officialFailure == null &&
+                (renderState == "ready" || renderState == "static" || renderState == "error")
 
     private val previewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val posterView =
@@ -63,107 +68,139 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     fun startRendering() {
         renderingRequested = true
         if (!initialized) return
-        if (closed || web != null || renderState == "error") return
+        if (closed || suspended || web != null || renderState == "error") return
         if (project != null || WallpaperProjectStore.hasLegacyBundled(context)) {
-            renderState = "loading"
-            AppLog.i("壁纸", "开始加载：${project?.absolutePath ?: "内置项目"}")
-            val browser = WebView(context)
-            web = browser
-            // 透明度为零可能停止 WebView 合成，导致首帧视频无法就绪。
-            browser.alpha = .01f
-            browser.setBackgroundColor(Color.TRANSPARENT)
-            browser.isFocusable = false
-            browser.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-            browser.settings.apply {
-                javaScriptEnabled = true
-                allowFileAccess = false
-                allowContentAccess = false
-                domStorageEnabled = false
-                databaseEnabled = false
-                setGeolocationEnabled(false)
-                mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                mediaPlaybackRequiresUserGesture = false
-                blockNetworkLoads = true
-            }
-            browser.webViewClient =
-                object : WebViewClient() {
-                    private val resources = WallpaperResources(context, project)
-
-                    override fun shouldOverrideUrlLoading(
-                        view: WebView?,
-                        request: WebResourceRequest?,
-                    ): Boolean {
-                        if (request == null || request.isForMainFrame) return true
-                        return request.url.scheme != "blob" &&
-                            !(request.url.scheme == "https" &&
-                                request.url.host == "practice.invalid")
+            if (!enginePrepared) {
+                if (enginePreparation == null)
+                    enginePreparation = previewScope.launch {
+                        try {
+                            WebViewStartup.await(context)
+                            enginePrepared = true
+                            if (!closed && !suspended) startRendering()
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            if (!closed) fail("壁纸引擎初始化失败：${error.javaClass.simpleName}")
+                        } catch (error: LinkageError) {
+                            if (!closed) fail("壁纸引擎接口不可用：${error.javaClass.simpleName}")
+                        }
                     }
+                return
+            }
+            try {
+                createRenderer()
+            } catch (error: Exception) {
+                fail("壁纸实例初始化失败：${error.javaClass.simpleName}")
+            } catch (error: LinkageError) {
+                fail("壁纸实例接口不可用：${error.javaClass.simpleName}")
+            }
+        }
+    }
 
-                    override fun shouldInterceptRequest(
-                        view: WebView?,
-                        request: WebResourceRequest?,
-                    ): WebResourceResponse? = request?.let {
-                        resources.response(it).also {
-                            resources.officialFailure?.let { error ->
-                                BusinessJobs.post(android.os.Handler(android.os.Looper.getMainLooper())) {
-                                    if (!closed) rejectOfficial(error)
-                                }
+    private fun createRenderer() {
+        renderState = "loading"
+        AppLog.i("壁纸", "开始加载：${project?.absolutePath ?: "内置项目"}")
+        val browser = WebView(context)
+        web = browser
+        // 透明度为零可能停止 WebView 合成，导致首帧视频无法就绪。
+        browser.alpha = .01f
+        browser.setBackgroundColor(Color.TRANSPARENT)
+        browser.isFocusable = false
+        browser.importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        browser.settings.apply {
+            javaScriptEnabled = true
+            allowFileAccess = false
+            allowContentAccess = false
+            domStorageEnabled = false
+            databaseEnabled = false
+            setGeolocationEnabled(false)
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            mediaPlaybackRequiresUserGesture = false
+            blockNetworkLoads = true
+        }
+        browser.webViewClient =
+            object : WebViewClient() {
+                private val resources = WallpaperResources(context, project)
+
+                override fun shouldOverrideUrlLoading(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                ): Boolean {
+                    if (request == null || request.isForMainFrame) return true
+                    return request.url.scheme != "blob" &&
+                        !(request.url.scheme == "https" && request.url.host == "practice.invalid")
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                ): WebResourceResponse? = request?.let {
+                    resources.response(it).also {
+                        resources.officialFailure?.let { error ->
+                            BusinessJobs.post(
+                                android.os.Handler(android.os.Looper.getMainLooper())
+                            ) {
+                                if (!closed) rejectOfficial(error)
                             }
                         }
                     }
+                }
 
-                    override fun onRenderProcessGone(
-                        view: WebView,
-                        detail: RenderProcessGoneDetail,
-                    ): Boolean {
-                        fail(
-                            "渲染进程退出：崩溃=${detail.didCrash()}，优先级=${detail.rendererPriorityAtExit()}"
-                        )
-                        return true
-                    }
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: RenderProcessGoneDetail,
+                ): Boolean {
+                    fail("渲染进程退出：崩溃=${detail.didCrash()}，优先级=${detail.rendererPriorityAtExit()}")
+                    return true
                 }
-            browser.webChromeClient =
-                object : WebChromeClient() {
-                    override fun onReceivedTitle(view: WebView?, title: String?) {
-                        if (title == "wallpaper:ready" && !closed && renderState == "loading") {
-                            renderState = "ready"
-                            AppLog.i("壁纸", "首帧已就绪")
-                            (posterView.drawable as? Animatable)?.stop()
-                            posterView.setImageDrawable(null)
-                            browser.alpha = 1f
-                            onPrepared?.invoke()
-                            if (suspended) suspendRendering() else applySound()
-                        }
-                        if (title == "wallpaper:error") fail("引擎报错，详细原因见前一条引擎日志")
-                    }
-
-                    override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                        if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
-                            (message.message().startsWith("Uncaught") || message.message().contains("SyntaxError")) &&
-                            !message.sourceId().contains("/project/") &&
-                            app.luoxianlv.hot.contract.OfficialAssets.mounted(context, "wallpaperengine"))
-                            rejectOfficial(IllegalStateException("已声明官方壁纸脚本执行失败"))
-                        val text =
-                            "引擎诊断（${message.sourceId()}:${message.lineNumber()}）：${message.message()}"
-                        when (message.messageLevel()) {
-                            ConsoleMessage.MessageLevel.ERROR -> AppLog.e("壁纸", text)
-                            ConsoleMessage.MessageLevel.WARNING -> AppLog.w("壁纸", text)
-                            else -> AppLog.d("壁纸", text)
-                        }
-                        return true
-                    }
-                }
-            addView(browser, LayoutParams(-1, -1))
-            val time = WallpaperProjectStore.minute(context)?.let { "?minute=$it" }.orEmpty()
-            browser.loadUrl("https://practice.invalid/index.html$time")
-            previewScope.launch {
-                var activeWait = 0
-                while (!closed && renderState == "loading" && activeWait < 60) {
-                    delay(1000)
-                    if (!suspended) activeWait++
-                }
-                if (!closed && renderState == "loading") fail("首帧等待超过 60 秒")
             }
+        browser.webChromeClient =
+            object : WebChromeClient() {
+                override fun onReceivedTitle(view: WebView?, title: String?) {
+                    if (title == "wallpaper:ready" && !closed && renderState == "loading") {
+                        renderState = "ready"
+                        AppLog.i("壁纸", "首帧已就绪")
+                        (posterView.drawable as? Animatable)?.stop()
+                        posterView.setImageDrawable(null)
+                        browser.alpha = 1f
+                        onPrepared?.invoke()
+                        if (suspended) suspendRendering() else applySound()
+                    }
+                    if (title == "wallpaper:error") fail("引擎报错，详细原因见前一条引擎日志")
+                }
+
+                override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    if (
+                        message.messageLevel() == ConsoleMessage.MessageLevel.ERROR &&
+                            (message.message().startsWith("Uncaught") ||
+                                message.message().contains("SyntaxError")) &&
+                            !message.sourceId().contains("/project/") &&
+                            app.luoxianlv.hot.contract.OfficialAssets.mounted(
+                                context,
+                                "wallpaperengine",
+                            )
+                    )
+                        rejectOfficial(IllegalStateException("已声明官方壁纸脚本执行失败"))
+                    val text =
+                        "引擎诊断（${message.sourceId()}:${message.lineNumber()}）：${message.message()}"
+                    when (message.messageLevel()) {
+                        ConsoleMessage.MessageLevel.ERROR -> AppLog.e("壁纸", text)
+                        ConsoleMessage.MessageLevel.WARNING -> AppLog.w("壁纸", text)
+                        else -> AppLog.d("壁纸", text)
+                    }
+                    return true
+                }
+            }
+        addView(browser, LayoutParams(-1, -1))
+        val time = WallpaperProjectStore.minute(context)?.let { "?minute=$it" }.orEmpty()
+        browser.loadUrl("https://practice.invalid/index.html$time")
+        previewScope.launch {
+            var activeWait = 0
+            while (!closed && renderState == "loading" && activeWait < 60) {
+                delay(1000)
+                if (!suspended) activeWait++
+            }
+            if (!closed && renderState == "loading") fail("首帧等待超过 60 秒")
         }
     }
 
@@ -224,6 +261,7 @@ class PracticeBackdrop(context: Context, deferRendering: Boolean = false) : Fram
     fun resumeRendering() {
         if (closed) return
         suspended = false
+        if (initialized && renderingRequested && web == null) startRendering()
         web?.let {
             it.onResume()
             it.evaluateJavascript(

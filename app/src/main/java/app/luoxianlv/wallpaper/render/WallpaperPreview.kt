@@ -12,44 +12,36 @@ import java.nio.ByteBuffer
 
 /** 选择器和舞台首帧共用有尺寸上限的预览解码。 */
 object WallpaperPreview {
-    private var cachedKey: String? = null
-    private var cachedBytes: ByteArray? = null
+    private val cache = PreviewByteCache()
 
     fun preload(context: Context, root: File?) {
         runCatching { bytes(context, root) }
     }
 
-    @Synchronized
     private fun bytes(context: Context, root: File?): ByteArray {
-        val preview = root?.let(WallpaperProjectStore::preview)
-        val key =
-            preview?.let { "${it.absolutePath}:${it.lastModified()}:${it.length()}" }
-                ?: "bundled:${WallpaperProjectStore.hasBundled(context)}"
-        if (cachedKey == key)
-            cachedBytes?.let {
-                return it
-            }
-        val file = root?.let(WallpaperProjectStore::preview)
-        val bytes =
-            if (file != null && file.length() <= 16L * 1024 * 1024) file.readBytes()
-            else
-                context.assets
-                    .open(
-                        if (WallpaperProjectStore.hasLegacyBundled(context))
-                            "default-wallpaper/preview.gif"
-                        else "practice-sunset.jpg"
-                    )
-                    .use { it.readBytes() }
-        cachedKey = key
-        cachedBytes = bytes
-        return bytes
+        var preview: File? = null
+        return cache.load(
+            key = {
+                preview = root?.let(WallpaperProjectStore::preview)
+                preview?.let { "${it.absolutePath}:${it.lastModified()}:${it.length()}" }
+                    ?: "bundled:${WallpaperProjectStore.hasBundled(context)}"
+            },
+            read = {
+                val file = preview
+                if (file != null && file.length() <= 16L * 1024 * 1024) file.readBytes()
+                else
+                    context.assets
+                        .open(
+                            if (WallpaperProjectStore.hasLegacyBundled(context))
+                                "default-wallpaper/preview.gif"
+                            else "practice-sunset.jpg"
+                        )
+                        .use { it.readBytes() }
+            },
+        )
     }
 
-    @Synchronized
-    fun clearCache() {
-        cachedKey = null
-        cachedBytes = null
-    }
+    fun clearCache() = cache.clear()
 
     fun load(context: Context, root: File?, maxEdge: Int = 960): Drawable? = runCatching {
         val bytes = bytes(context, root)
