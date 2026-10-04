@@ -21,7 +21,7 @@
 
 ```bash
 bash ./gradlew :app-host:assembleDebug
-adb install -r app-host/build/outputs/apk/debug/app-host-debug.apk
+adb install -r modules/app-host/build/outputs/apk/debug/app-host-debug.apk
 ```
 
 Windows PowerShell 使用 `./gradlew.bat :app-host:assembleDebug`。调试包包名为 `app.luoxianlv.debug`，可与正式包共存。
@@ -35,9 +35,9 @@ bash ./gradlew :app:testDebugUnitTest :hot-core:testDebugUnitTest :buildSrc:test
 python tools/format_kotlin.py --check
 ```
 
-运行 `python tools/format_kotlin.py` 可应用 Kotlin 格式。单元测试位于 `app/src/test/`、`hot-core/src/test/` 和 `buildSrc/src/test/`。
+运行 `python tools/format_kotlin.py` 可应用 Kotlin 格式。单元测试位于 `app/src/test/`、`modules/hot-core/src/test/` 和 `buildSrc/src/test/`。
 
-设备测试与专项回归脚本分别位于 `app/src/androidTest/`、`app-host/src/androidTest/` 和 `tools/`。修改触及 Android 生命周期、手势或跨模块加载时，按对应测试入口验证。
+设备测试与专项回归脚本分别位于 `app/src/androidTest/`、`modules/app-host/src/androidTest/` 和 `tools/`。修改触及 Android 生命周期、手势或跨模块加载时，按对应测试入口验证。
 
 原生 Release 构建与发布操作见[发布指南](release.md)。
 

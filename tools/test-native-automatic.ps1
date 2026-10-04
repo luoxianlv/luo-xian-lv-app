@@ -31,7 +31,7 @@ try {
         if ($sandbox -notmatch '^/data/(user/0|data)/app\.luoxianlv\.debug$') { throw '无法确认测试私有目录' }
         Invoke-Adb shell run-as $package rm -rf no_backup/native-update
     }
-    Invoke-Adb install -r (Join-Path $repo 'app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')
+    Invoke-Adb install -r (Join-Path $repo 'modules/app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')
     Invoke-Adb reverse tcp:18472 tcp:18472
     $lines = [Collections.Generic.List[string]]::new()
     $options = @('-e','automaticSnapshot',$Target)

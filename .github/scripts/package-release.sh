@@ -3,7 +3,11 @@ set -euo pipefail
 native_package="${NATIVE_RELEASE_PACKAGE:-false}"
 [[ "$native_package" == true || "$native_package" == false ]] || { echo 'Invalid native package switch' >&2; exit 1; }
 if [[ "$native_package" == true ]]; then
-  test -f app-host/build.gradle.kts && test -f tools/verify-native-release.ps1 \
+  native_root=""
+  if [[ -f modules/app-host/build.gradle.kts ]]; then
+    native_root="modules/"
+  fi
+  test -f "${native_root}app-host/build.gradle.kts" && test -f tools/verify-native-release.ps1 \
     || { echo 'This source tag does not support native packaging' >&2; exit 1; }
   command -v pwsh >/dev/null || { echo 'PowerShell 7 is required for the native artifact audit' >&2; exit 1; }
   test -n "${NATIVE_HOT_CONFIG_JSON:-}" || { echo 'Missing public native hot-update configuration' >&2; exit 1; }
@@ -32,18 +36,18 @@ if [[ "$native_package" == true ]]; then
   build_args+=('-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' '--max-workers=2')
   bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest :app-business:testDebugUnitTest \
     :app-host:exportReleaseNativeBuildReport --no-daemon "${build_args[@]}"
-  apk=app-host/build/outputs/apk/release/app-host-release.apk
+  apk="${native_root}app-host/build/outputs/apk/release/app-host-release.apk"
   pwsh -NoProfile -File tools/verify-native-release.ps1 -ExpectOptimized \
     -HostApk "$apk" -ExpectedCertificateSha256 "$ANDROID_SIGNING_CERT_SHA256"
   mkdir -p native-release-artifacts
   for role in host runtime business; do
-    cp -R "app-$role/build/native-report/release" "native-release-artifacts/$role"
+    cp -R "${native_root}app-$role/build/native-report/release" "native-release-artifacts/$role"
   done
-  cp app-host/build/native-release-verification.json native-release-artifacts/
-  cp hot-contract/build/native-sdk/release/host-contract-sdk.jar native-release-artifacts/
-  cp app-runtime/build/native-sdk/release/runtime-sdk.jar native-release-artifacts/
-  cp app-runtime/build/native-link/release/runtime.apk native-release-artifacts/runtime/
-  cp app-business/build/native-link/release/business.apk native-release-artifacts/business/
+  cp "${native_root}app-host/build/native-release-verification.json" native-release-artifacts/
+  cp "${native_root}hot-contract/build/native-sdk/release/host-contract-sdk.jar" native-release-artifacts/
+  cp "${native_root}app-runtime/build/native-sdk/release/runtime-sdk.jar" native-release-artifacts/
+  cp "${native_root}app-runtime/build/native-link/release/runtime.apk" native-release-artifacts/runtime/
+  cp "${native_root}app-business/build/native-link/release/business.apk" native-release-artifacts/business/
 else
   bash ./gradlew testDebugUnitTest assembleRelease --no-daemon "${build_args[@]}"
   apk=app/build/outputs/apk/release/app-release.apk
@@ -69,7 +73,7 @@ test "v$version" = "$RELEASE_TAG" || { echo 'APK version does not match release 
 
 mkdir -p dist
 if [[ "$native_package" == true ]]; then
-  cp app-host/build/native-release-verification.json dist/native-release-verification.json
+  cp "${native_root}app-host/build/native-release-verification.json" dist/native-release-verification.json
 fi
 asset="luoxianlv-${RELEASE_TAG}-release.apk"
 cp "$apk" "dist/$asset"

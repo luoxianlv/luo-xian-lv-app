@@ -91,7 +91,7 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
-    sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("hot-core/src/test/resources"))
+    sourceSets.getByName("androidTest").assets.srcDir(rootProject.project(":hot-core").file("src/test/resources"))
 }
 
 // 等价于官方文档里 efs { enable = true; whiteList = ["app.luoxianlv"] } 的效果。

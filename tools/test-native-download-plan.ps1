@@ -10,13 +10,13 @@ $hamcrest=(Get-ChildItem -LiteralPath (Join-Path $cache 'org.hamcrest/hamcrest-c
 $classes=Join-Path $repoRoot ('.local/native-download-plan-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($classes)
 $inputs=@(
-    (Join-Path $repoRoot 'app-host/src/androidTest/java/app/luoxianlv/host/NativeDownloadChecks.java'),
-    (Join-Path $repoRoot 'app-host/src/androidTest/java/app/luoxianlv/host/NativeNetworkChecks.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeDownloadChecks.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeNetworkChecks.java'),
     (Join-Path $repoRoot 'tools/test-support/NativeDownloadPlanTest.java'))
 $classpath=@(
-    (Join-Path $repoRoot 'app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
-    (Join-Path $repoRoot 'hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
-    (Join-Path $repoRoot 'hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
+    (Join-Path $repoRoot 'modules/app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
+    (Join-Path $repoRoot 'modules/hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
+    (Join-Path $repoRoot 'modules/hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
     $sdk,$junit,$hamcrest) -join ';'
 $arguments=@('-encoding','UTF-8','--release','17','-classpath',$classpath,'-d',$classes)+$inputs
 $argfile=Join-Path $classes 'compiler.args'

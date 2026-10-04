@@ -43,7 +43,7 @@ Windows PowerShell：
 ./gradlew.bat :app-host:assembleDebug
 ```
 
-安装包位于 `app-host/build/outputs/apk/debug/app-host-debug.apk`。该构建会将运行时与业务基线打包到宿主中，调试包可与正式包共存。
+安装包位于 `modules/app-host/build/outputs/apk/debug/app-host-debug.apk`。该构建会将运行时与业务基线打包到宿主中，调试包可与正式包共存。
 
 运行单元测试与格式检查：
 
@@ -56,10 +56,11 @@ python tools/format_kotlin.py --check
 
 | 目录 | 内容 |
 | --- | --- |
-| [app/src/main/java/app/luoxianlv](app/src/main/java/app/luoxianlv) | 按功能组织的 Kotlin 代码：曲库、播放、识别、演练场、壁纸等 |
-| [app-host](app-host)、[app-runtime](app-runtime)、[app-business](app-business) | 宿主、运行时与业务模块的构建入口 |
-| [hot-core](hot-core)、[hot-contract](hot-contract)、[business-ui](business-ui) | 热更加载、跨模块契约与页面基础设施 |
-| [tools](tools)、[.github](.github) | 开发工具与 CI、发布自动化 |
+| [app](app) | 业务源码：曲库、播放、识别、演练场、壁纸等 |
+| [modules](modules) | 宿主、运行时、业务 APK 与热更模块 |
+| [samples](samples) | 热更测试应用 |
+| [docs](docs) | 开发、发布与使用文档 |
+| [tools](tools) | 开发和验证脚本 |
 
 目录职责、页面入口和模块边界见[项目结构](docs/project-structure.md)。
 

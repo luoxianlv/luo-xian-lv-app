@@ -2,6 +2,19 @@
 
 业务代码位于 `app/src/main/java/app/luoxianlv/`，按功能组织。页面、状态、存储和执行代码就近维护，包名与目录一致。
 
+## 仓库目录
+
+```text
+├── app/       业务源码与单 APK 构建
+├── modules/   宿主、运行时、业务 APK 与热更模块
+├── samples/   热更测试应用
+├── docs/      开发、发布与使用文档
+├── tools/     开发和验证脚本
+├── buildSrc/  Gradle 构建逻辑
+├── gradle/    Gradle Wrapper
+└── .github/   CI 与发布工作流
+```
+
 ## 功能目录
 
 ```text
@@ -39,18 +52,18 @@ app/src/main/java/app/luoxianlv/
 
 ## 构建模块
 
-| 模块 | 职责 |
+| 目录 | 职责 |
 | --- | --- |
-| `app-host` | 可安装的纯 Java 宿主和系统组件 |
-| `hot-core` | 签名、下载、加载、激活与恢复 |
-| `hot-contract` | 宿主与业务的稳定 Java 接口 |
-| `app-runtime` | Kotlin、Compose 和第三方依赖 |
-| `app-business` | 业务 APK，直接编译功能目录中的 Kotlin |
-| `business-ui` | 页面容器、状态交接、主题和资源基础 |
-| `app` | 单 APK 构建及业务测试入口 |
-| `hot-runtime`、`hot-business` | 热更引擎测试应用 |
+| `modules/app-host/` | 可安装的纯 Java 宿主和系统组件 |
+| `modules/hot-core/` | 签名、下载、加载、激活与恢复 |
+| `modules/hot-contract/` | 宿主与业务的稳定 Java 接口 |
+| `modules/app-runtime/` | Kotlin、Compose 和第三方依赖 |
+| `modules/app-business/` | 业务 APK，直接编译功能目录中的 Kotlin |
+| `modules/business-ui/` | 页面容器、状态交接、主题和资源基础 |
+| `app/` | 单 APK 构建及业务测试入口 |
+| `samples/hot-runtime/`、`samples/hot-business/` | 热更引擎测试应用 |
 
-正式安装包由 `app-host` 加载 `app-runtime` 和 `app-business`。模块划分承担运行边界，功能目录承担阅读与维护；业务源码只保留一份。
+正式安装包由 `app-host` 加载 `app-runtime` 和 `app-business`。Gradle 模块名保持原样，例如 `:app-host:assembleDebug`。业务源码只保留一份。
 
 `app` 中保留少量 Java 系统桥，位于根目录、`service/` 和 `ui/practice/`。它们的类名与正式宿主保持一致，功能实现放在 Kotlin 目录。系统组件、`AppBusinessFactory` 和公开契约的兼容要求见[热更机制](hot-update.md)。
 

@@ -30,21 +30,21 @@ foreach ($path in @($Fixture, $AuthDirectory)) {
 }
 if (!$Lxhot) { $Lxhot = Join-Path $hotRepo 'bin/lxhot.exe' }
 $Lxhot = (Resolve-Path -LiteralPath $Lxhot).Path
-$currentHost = Join-Path $repo 'app-host/build/outputs/apk/debug/app-host-debug.apk'
+$currentHost = Join-Path $repo 'modules/app-host/build/outputs/apk/debug/app-host-debug.apk'
 if (!$HostApk) { $HostApk = $currentHost }
 $HostApk = (Resolve-Path -LiteralPath $HostApk).Path
 if ((Get-FileHash -LiteralPath $HostApk -Algorithm SHA256).Hash -ne
     (Get-FileHash -LiteralPath $currentHost -Algorithm SHA256).Hash) {
     throw '宿主冻结副本必须与本轮当前 app-host Debug 输出完全一致；不能复用旧 host-baseline.apk'
 }
-$testApk = (Resolve-Path -LiteralPath (Join-Path $repo 'app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')).Path
+$testApk = (Resolve-Path -LiteralPath (Join-Path $repo 'modules/app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')).Path
 $rootKey = (Resolve-Path -LiteralPath (Join-Path $Fixture 'root.public.json')).Path
 $tokenFile = (Resolve-Path -LiteralPath (Join-Path $AuthDirectory 'admin-token')).Path
 $origin = $TestOrigin
 $package = 'app.luoxianlv.debug'
 $component = "$package/app.luoxianlv.service.MusicAccessibilityService"
 $runId = [Guid]::NewGuid().ToString('N')
-$continuousSource = [IO.File]::ReadAllText((Join-Path $repo 'app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'))
+$continuousSource = [IO.File]::ReadAllText((Join-Path $repo 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'))
 $continuousBudgetMatch = [regex]::Matches($continuousSource, 'static final long STAGE_TIMEOUT_MILLIS = ([0-9]+);')
 if ($continuousBudgetMatch.Count -ne 1) { throw '无法读取本轮实际仪器共同阶段期限' }
 $stageTimeoutMillis = [long]$continuousBudgetMatch[0].Groups[1].Value
@@ -298,7 +298,7 @@ function Read-State {
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $config = Read-ApkJson 'assets/hot/config.json'
 $baseline = Read-ApkJson 'assets/baseline/index.json'
-$metadata = Get-Content -LiteralPath (Join-Path $repo 'app-host/build/outputs/apk/debug/output-metadata.json') -Raw | ConvertFrom-Json
+$metadata = Get-Content -LiteralPath (Join-Path $repo 'modules/app-host/build/outputs/apk/debug/output-metadata.json') -Raw | ConvertFrom-Json
 $versionCode = [long]$metadata.elements[0].versionCode
 if ($versionCode -lt 1 -or $versionCode -gt [int]::MaxValue) { throw '宿主安装版本号无效' }
 $publicRoot = Get-Content -LiteralPath $rootKey -Raw | ConvertFrom-Json

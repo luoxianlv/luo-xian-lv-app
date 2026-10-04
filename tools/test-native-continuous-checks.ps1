@@ -56,7 +56,7 @@ Require-Continuous ($trace.Contains("'$other'")) 'Dollar-containing service was 
 Require-Continuous (!$trace.Contains(' rm ')) 'Fresh removed history.'
 $script:continuousEnabled=$true; $script:continuousRunning=$false
 Reject-Continuous { Invoke-Adb shell am force-stop $package; Invoke-Adb install -r $HostApk; Invoke-Adb shell run-as $package mv no_backup/native-update no_backup/archive }
-$continuousJava = [IO.File]::ReadAllText((Join-Path $continuousApp 'app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'))
+$continuousJava = [IO.File]::ReadAllText((Join-Path $continuousApp 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'))
 Require-Continuous (!$continuousJava.Contains('"nextCheck"')) 'Diagnostic nextCheck is still injected.'
 Require-Continuous ($continuousJava.Contains('stageTimeoutMillis') -and $continuousJava.Contains('awaitStage')) 'Actual shared stage deadline missing.'
 Require-Continuous ($continuousJava.IndexOf('save("report.json", report); //') -lt $continuousJava.IndexOf('checkpoint("failed"')) 'Failed control can precede atomic failure report.'
@@ -92,14 +92,14 @@ Write-Output ("Continuous driver policies: $continuousChecks passed; fake ADB on
 
 $continuousProfile = [Environment]::GetFolderPath('UserProfile')
 $continuousAndroid = Join-Path $continuousProfile 'AppData/Local/Android/Sdk/platforms/android-37.0/android.jar'
-$continuousInputs = @('hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes','hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes','app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes','app-business/build/intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes','business-ui/build/intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes','app-runtime/build/native-sdk/debug/runtime-sdk.jar') | ForEach-Object { Join-Path $continuousApp $_ }
+$continuousInputs = @('modules/hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes','modules/hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes','modules/app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes','modules/app-business/build/intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes','modules/business-ui/build/intermediates/built_in_kotlinc/debug/compileDebugKotlin/classes','modules/app-runtime/build/native-sdk/debug/runtime-sdk.jar') | ForEach-Object { Join-Path $continuousApp $_ }
 $continuousClasspath = ($continuousInputs + @($continuousAndroid)) -join ';'
 foreach($continuousInput in $continuousInputs+@($continuousAndroid)){if(!(Test-Path -LiteralPath $continuousInput)){throw "Missing frozen compile input: $continuousInput; no Gradle will run."}}
 $continuousScratch = Join-Path $continuousApp ('.local/continuous-checks-'+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($continuousScratch)
-$continuousFactory = Join-Path $continuousApp 'app-business/src/hotProbe/java/app/luoxianlv/hot/probe/HotProbeFactory.java'
+$continuousFactory = Join-Path $continuousApp 'modules/app-business/src/hotProbe/java/app/luoxianlv/hot/probe/HotProbeFactory.java'
 $continuousHarness = Join-Path $continuousApp 'tools/test-support/NativeProbeResourceBindingChecks.java'
-$continuousHelper = Join-Path $continuousApp 'app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'
+$continuousHelper = Join-Path $continuousApp 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeContinuousChecks.java'
 $continuousClasses = Join-Path $continuousScratch 'classes'
 $continuousFailureChecks = Join-Path $continuousApp 'tools/test-support/NativeContinuousFailureChecks.java'
 & javac '-J-Duser.language=en' '-J-Dfile.encoding=UTF-8' --release 17 -encoding UTF-8 -cp $continuousClasspath -d $continuousClasses $continuousFactory $continuousHarness $continuousHelper $continuousFailureChecks

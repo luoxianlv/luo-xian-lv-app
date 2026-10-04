@@ -58,14 +58,14 @@ jobs:
         with:
           name: native-${{ inputs.variant }}-${{ github.sha }}
           path: |
-            app-host/build/native-report/${{ inputs.variant }}/
-            app-runtime/build/native-report/${{ inputs.variant }}/
-            app-business/build/native-report/${{ inputs.variant }}/
-            app-host/build/outputs/apk/${{ inputs.variant }}/*.apk
-            app-runtime/build/outputs/apk/${{ inputs.variant }}/*.apk
-            app-business/build/outputs/apk/${{ inputs.variant }}/*.apk
-            hot-contract/build/native-sdk/${{ inputs.variant }}/
-            app-runtime/build/native-sdk/${{ inputs.variant }}/
-            app-host/build/native-release-verification.json
+            modules/app-host/build/native-report/${{ inputs.variant }}/
+            modules/app-runtime/build/native-report/${{ inputs.variant }}/
+            modules/app-business/build/native-report/${{ inputs.variant }}/
+            modules/app-host/build/outputs/apk/${{ inputs.variant }}/*.apk
+            modules/app-runtime/build/outputs/apk/${{ inputs.variant }}/*.apk
+            modules/app-business/build/outputs/apk/${{ inputs.variant }}/*.apk
+            modules/hot-contract/build/native-sdk/${{ inputs.variant }}/
+            modules/app-runtime/build/native-sdk/${{ inputs.variant }}/
+            modules/app-host/build/native-release-verification.json
           if-no-files-found: error
           retention-days: 14

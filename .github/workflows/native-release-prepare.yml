@@ -78,7 +78,7 @@ jobs:
           name: native-signed-evidence-${{ inputs.version_name }}
           path: |
             native-release-artifacts/
-            app-host/build/outputs/apk/release/*.apk
-            app-host/build/native-release-verification.json
+            modules/app-host/build/outputs/apk/release/*.apk
+            modules/app-host/build/native-release-verification.json
           if-no-files-found: warn
           retention-days: 30

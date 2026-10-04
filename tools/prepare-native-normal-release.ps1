@@ -19,15 +19,15 @@ $d8 = (Resolve-Path -LiteralPath (Join-Path $tools 'd8.bat')).Path
 $align = (Resolve-Path -LiteralPath (Join-Path $tools 'zipalign.exe')).Path
 $signer = (Resolve-Path -LiteralPath (Join-Path $tools 'apksigner.bat')).Path
 $android = (Resolve-Path -LiteralPath $AndroidJar).Path
-$source = Join-Path $root 'app-host/build/outputs/apk/release/app-host-release-unsigned.apk'
-$report = Get-Content -LiteralPath (Join-Path $root 'app-host/build/native-report/release/report.json') -Raw | ConvertFrom-Json
+$source = Join-Path $root 'modules/app-host/build/outputs/apk/release/app-host-release-unsigned.apk'
+$report = Get-Content -LiteralPath (Join-Path $root 'modules/app-host/build/native-report/release/report.json') -Raw | ConvertFrom-Json
 $originalHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
 $originalPayload = Get-NormalReleasePayload $source
 $badging = (& $aapt dump badging $source 2>&1) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw 'Normal APK badging failed.' }
 Assert-NormalReleaseSourcePolicy $report $originalHash $ExpectedHostSha256 $badging $originalPayload
 $run = [guid]::NewGuid().ToString('N')
-$output = Join-Path $root "app-host/build/native-normal-device-fixtures/$run"
+$output = Join-Path $root "modules/app-host/build/native-normal-device-fixtures/$run"
 $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $scratch = Join-Path $tempParent "native-normal-release-$run"
 [void][IO.Directory]::CreateDirectory($scratch)
@@ -51,7 +51,7 @@ try {
     $classes = Join-Path $scratch 'classes'; [void][IO.Directory]::CreateDirectory($classes)
     $runner = Join-Path $PSScriptRoot 'test-support/NativeNormalReleaseInstrumentation.java'
     $foregroundAdapter = Join-Path $PSScriptRoot 'test-support/NormalForegroundIdleEvidence.java'
-    $foregroundParser = Join-Path $root 'app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java'
+    $foregroundParser = Join-Path $root 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java'
     $manifest = Join-Path $PSScriptRoot 'test-support/normal-release-instrumentation.xml'
     [void](Invoke-NormalTool 'javac' @('-encoding','UTF-8','--release','17','-proc:none','-classpath',$android,'-d',$classes,$runner,$foregroundAdapter,$foregroundParser))
     $jar = Join-Path $scratch 'runner.jar'

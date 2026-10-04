@@ -6,11 +6,11 @@ $androidJar = Join-Path $profilePath 'AppData/Local/Android/Sdk/platforms/androi
 $cache = Join-Path $profilePath '.gradle/caches/modules-2/files-2.1'
 $junit = (Get-ChildItem -LiteralPath (Join-Path $cache 'junit/junit/4.13.2') -Recurse -Filter '*.jar' | Select-Object -First 1).FullName
 $hamcrest = (Get-ChildItem -LiteralPath (Join-Path $cache 'org.hamcrest/hamcrest-core/1.3') -Recurse -Filter '*.jar' | Select-Object -First 1).FullName
-$hostClasses = Join-Path $repoRoot 'app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
-$coreClasses = Join-Path $repoRoot 'hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
-$contractClasses = Join-Path $repoRoot 'hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
-$hostResources = Join-Path $repoRoot 'app-host/build/intermediates/compile_and_runtime_r_class_jar/debug/processDebugResources/R.jar'
-$resources = Join-Path $repoRoot 'hot-core/src/test/resources'
+$hostClasses = Join-Path $repoRoot 'modules/app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$coreClasses = Join-Path $repoRoot 'modules/hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$contractClasses = Join-Path $repoRoot 'modules/hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$hostResources = Join-Path $repoRoot 'modules/app-host/build/intermediates/compile_and_runtime_r_class_jar/debug/processDebugResources/R.jar'
+$resources = Join-Path $repoRoot 'modules/hot-core/src/test/resources'
 foreach ($path in @($androidJar,$junit,$hamcrest,$hostClasses,$coreClasses,$contractClasses,$hostResources)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "缺少本地编译输入：$path；本工具不运行 Gradle。" }
 }
@@ -143,17 +143,17 @@ function Run-Checks([string]$name,[string[]]$inputs,[string]$testClass) {
 $platform = @($looper,$handler,$log,$service,$intent,$loader)
 Write-Host '前台服务实际准备逻辑：Bootstrap 许可入口由可控 JVM 替身提供，不执行 Android 生命周期。'
 Run-Checks 'foreground' ($platform + @($bootstrap,
-    (Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/service/PlaybackForegroundService.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/service/PlaybackForegroundService.java'),
     (Join-Path $repoRoot 'tools/test-support/ForegroundCreationGuardTest.java'))) 'app.luoxianlv.host.ForegroundCreationGuardTest'
 Write-Host '实际 Bootstrap 初始化故障分支：真实激活/隔离持久记录，平台与已准备模块为 JVM 替身。'
 Run-Checks 'initialization' ($platform + @(
-    (Join-Path $repoRoot 'hot-contract/src/main/java/app/luoxianlv/hot/contract/ProcessHooks.java'),
-    (Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),
-    (Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/service/PlaybackForegroundService.java'),
+    (Join-Path $repoRoot 'modules/hot-contract/src/main/java/app/luoxianlv/hot/contract/ProcessHooks.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/service/PlaybackForegroundService.java'),
     (Join-Path $repoRoot 'tools/test-support/HostInitializationRecoveryTest.java'))) 'app.luoxianlv.host.HostInitializationRecoveryTest'
 Write-Host '无界面仪器仅针对真实 Android SDK 独立编译；设备生命周期与合并 runner 注册由统一 Android 构建验收。'
 Run-Checks 'instrumentation' @(
-    (Join-Path $repoRoot 'hot-contract/src/main/java/app/luoxianlv/hot/contract/ProcessHooks.java'),
-    (Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),
-    (Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/service/PlaybackForegroundService.java'),
-    (Join-Path $repoRoot 'app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceColdInstrumentation.java')) ''
+    (Join-Path $repoRoot 'modules/hot-contract/src/main/java/app/luoxianlv/hot/contract/ProcessHooks.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/service/PlaybackForegroundService.java'),
+    (Join-Path $repoRoot 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceColdInstrumentation.java')) ''

@@ -55,7 +55,7 @@ jobs:
           native=false
           if [[ "$RELEASE_EVENT" == workflow_dispatch ]]; then
             native="$MANUAL_NATIVE"
-          elif [[ "$DEFAULT_NATIVE" == true && -f source/app-host/build.gradle.kts ]]; then
+          elif [[ "$DEFAULT_NATIVE" == true && ( -f source/modules/app-host/build.gradle.kts || -f source/app-host/build.gradle.kts ) ]]; then
             native=true
           fi
           echo "native=$native" >> "$GITHUB_OUTPUT"

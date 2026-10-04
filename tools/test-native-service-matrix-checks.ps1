@@ -65,13 +65,13 @@ $sdk=Join-Path $profile 'AppData/Local/Android/Sdk/platforms/android-37.0/androi
 $cache=Join-Path $profile '.gradle/caches/modules-2/files-2.1'
 $junit=(Get-ChildItem -LiteralPath (Join-Path $cache 'junit/junit/4.13.2') -Recurse -Filter '*.jar'|Select-Object -First 1).FullName
 $hamcrest=(Get-ChildItem -LiteralPath (Join-Path $cache 'org.hamcrest/hamcrest-core/1.3') -Recurse -Filter '*.jar'|Select-Object -First 1).FullName
-$classpath=@((Join-Path $repo 'app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
-    (Join-Path $repo 'hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
-    (Join-Path $repo 'hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),$sdk,$junit,$hamcrest)-join ';'
+$classpath=@((Join-Path $repo 'modules/app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
+    (Join-Path $repo 'modules/hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),
+    (Join-Path $repo 'modules/hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'),$sdk,$junit,$hamcrest)-join ';'
 $output=Join-Path $repo ('.local/service-matrix-checks-'+[guid]::NewGuid().ToString('N'));[void][IO.Directory]::CreateDirectory($output)
-$inputs=@('app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceMatrixPlan.java',
-    'app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceColdInstrumentation.java',
-    'app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java',
+$inputs=@('modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceMatrixPlan.java',
+    'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeServiceColdInstrumentation.java',
+    'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java',
     'tools/test-support/NativeServiceMatrixPlanTest.java')|ForEach-Object{Join-Path $repo $_}
 $arguments=@('-encoding','UTF-8','--release','17','-cp',$classpath,'-d',$output)+$inputs
 $argsFile=Join-Path $output 'javac.args';[IO.File]::WriteAllLines($argsFile,($arguments|ForEach-Object{'"'+$_.Replace('\','/')+'"'}),$utf8)

@@ -13,7 +13,7 @@
 | 激活与交接 | `ActivationController`、`GroupHandover` |
 | 加载与恢复 | `NativeLoader`、`BundledBaseline`、`OutcomeRecovery` |
 
-共享接口位于 `hot-contract`。业务代码位于 [app 功能目录](../app/src/main/java/app/luoxianlv)，模块关系见[项目结构](../docs/project-structure.md)，版本约束与发布流程见[热更机制](../docs/hot-update.md)。
+共享接口位于 [hot-contract](../hot-contract)。业务代码位于 [app 功能目录](../../app/src/main/java/app/luoxianlv)，模块关系见[项目结构](../../docs/project-structure.md)，版本约束与发布流程见[热更机制](../../docs/hot-update.md)。
 
 在仓库根目录运行核心测试：
 
@@ -21,4 +21,4 @@
 bash ./gradlew :hot-core:testDebugUnitTest
 ```
 
-设备仪器入口为 `app.luoxianlv.hot.test/app.luoxianlv.hot.HotCoreInstrumentation`；真实宿主回归使用 `app.luoxianlv.debug.test/app.luoxianlv.host.NativeAppInstrumentation`。构建与安装命令见[开发指南](../docs/development.md)。
+设备仪器入口为 `app.luoxianlv.hot.test/app.luoxianlv.hot.HotCoreInstrumentation`；真实宿主回归使用 `app.luoxianlv.debug.test/app.luoxianlv.host.NativeAppInstrumentation`。构建与安装命令见[开发指南](../../docs/development.md)。

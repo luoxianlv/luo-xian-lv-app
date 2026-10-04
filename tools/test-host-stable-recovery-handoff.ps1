@@ -10,9 +10,9 @@ try {
     Run-Checks 'stable-recovery-handoff' ($platform + @(
         $schedule,
         $hostSource,
-        (Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),
-        (Join-Path $repoRoot 'hot-core/src/main/java/app/luoxianlv/hot/ActivationController.java'),
-        (Join-Path $repoRoot 'hot-core/src/main/java/app/luoxianlv/hot/ActivationJournal.java'),
+        (Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),
+        (Join-Path $repoRoot 'modules/hot-core/src/main/java/app/luoxianlv/hot/ActivationController.java'),
+        (Join-Path $repoRoot 'modules/hot-core/src/main/java/app/luoxianlv/hot/ActivationJournal.java'),
         (Join-Path $repoRoot 'tools/test-support/HostStableRecoveryHandoffTest.java')
     )) @('app.luoxianlv.host.HostStableRecoveryHandoffTest')
     Write-Host "恢复交错检查目录：$runRoot"

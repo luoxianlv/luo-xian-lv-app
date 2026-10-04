@@ -63,13 +63,13 @@ public final class Log { public static int w(String tag, String message) { retur
 $classpath = "$CoreClasses;$sdkJar;$($junitJar.FullName);$($hamcrestJar.FullName)"
 $arguments = @('-encoding', 'UTF-8', '-source', '17', '-target', '17', '-classpath', $classpath, '-d', $classes,
     $loaderPath, $logPath,
-    (Join-Path $projectRoot 'app-host/src/main/java/app/luoxianlv/host/HostStartup.java'),
+    (Join-Path $projectRoot 'modules/app-host/src/main/java/app/luoxianlv/host/HostStartup.java'),
     (Join-Path $projectRoot 'tools/test-support/HostStartupSpaceTest.java'))
 $argumentFile = Join-Path $runRoot 'javac.args'
 [IO.File]::WriteAllLines($argumentFile, ($arguments | ForEach-Object { '"' + $_.Replace('\', '/') + '"' }), $utf8)
 & javac "@$argumentFile"
 if ($LASTEXITCODE -ne 0) { throw '独立 javac 编译失败。' }
-$resourceRoot = Join-Path $projectRoot 'hot-core/src/test/resources'
+$resourceRoot = Join-Path $projectRoot 'modules/hot-core/src/test/resources'
 Write-Host '验证真实 HostStartup/日志/签名/缓存；NativeLoader 使用隔离 JVM double，不执行 Android APK。'
 & java -cp "$classes;$classpath;$resourceRoot" org.junit.runner.JUnitCore app.luoxianlv.host.HostStartupSpaceTest
 if ($LASTEXITCODE -ne 0) { throw '宿主空间选择回归失败。' }

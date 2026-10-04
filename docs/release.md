@@ -33,7 +33,7 @@
 
 `NATIVE_HOT_CONFIG_JSON` 只含公开配置，不放管理令牌或私钥。原生打包会检查 `app.luoxianlv / production / HTTPS`，并使用正式证书核验；不接受 Android Debug 证书。
 
-手动 Release 的 `native_package` 默认开启。标签触发时，仅当 `NATIVE_RELEASE_DEFAULT=true` 且标签源码包含 `app-host` 才走原生路线；重建不支持该架构的旧标签时关闭此参数。工作流脚本与标签源码分别检出，已有标签不必移动。
+手动 Release 的 `native_package` 默认开启。标签触发时，仅当 `NATIVE_RELEASE_DEFAULT=true` 且标签源码支持原生宿主才走原生路线；重建不支持该架构的旧标签时关闭此参数。工作流脚本与标签源码分别检出，已有标签不必移动。
 
 ## 发布顺序
 

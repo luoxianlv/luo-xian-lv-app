@@ -98,9 +98,9 @@ jobs:
         with:
           name: native-release-audit
           path: |
-            app-host/build/native-release-verification.json
-            app-host/build/native-report/release/
-            app-runtime/build/native-report/release/
-            app-business/build/native-report/release/
+            modules/app-host/build/native-release-verification.json
+            modules/app-host/build/native-report/release/
+            modules/app-runtime/build/native-report/release/
+            modules/app-business/build/native-report/release/
           if-no-files-found: error
           retention-days: 14
