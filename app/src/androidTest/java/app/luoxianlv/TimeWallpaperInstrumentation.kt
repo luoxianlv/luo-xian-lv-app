@@ -10,9 +10,10 @@ import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
-import app.luoxianlv.ui.practice.*
-import app.luoxianlv.wallpaper.data.WallpaperProjectStore
-import app.luoxianlv.wallpaper.render.PracticeBackdrop
+import app.luoxianlv.practice.*
+import app.luoxianlv.ui.practice.PracticeActivity
+import app.luoxianlv.wallpaper.PracticeBackdrop
+import app.luoxianlv.wallpaper.WallpaperProjectStore
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit

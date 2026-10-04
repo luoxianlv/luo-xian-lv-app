@@ -8,7 +8,7 @@ import java.io.InputStream;
 /** 使用实际已编译AppBusinessFactory/OfficialRendererGate，不用假的delegate代替绑定。 */
 public final class NativeProbeResourceBindingChecks {
   public static void main(String[] args) throws Exception {
-    Class<?> gate = Class.forName("app.luoxianlv.business.OfficialRendererGate");
+    Class<?> gate = Class.forName("app.luoxianlv.app.OfficialRendererGate");
     var source = gate.getDeclaredField("source"); source.setAccessible(true);
     Object instance = gate.getField("INSTANCE").get(null);
     Object owner = java.lang.reflect.Modifier.isStatic(source.getModifiers()) ? null : instance;

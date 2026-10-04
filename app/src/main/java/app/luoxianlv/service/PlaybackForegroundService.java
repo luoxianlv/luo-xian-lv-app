@@ -11,7 +11,7 @@ import android.os.IBinder;
 import android.util.Log;
 import app.luoxianlv.MainActivity;
 import app.luoxianlv.R;
-import app.luoxianlv.business.playback.PlaybackServicePolicy;
+import app.luoxianlv.playback.PlaybackServicePolicy;
 import app.luoxianlv.hot.contract.ForegroundPolicy;
 import app.luoxianlv.hot.contract.HostDiagnostics;
 

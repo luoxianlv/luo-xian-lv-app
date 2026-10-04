@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.audio.HarmonicaSample
-import app.luoxianlv.audio.HarmonicaVoice
+import app.luoxianlv.practice.HarmonicaSample
+import app.luoxianlv.practice.HarmonicaVoice
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder

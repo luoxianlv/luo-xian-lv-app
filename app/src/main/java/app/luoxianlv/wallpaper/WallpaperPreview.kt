@@ -1,0 +1,86 @@
+package app.luoxianlv.wallpaper
+
+import android.content.Context
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.os.Build
+import java.io.File
+import java.nio.ByteBuffer
+
+/** 选择器和舞台首帧共用有尺寸上限的预览解码。 */
+object WallpaperPreview {
+    private val cache = PreviewByteCache()
+
+    fun preload(context: Context, root: File?) {
+        runCatching { bytes(context, root) }
+    }
+
+    private fun bytes(context: Context, root: File?): ByteArray {
+        var preview: File? = null
+        return cache.load(
+            key = {
+                preview = root?.let(WallpaperProjectStore::preview)
+                preview?.let { "${it.absolutePath}:${it.lastModified()}:${it.length()}" }
+                    ?: "bundled:${WallpaperProjectStore.hasBundled(context)}"
+            },
+            read = {
+                val file = preview
+                if (file != null && file.length() <= 16L * 1024 * 1024) file.readBytes()
+                else
+                    context.assets
+                        .open(
+                            if (WallpaperProjectStore.hasLegacyBundled(context))
+                                "default-wallpaper/preview.gif"
+                            else "practice-sunset.jpg"
+                        )
+                        .use { it.readBytes() }
+            },
+        )
+    }
+
+    fun clearCache() = cache.clear()
+
+    fun load(context: Context, root: File?, maxEdge: Int = 960): Drawable? = runCatching {
+        val bytes = bytes(context, root)
+        if (Build.VERSION.SDK_INT >= 28) Api28.decode(bytes, maxEdge)
+        else {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val options =
+                BitmapFactory.Options().apply {
+                    while (
+                        maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize >
+                            maxEdge.coerceAtLeast(1)
+                    ) inSampleSize *= 2
+                }
+            BitmapDrawable(
+                context.resources,
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options),
+            )
+        }
+    }
+        .getOrNull()
+
+    // 隔离新系统接口，避免 API 26/27 在校验外部类时提前解析 ImageDecoder 的监听器。
+    @android.annotation.TargetApi(28)
+    private object Api28 {
+        fun decode(bytes: ByteArray, maxEdge: Int): Drawable =
+            ImageDecoder.decodeDrawable(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) {
+                decoder,
+                info,
+                _ ->
+                val scale =
+                    minOf(
+                        1f,
+                        maxEdge.coerceAtLeast(1).toFloat() /
+                            maxOf(info.size.width, info.size.height),
+                    )
+                decoder.setTargetSize(
+                    maxOf(1, (info.size.width * scale).toInt()),
+                    maxOf(1, (info.size.height * scale).toInt()),
+                )
+            }
+    }
+}

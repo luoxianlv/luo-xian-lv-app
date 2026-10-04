@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.data.DisclaimerStore
+import app.luoxianlv.app.DisclaimerStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test

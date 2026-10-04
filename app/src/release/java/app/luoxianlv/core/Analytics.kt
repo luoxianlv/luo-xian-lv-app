@@ -67,42 +67,43 @@ object Analytics {
     }
 
     fun initialize(context: Context) {
-        observedInitAt = ProcessOnce.run(INITIALIZE) {
-            preInitialize(context)
-            val app = app.luoxianlv.hot.contract.PlatformApplication.of(context)
-            record("SDK", "initialize 调用")
-            // U-APM 性能监控配置：必须在 UMConfigure.init 之前调用。
-            // 放在这里（而非 Application.onCreate）是为了和统计一样等用户同意协议后再开启。
-            UMCrash.initConfig(
-                Bundle().apply {
-                    putBoolean(UMCrash.KEY_ENABLE_CRASH_JAVA, true)
-                    putBoolean(UMCrash.KEY_ENABLE_CRASH_NATIVE, true)
-                    putBoolean(UMCrash.KEY_ENABLE_ANR, true)
-                    putBoolean(UMCrash.KEY_ENABLE_LAUNCH, true)
-                    putBoolean(UMCrash.KEY_ENABLE_NET, true)
-                    putBoolean(UMCrash.KEY_ENABLE_MEM, true)
-                    // 页面分析与卡顿（PA）都要显式打开：不写这两个开关，插桩注入的
-                    // PageManger/PA 调用不会产生上报（默认不开）。
-                    putBoolean(UMCrash.KEY_ENABLE_PAGE, true)
-                    putBoolean(UMCrash.KEY_ENABLE_PA, true)
-                }
-            )
-            // 隐私授权确认：友盟合规检查的显式授权 API，必须在 init 之前调用，
-            // 否则上报被拦截（logcat 报「检测到未调用隐私授权API」）。
-            UMConfigure.submitPolicyGrantResult(app, true)
-            UMConfigure.init(
-                app,
-                APP_KEY,
-                CHANNEL,
-                UMConfigure.DEVICE_TYPE_PHONE,
-                null,
-            )
-            // 页面统计改走手动模式：本应用是单 Activity + Compose，页面由 AppNavHost
-            // 按路由成对调用 [pageStart]/[pageEnd]；关掉自动采集就不会多出一个没意义的
-            // MainActivity 页面。（U-APM 的页面分析是另一套，与此开关无关。）
-            MobclickAgent.setPageCollectionMode(MobclickAgent.PageMode.MANUAL)
-            record("SDK", "UMConfigure.init 完成")
-        }
+        observedInitAt =
+            ProcessOnce.run(INITIALIZE) {
+                preInitialize(context)
+                val app = app.luoxianlv.hot.contract.PlatformApplication.of(context)
+                record("SDK", "initialize 调用")
+                // U-APM 性能监控配置：必须在 UMConfigure.init 之前调用。
+                // 放在这里（而非 Application.onCreate）是为了和统计一样等用户同意协议后再开启。
+                UMCrash.initConfig(
+                    Bundle().apply {
+                        putBoolean(UMCrash.KEY_ENABLE_CRASH_JAVA, true)
+                        putBoolean(UMCrash.KEY_ENABLE_CRASH_NATIVE, true)
+                        putBoolean(UMCrash.KEY_ENABLE_ANR, true)
+                        putBoolean(UMCrash.KEY_ENABLE_LAUNCH, true)
+                        putBoolean(UMCrash.KEY_ENABLE_NET, true)
+                        putBoolean(UMCrash.KEY_ENABLE_MEM, true)
+                        // 页面分析与卡顿（PA）都要显式打开：不写这两个开关，插桩注入的
+                        // PageManger/PA 调用不会产生上报（默认不开）。
+                        putBoolean(UMCrash.KEY_ENABLE_PAGE, true)
+                        putBoolean(UMCrash.KEY_ENABLE_PA, true)
+                    }
+                )
+                // 隐私授权确认：友盟合规检查的显式授权 API，必须在 init 之前调用，
+                // 否则上报被拦截（logcat 报「检测到未调用隐私授权API」）。
+                UMConfigure.submitPolicyGrantResult(app, true)
+                UMConfigure.init(
+                    app,
+                    APP_KEY,
+                    CHANNEL,
+                    UMConfigure.DEVICE_TYPE_PHONE,
+                    null,
+                )
+                // 页面统计改走手动模式：本应用是单 Activity + Compose，页面由 AppNavHost
+                // 按路由成对调用 [pageStart]/[pageEnd]；关掉自动采集就不会多出一个没意义的
+                // MainActivity 页面。（U-APM 的页面分析是另一套，与此开关无关。）
+                MobclickAgent.setPageCollectionMode(MobclickAgent.PageMode.MANUAL)
+                record("SDK", "UMConfigure.init 完成")
+            }
         // 仍由真正显示且已同意协议的页面调用；共享 SDK 成功记录不自动开启候选上报。
         reportingEnabled = true
     }

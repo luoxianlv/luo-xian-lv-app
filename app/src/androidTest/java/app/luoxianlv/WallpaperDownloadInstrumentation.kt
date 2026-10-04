@@ -6,10 +6,10 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import app.luoxianlv.practice.PracticePlaybackGate
 import app.luoxianlv.ui.practice.PracticeActivity
-import app.luoxianlv.ui.practice.PracticePlaybackGate
-import app.luoxianlv.wallpaper.data.DefaultWallpaper
-import app.luoxianlv.wallpaper.render.PreparedWallpaper
+import app.luoxianlv.wallpaper.DefaultWallpaper
+import app.luoxianlv.wallpaper.PreparedWallpaper
 import java.io.File
 
 /** 真机验证首次提示、稍后再问、永久跳过和真实 OSS 下载，不依赖随包壁纸。 */
@@ -118,7 +118,7 @@ class WallpaperDownloadInstrumentation : Instrumentation() {
             await("下载后舞台未就绪", 60000) { PracticePlaybackGate.ready }
             check(
                 !File(
-                        app.luoxianlv.storage.AppStorage.imports(targetContext),
+                        app.luoxianlv.shared.AppStorage.imports(targetContext),
                         "default-wallpaper.download",
                     )
                     .exists()

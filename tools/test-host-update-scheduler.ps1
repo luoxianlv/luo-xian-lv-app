@@ -6,11 +6,12 @@ $androidJar = Join-Path $profilePath 'AppData/Local/Android/Sdk/platforms/androi
 $cache = Join-Path $profilePath '.gradle/caches/modules-2/files-2.1'
 $junit = (Get-ChildItem -LiteralPath (Join-Path $cache 'junit/junit/4.13.2') -Recurse -Filter '*.jar' | Select-Object -First 1).FullName
 $hamcrest = (Get-ChildItem -LiteralPath (Join-Path $cache 'org.hamcrest/hamcrest-core/1.3') -Recurse -Filter '*.jar' | Select-Object -First 1).FullName
-$hostClasses = Join-Path $repoRoot 'app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
-$coreClasses = Join-Path $repoRoot 'hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
-$contractClasses = Join-Path $repoRoot 'hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
-$hostResources = Join-Path $repoRoot 'app-host/build/intermediates/compile_and_runtime_r_class_jar/debug/processDebugResources/R.jar'
-foreach ($path in @($androidJar,$junit,$hamcrest,$hostClasses,$coreClasses,$contractClasses,$hostResources)) {
+$hostClasses = Join-Path $repoRoot 'modules/app-host/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$coreClasses = Join-Path $repoRoot 'modules/hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$contractClasses = Join-Path $repoRoot 'modules/hot-contract/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$updateClasses = Join-Path $repoRoot 'modules/update-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$hostResources = Join-Path $repoRoot 'modules/app-host/build/intermediates/compile_and_runtime_r_class_jar/debug/processDebugResources/R.jar'
+foreach ($path in @($androidJar,$junit,$hamcrest,$hostClasses,$coreClasses,$contractClasses,$updateClasses,$hostResources)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "缺少离线编译输入：$path；此脚本不运行 Gradle。" }
 }
 $runRoot = Join-Path $repoRoot ('.local/host-scheduler-' + [Guid]::NewGuid().ToString('N'))
@@ -79,8 +80,9 @@ package android.net;
 import android.os.Handler;
 public class ConnectivityManager {
   public boolean connected,validated;
-  public int unregistered;
-  public Network getActiveNetwork() { return connected?new Network():null; }
+  public int unregistered,queries;
+  public boolean rejectQuery;
+  public Network getActiveNetwork() { queries++; if(rejectQuery) throw new AssertionError("Binder queried on usage edge"); return connected?new Network():null; }
   public NetworkCapabilities getNetworkCapabilities(Network network) {
     NetworkCapabilities value=new NetworkCapabilities(); value.validated=validated; return value;
   }
@@ -110,13 +112,15 @@ import app.luoxianlv.hot.*;
 import java.util.*;
 import java.util.concurrent.Executor;
 public final class Bootstrap {
-  public static boolean testForeground,testPlayback,testPreparing,testCanActivate;
+  public static boolean testForeground,testPlayback,testPreparing,testCanActivate,testBusinessWorking;
   public static final class Source { public NativeLoader.Prepared prepared; }
   public static Source source() { return null; }
   public static boolean foregroundInUse() { return testForeground; }
   public static boolean playbackInUse() { return testPlayback; }
   public static boolean inUse() { return testForeground||testPlayback; }
   public static boolean playbackPreparing() { return testPreparing; }
+  public static boolean businessWorking() { return testBusinessWorking; }
+  public static boolean ordinaryUpdateIdle() { return !testPlayback&&!testPreparing; }
   public static boolean playbackReady() { return testPlayback; }
   public static boolean resourcesReady() { return true; }
   public static List<GroupHandover.Page> pages() { return List.of(); }
@@ -129,18 +133,21 @@ public final class Bootstrap {
       NativeLoader.Prepared prepared,Executor executor,GroupActivation.Listener listener) { return null; }
 }
 '@
-$baseClasspath = "$coreClasses;$contractClasses;$hostClasses;$hostResources;$androidJar;$junit;$hamcrest"
-$schedule = Join-Path $repoRoot 'hot-core/src/main/java/app/luoxianlv/hot/UpdateSchedule.java'
-$scheduleTest = Join-Path $repoRoot 'hot-core/src/test/java/app/luoxianlv/hot/UpdateScheduleTest.java'
-$hostSource = Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/HostUpdates.java'
+$baseClasspath = "$coreClasses;$contractClasses;$updateClasses;$hostClasses;$hostResources;$androidJar;$junit;$hamcrest"
+$schedule = Join-Path $repoRoot 'modules/hot-core/src/main/java/app/luoxianlv/hot/UpdateSchedule.java'
+$scheduleTest = Join-Path $repoRoot 'modules/hot-core/src/test/java/app/luoxianlv/hot/UpdateScheduleTest.java'
+$hostSource = Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/host/HostUpdates.java'
 $hostUpdateHelpers = @('HostUpdateReports','HostUpdateContent') | ForEach-Object {
-    Join-Path $repoRoot ("app-host/src/main/java/app/luoxianlv/host/$_.java")
+    Join-Path $repoRoot ("modules/app-host/src/main/java/app/luoxianlv/host/$_.java")
 }
 $test = Join-Path $repoRoot 'tools/test-support/HostUpdateSchedulerTest.java'
 function Run-Checks([string]$name,[string[]]$inputs,[string[]]$tests) {
-    $sharedSources = @('UpdateCancellation','HotApiClient','HttpObjectSource','ObjectDownloader','UpdateClient') | ForEach-Object {
-        Join-Path $repoRoot ("hot-core/src/main/java/app/luoxianlv/hot/$_.java")
+    $sharedSources = @('UpdateCancellation','HotApiClient','HttpObjectSource','ObjectDownloader','UpdateClient',
+        'HotObjectDeltaResolver','HotByteDeltaPlan','ApkUpdateBridge','ApkDeliveryVerifier',
+        'BundledBaseline','PreparationSpace','HotSignatures','TrustStore') | ForEach-Object {
+        Join-Path $repoRoot ("modules/hot-core/src/main/java/app/luoxianlv/hot/$_.java")
     }
+    $sharedSources += Join-Path $repoRoot 'modules/hot-contract/src/main/java/app/luoxianlv/hot/contract/SharedUpdate.java'
     $inputs = @($sharedSources + $hostUpdateHelpers + $inputs | Select-Object -Unique)
     $classes = Join-Path $runRoot $name
     New-Item -ItemType Directory -Path $classes | Out-Null
@@ -157,5 +164,5 @@ Write-Host '真实 UpdateSchedule 与 HostUpdates；Android 网络/时钟/Handle
 Run-Checks 'host' ($platform + @($bootstrap,$schedule,$scheduleTest,$hostSource,$test)) @('app.luoxianlv.hot.UpdateScheduleTest','app.luoxianlv.host.HostUpdateSchedulerTest')
 Write-Host '真实 Bootstrap 状态查询；不创建业务加载器，不改变许可或健康。'
 Run-Checks 'bootstrap' ($platform + @($schedule,$hostSource,$test,
-    (Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'))) @('app.luoxianlv.host.HostUpdateSchedulerTest$PlaybackPriorityTest')
+    (Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'))) @('app.luoxianlv.host.HostUpdateSchedulerTest$PlaybackPriorityTest')
 Write-Host "离线结果目录：$runRoot"

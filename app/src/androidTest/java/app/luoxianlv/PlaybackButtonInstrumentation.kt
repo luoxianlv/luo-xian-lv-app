@@ -10,12 +10,12 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
-import app.luoxianlv.business.playback.PlaybackSession
-import app.luoxianlv.service.bindPlaybackButton
-import app.luoxianlv.ui.floating.FloatingPanel
-import app.luoxianlv.ui.floating.FloatingProgressView
-import app.luoxianlv.ui.floating.PlayerUi
-import app.luoxianlv.ui.floating.PlayerUi.dp
+import app.luoxianlv.playback.FloatingPanel
+import app.luoxianlv.playback.FloatingProgressView
+import app.luoxianlv.playback.PlaybackSession
+import app.luoxianlv.playback.PlayerUi
+import app.luoxianlv.playback.PlayerUi.dp
+import app.luoxianlv.playback.bindPlaybackButton
 
 class PlaybackButtonInstrumentation : Instrumentation() {
     override fun onCreate(arguments: Bundle?) {

@@ -1,9 +1,9 @@
-hot-core/**/*.java text eol=lf
-hot-core/**/*.md text eol=lf
+modules/hot-core/**/*.java text eol=lf
+modules/hot-core/**/*.md text eol=lf
 # 这些公开向量来自 Go；其签名依赖原始字节，不能转换换行。
-hot-core/src/test/resources/protocol-v1/* -text
-hot-core/src/test/resources/permit-v1/* -text
+modules/hot-core/src/test/resources/protocol-v1/* -text
+modules/hot-core/src/test/resources/permit-v1/* -text
 *.lxhp binary
 # 固定第三方源码依赖逐文件原始摘要，Git 不转换行尾，也不格式化上游空白。
-update-core/src/main/cpp/vendor/** -text whitespace=-trailing-space
-update-core/src/test/resources/w26/** -text
+modules/update-core/src/main/cpp/vendor/** -text whitespace=-trailing-space
+modules/update-core/src/test/resources/w26/** -text

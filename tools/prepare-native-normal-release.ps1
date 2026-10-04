@@ -5,6 +5,7 @@ param(
     [string]$AppRoot = (Split-Path -Parent $PSScriptRoot),
     [string]$SdkRoot = (Join-Path $env:LOCALAPPDATA 'Android/Sdk'),
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+$')][string]$BuildToolsVersion = '36.0.0',
+    [string]$HostApk,
     [string]$AndroidJar = (Join-Path $env:LOCALAPPDATA 'Android/Sdk/platforms/android-37.0/android.jar')
 )
 # 仅外部编译与全新fake证书签副本；无Gradle/ADB/API/网络或用户keystore参数。
@@ -19,15 +20,21 @@ $d8 = (Resolve-Path -LiteralPath (Join-Path $tools 'd8.bat')).Path
 $align = (Resolve-Path -LiteralPath (Join-Path $tools 'zipalign.exe')).Path
 $signer = (Resolve-Path -LiteralPath (Join-Path $tools 'apksigner.bat')).Path
 $android = (Resolve-Path -LiteralPath $AndroidJar).Path
-$source = Join-Path $root 'app-host/build/outputs/apk/release/app-host-release-unsigned.apk'
-$report = Get-Content -LiteralPath (Join-Path $root 'app-host/build/native-report/release/report.json') -Raw | ConvertFrom-Json
+$report = Get-Content -LiteralPath (Join-Path $root 'modules/app-host/build/native-report/release/report.json') -Raw | ConvertFrom-Json
+if ($HostApk) {
+    $source = (Resolve-Path -LiteralPath $HostApk).Path
+} else {
+    $candidates = @(Get-ChildItem -LiteralPath (Join-Path $root 'modules/app-host/build/outputs/apk/release') -File -Filter '*.apk')
+    if ($candidates.Count -ne 1) { throw '必须明确指定当前验收 APK，不能使用旧构建文件。' }
+    $source = $candidates[0].FullName
+}
 $originalHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
 $originalPayload = Get-NormalReleasePayload $source
 $badging = (& $aapt dump badging $source 2>&1) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw 'Normal APK badging failed.' }
 Assert-NormalReleaseSourcePolicy $report $originalHash $ExpectedHostSha256 $badging $originalPayload
 $run = [guid]::NewGuid().ToString('N')
-$output = Join-Path $root "app-host/build/native-normal-device-fixtures/$run"
+$output = Join-Path $root "modules/app-host/build/native-normal-device-fixtures/$run"
 $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $scratch = Join-Path $tempParent "native-normal-release-$run"
 [void][IO.Directory]::CreateDirectory($scratch)
@@ -51,7 +58,7 @@ try {
     $classes = Join-Path $scratch 'classes'; [void][IO.Directory]::CreateDirectory($classes)
     $runner = Join-Path $PSScriptRoot 'test-support/NativeNormalReleaseInstrumentation.java'
     $foregroundAdapter = Join-Path $PSScriptRoot 'test-support/NormalForegroundIdleEvidence.java'
-    $foregroundParser = Join-Path $root 'app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java'
+    $foregroundParser = Join-Path $root 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeForegroundLogEvents.java'
     $manifest = Join-Path $PSScriptRoot 'test-support/normal-release-instrumentation.xml'
     [void](Invoke-NormalTool 'javac' @('-encoding','UTF-8','--release','17','-proc:none','-classpath',$android,'-d',$classes,$runner,$foregroundAdapter,$foregroundParser))
     $jar = Join-Path $scratch 'runner.jar'

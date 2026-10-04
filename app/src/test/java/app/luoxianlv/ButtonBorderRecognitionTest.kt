@@ -1,8 +1,8 @@
 package app.luoxianlv
 
-import app.luoxianlv.core.score.PlayMode
-import app.luoxianlv.profile.ButtonBorderDetector
-import app.luoxianlv.profile.ScreenRecognizer
+import app.luoxianlv.library.PlayMode
+import app.luoxianlv.recognition.ButtonBorderDetector
+import app.luoxianlv.recognition.ScreenRecognizer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.roundToInt

@@ -1,6 +1,6 @@
 package app.luoxianlv.ui.practice;
 
-import app.luoxianlv.business.wallpaper.WallpaperPickerPage;
+import app.luoxianlv.wallpaper.WallpaperPickerPage;
 import app.luoxianlv.hot.NativeHostActivity;
 import app.luoxianlv.hot.contract.NativePage;
 

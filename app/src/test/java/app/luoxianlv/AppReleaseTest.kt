@@ -33,6 +33,42 @@ class AppReleaseTest {
         assertNotNull(parseAppRelease(json, 4, "https://example.com", "oss", false)!!.deliveryJson)
     }
 
+    @Test
+    fun signedDeliveryRejectsMalformedExplicitChannelIdentity() {
+        for (field in listOf("sha256", "size")) {
+            for (value in listOf("invalid", JSONObject.NULL, "", 0, -1)) {
+                val json = manifest().put("deliveryV1", JSONObject().put("schema", 1))
+                json.getJSONObject("channels").getJSONObject("oss").put(field, value)
+                assertThrows(IllegalArgumentException::class.java) {
+                    parseAppRelease(json, 4, "https://example.com", "oss", false)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun signedDeliveryRejectsUnknownOrOversizedTargetLength() {
+        for (size in listOf(0L, -1L, 512L * 1024 * 1024 + 1)) {
+            val json =
+                manifest().put("deliveryV1", JSONObject().put("schema", 1)).put("apkSize", size)
+            assertThrows(IllegalArgumentException::class.java) {
+                parseAppRelease(json, 4, "https://example.com", "oss", false)
+            }
+        }
+    }
+
+    @Test
+    fun signedDeliveryRetainsTwoOfficialFullSourcesWithoutPeerDownloads() {
+        val json = manifest().put("deliveryV1", JSONObject().put("schema", 1))
+        json
+            .getJSONObject("channels")
+            .put("p2p", JSONObject().put("url", "https://peer.example.com/app.apk"))
+        val release = parseAppRelease(json, 4, "https://example.com", "oss", false)!!
+        assertEquals(listOf("oss", "github"), release.sources.map { it.id })
+        assertEquals(100L, release.size)
+        assertTrue(release.sources.all { it.sha256 == release.sha256 && it.size == release.size })
+    }
+
     private fun manifest() =
         JSONObject(
             """{

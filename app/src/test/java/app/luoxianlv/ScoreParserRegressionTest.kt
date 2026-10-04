@@ -1,8 +1,8 @@
 package app.luoxianlv
 
-import app.luoxianlv.core.score.NoteEvent
-import app.luoxianlv.core.score.PlayMode
-import app.luoxianlv.core.score.ScoreParser
+import app.luoxianlv.library.NoteEvent
+import app.luoxianlv.library.PlayMode
+import app.luoxianlv.library.ScoreParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test

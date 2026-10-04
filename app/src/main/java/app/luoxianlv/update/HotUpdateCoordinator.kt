@@ -1,10 +1,10 @@
 package app.luoxianlv.update
 
 import android.content.Context
-import app.luoxianlv.business.playback.PlaybackConnection
-import app.luoxianlv.data.ConfigStore
-import app.luoxianlv.data.SongRepository
+import app.luoxianlv.library.SongRepository
 import app.luoxianlv.platform.PlatformClient
+import app.luoxianlv.playback.PlaybackConnection
+import app.luoxianlv.recognition.ConfigStore
 
 /** 后台更新内容，不提供额外手动入口。 */
 class HotUpdateCoordinator(

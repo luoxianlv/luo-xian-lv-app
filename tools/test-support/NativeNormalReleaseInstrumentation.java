@@ -163,7 +163,7 @@ public final class NativeNormalReleaseInstrumentation extends Instrumentation {
         check(count > 0 && bytes.size() + count <= NormalForegroundIdleEvidence.MAX_BYTES, "Foreground fixed-tag log exceeds bound");
         bytes.write(buffer, 0, count);
       }
-      return bytes.toString(StandardCharsets.UTF_8);
+      return new String(bytes.toByteArray(), StandardCharsets.UTF_8);
     }
   }
 
@@ -275,7 +275,7 @@ public final class NativeNormalReleaseInstrumentation extends Instrumentation {
       initAt = analyticsType.getMethod("getInitAt"); entries = analyticsType.getMethod("getDiagEntries");
       main(() -> {
         try {
-          var store = Class.forName("app.luoxianlv.data.DisclaimerStore", false, business);
+          var store = Class.forName("app.luoxianlv.app.DisclaimerStore", false, business);
           disclaimer = store.getConstructor(Context.class).newInstance(compose.getContext());
           agreed = store.getMethod("agreedSha"); Object companion = store.getField("Companion").get(null);
           disclaimerHash = (String) companion.getClass().getMethod("currentSha", Context.class).invoke(companion, compose.getContext());

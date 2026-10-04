@@ -18,12 +18,12 @@ java {
 }
 
 sourceSets.named("main") {
-    java.srcDir("../hot-core/src/main/java")
+    java.srcDir("../modules/hot-core/src/main/java")
     java.include("app/luoxianlv/buildlogic/**", "app/luoxianlv/hot/StrictJson.java",
         "app/luoxianlv/hot/HotSignatures.java", "app/luoxianlv/hot/HotManifest.java",
         "app/luoxianlv/hot/HostConfigRules.java")
 }
 sourceSets.named("test") {
-    resources.srcDir("../hot-core/src/test/resources")
+    resources.srcDir("../modules/hot-core/src/test/resources")
     resources.include("native/**", "protocol-v1/root.public.json")
 }

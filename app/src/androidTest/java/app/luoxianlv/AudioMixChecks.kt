@@ -7,7 +7,7 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import app.luoxianlv.audio.HarmonicaSampler
+import app.luoxianlv.practice.HarmonicaSampler
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** 模拟已播放的媒体持有焦点，按键、松手及释放口琴均不能令它暂停或压低音量。 */

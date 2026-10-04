@@ -1,5 +1,6 @@
 .gradle/
 .kotlin/
+.cxx/
 __pycache__/
 *.pyc
 build/
@@ -22,6 +23,12 @@ tools/*.pdb
 /.superpowers/
 .staging/
 /.local/
+
+# 本地排查、验收回执和设计预览
+/docs/verification/
+/docs/performance/
+/docs/previews/
+/docs/superpowers/
 
 .idea
 # 签名密钥（勿提交）

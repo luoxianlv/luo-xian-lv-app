@@ -8,10 +8,12 @@ import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import app.luoxianlv.profile.ScreenRecognizer
-import app.luoxianlv.ui.practice.*
-import app.luoxianlv.wallpaper.data.WallpaperProjectStore
-import app.luoxianlv.wallpaper.render.PracticeBackdrop
+import app.luoxianlv.practice.*
+import app.luoxianlv.recognition.ScreenRecognizer
+import app.luoxianlv.ui.practice.PracticeActivity
+import app.luoxianlv.ui.practice.WallpaperPickerActivity
+import app.luoxianlv.wallpaper.PracticeBackdrop
+import app.luoxianlv.wallpaper.WallpaperProjectStore
 import java.io.File
 
 /** 仅使用 Android Framework 验证实际绘制、音频准备和触摸分发。 */
@@ -74,7 +76,7 @@ class PracticeInstrumentation : Instrumentation() {
                     "Failed import replaced selected wallpaper"
                 }
                 check(
-                    !File(app.luoxianlv.storage.AppStorage.wallpapers(targetContext), "escape.txt")
+                    !File(app.luoxianlv.shared.AppStorage.wallpapers(targetContext), "escape.txt")
                         .exists()
                 )
             } else WallpaperProjectStore.reset(targetContext)

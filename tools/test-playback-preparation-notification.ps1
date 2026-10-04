@@ -5,12 +5,12 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $taskRoot = Join-Path $repoRoot ('.local/playback-preparation-checks-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($taskRoot)
 $utf8 = [Text.UTF8Encoding]::new($false)
-$actual = [IO.File]::ReadAllText((Join-Path $repoRoot 'app/src/main/java/app/luoxianlv/business/playback/PlaybackSession.kt'))
+$actual = [IO.File]::ReadAllText((Join-Path $repoRoot 'app/src/main/java/app/luoxianlv/playback/PlaybackSession.kt'))
 $begin = $actual.IndexOf('    var playing = false')
 $end = $actual.IndexOf('    var error: String? = null', $begin)
 if($begin -lt 0 -or $end -le $begin) { throw '无法定位实际PlaybackSession边沿通知源码' }
 $fixture = @'
-package app.luoxianlv.business.playback
+package app.luoxianlv.playback
 import android.os.Looper
 class ActualPlaybackEdgeFixture(usage: (Boolean) -> Unit) {
     private var active = true
@@ -43,7 +43,7 @@ $junit = (Get-ChildItem -LiteralPath (Join-Path $cache 'junit/junit/4.13.2') -Re
 $hamcrest = (Get-ChildItem -LiteralPath (Join-Path $cache 'org.hamcrest/hamcrest-core/1.3') -Recurse -Filter '*.jar' | Select-Object -First 1).FullName
 $jar = Join-Path $taskRoot 'preparation-checks.jar'
 $arguments = @($fixtureFile,$looperFile,
-    (Join-Path $repoRoot 'app/src/main/java/app/luoxianlv/core/playback/SongLoadGate.kt'),
+    (Join-Path $repoRoot 'app/src/main/java/app/luoxianlv/playback/SongLoadGate.kt'),
     (Join-Path $repoRoot 'app/src/test/java/app/luoxianlv/SongLoadGateTest.kt'),
     (Join-Path $repoRoot 'tools/test-support/PlaybackPreparationChecks.kt'),
     '-jvm-target','17','-classpath',"$junit;$hamcrest",'-include-runtime','-d',$jar)

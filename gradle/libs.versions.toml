@@ -5,10 +5,11 @@ material = "1.14.0"
 composeBom = "2026.09.00"
 activityCompose = "1.13.0"
 lifecycle = "2.11.0"
-navigationCompose = "2.10.1"
+navigationCompose = "2.10.2"
 junit = "4.13.2"
 json = "20260814"
 fastkv = "3.0.1"
+webkit = "1.17.1"
 umengCommon = "9.9.10"
 umengAsms = "1.8.7.2"
 umengUyumao = "1.1.4"
@@ -31,6 +32,7 @@ navigation-compose = { module = "androidx.navigation:navigation-compose", versio
 junit = { module = "junit:junit", version.ref = "junit" }
 json = { module = "org.json:json", version.ref = "json" }
 fastkv = { module = "io.github.billywei01:fastkv", version.ref = "fastkv" }
+webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
 umeng-common = { module = "com.umeng.umsdk:common", version.ref = "umengCommon" }
 umeng-asms = { module = "com.umeng.umsdk:asms", version.ref = "umengAsms" }
 umeng-uyumao = { module = "com.umeng.umsdk:uyumao", version.ref = "umengUyumao" }

@@ -7,11 +7,11 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
-import app.luoxianlv.business.playback.PlaybackConnection
-import app.luoxianlv.core.score.ScoreWork
-import app.luoxianlv.data.ExperimentalOptions
-import app.luoxianlv.data.Kv
-import app.luoxianlv.data.Song
+import app.luoxianlv.library.ScoreWork
+import app.luoxianlv.library.Song
+import app.luoxianlv.playback.PlaybackConnection
+import app.luoxianlv.settings.ExperimentalOptions
+import app.luoxianlv.shared.Kv
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.EmptyCoroutineContext

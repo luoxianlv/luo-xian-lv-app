@@ -13,11 +13,11 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
-import app.luoxianlv.business.playback.PlaybackConnection
+import app.luoxianlv.discover.DiscoverViewModel
+import app.luoxianlv.discover.RemoteUiState
 import app.luoxianlv.platform.PlatformScore
-import app.luoxianlv.service.FloatingControls
-import app.luoxianlv.ui.discover.DiscoverViewModel
-import app.luoxianlv.ui.discover.RemoteUiState
+import app.luoxianlv.playback.FloatingControls
+import app.luoxianlv.playback.PlaybackConnection
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /** 在真正的自由窗口与系统悬浮窗口中验证触摸、缩放和停靠。 */
@@ -103,7 +103,7 @@ class InteractionInstrumentation : Instrumentation() {
         val priorMode = shell("wm get-display-windowing-mode")
         val priorServices = shell("settings get secure enabled_accessibility_services")
         val priorEnabled = shell("settings get secure accessibility_enabled")
-        val floatingPrefs = app.luoxianlv.data.Kv.of(targetContext, "floating_position")
+        val floatingPrefs = app.luoxianlv.shared.Kv.of(targetContext, "floating_position")
         val oldX = floatingPrefs.getInt("x", 28)
         val oldY = floatingPrefs.getInt("y", 245)
         val oldDock = floatingPrefs.getString("dock", null)

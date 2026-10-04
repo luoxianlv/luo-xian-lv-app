@@ -20,9 +20,15 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "AutoPlayMusic"
+rootProject.name = "LuoXianLv"
 include(":app")
-include(":hot-core")
-include(":update-core")
-include(":hot-contract", ":business-ui", ":hot-runtime", ":hot-business")
-include(":app-runtime", ":app-business", ":app-host")
+// 项目 ID 保持稳定，物理目录按正式模块与测试应用归组。
+listOf("app-host", "app-runtime", "app-business", "hot-core", "hot-contract", "business-ui", "update-core")
+    .forEach { name ->
+        include(":$name")
+        project(":$name").projectDir = file("modules/$name")
+    }
+listOf("hot-runtime", "hot-business").forEach { name ->
+    include(":$name")
+    project(":$name").projectDir = file("samples/$name")
+}

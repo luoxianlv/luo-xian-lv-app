@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.data.AppearanceSettings
-import app.luoxianlv.ui.components.decodeSampleSize
+import app.luoxianlv.home.decodeSampleSize
+import app.luoxianlv.settings.AppearanceSettings
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

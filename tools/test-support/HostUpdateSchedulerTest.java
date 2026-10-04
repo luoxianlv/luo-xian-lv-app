@@ -97,6 +97,8 @@ public final class HostUpdateSchedulerTest {
     clock(0);
     input(false, false, false);
     set(Bootstrap.class, null, "testCanActivate", false);
+    set(Bootstrap.class, null, "testBusinessWorking", false);
+    ((AtomicInteger) getStatic(ApkUpdateBridge.class, "ACTIVE")).set(0);
     var config = allocate(HostUpdateConfig.class);
     set(HostUpdateConfig.class, config, "environment", "test");
     var startup = allocate(HostStartup.class);
@@ -114,11 +116,24 @@ public final class HostUpdateSchedulerTest {
     set(HostUpdates.class, host, "coldPulse", (Runnable) () -> {});
     set(HostUpdates.class, host, "worker", worker);
     set(HostUpdates.class, host, "connectivity", network);
+    set(HostUpdates.class, host, "online", true);
+    set(HostUpdates.class, host, "networkCallback", invoke(host, "networkListener"));
   }
 
   @After
   public void cleanup() {
     if (worker != null) worker.shutdownNow();
+    try {
+      ((AtomicInteger) getStatic(ApkUpdateBridge.class, "ACTIVE")).set(0);
+    } catch (Exception failure) {
+      throw new AssertionError(failure);
+    }
+  }
+
+  private static Object getStatic(Class<?> type, String name) throws Exception {
+    Field field = type.getDeclaredField(name);
+    field.setAccessible(true);
+    return field.get(null);
   }
 
   @Test
@@ -129,6 +144,7 @@ public final class HostUpdateSchedulerTest {
     assertEquals(0, timers());
     input(true, false, false);
     set(ConnectivityManager.class, network, "connected", false);
+    set(HostUpdates.class, host, "online", false);
     invoke(host, "tick");
     assertEquals(0, worker.tasks.size());
     assertTrue(timers() > 0); // 前台仅探测状态，没有网络检查。
@@ -148,6 +164,41 @@ public final class HostUpdateSchedulerTest {
     input(false, false, true);
     invoke(host, "tick");
     assertTrue((Boolean) invoke(host, "cancelled"));
+  }
+
+  @Test
+  public void ordinaryApkAndBusinessIoStopHotPreparationWithoutQueryingBinder() throws Exception {
+    input(true, false, false);
+    set(ConnectivityManager.class, network, "rejectQuery", true);
+    var token = new UpdateCancellation(() -> false);
+    set(HostUpdates.class, host, "requestCancellation", token);
+    ((AtomicInteger) getStatic(ApkUpdateBridge.class, "ACTIVE")).set(1);
+    host.usageChanged();
+    assertTrue(token.isCancelled());
+    invoke(host, "tick");
+    assertTrue(worker.tasks.isEmpty());
+    assertEquals(0, get(network, "queries"));
+    ((AtomicInteger) getStatic(ApkUpdateBridge.class, "ACTIVE")).set(0);
+    set(Bootstrap.class, null, "testBusinessWorking", true);
+    invoke(host, "tick");
+    assertTrue(worker.tasks.isEmpty());
+    set(Bootstrap.class, null, "testBusinessWorking", false);
+    invoke(host, "tick");
+    assertEquals(1, worker.tasks.size());
+  }
+
+  @Test
+  public void apkWaitsUntilHotWorkerAndCandidateCleanupHaveBothFinished() throws Exception {
+    assertTrue(host.apkWorkIdle());
+    set(HostUpdates.class, host, "busy", true);
+    assertFalse(host.apkWorkIdle());
+    set(HostUpdates.class, host, "busy", false);
+    var token = new UpdateCancellation(() -> false);
+    set(HostUpdates.class, host, "requestCancellation", token);
+    token.cancel();
+    assertFalse(host.apkWorkIdle()); // 已取消不等于流、描述符和候选已经释放。
+    set(HostUpdates.class, host, "requestCancellation", null);
+    assertTrue(host.apkWorkIdle());
   }
 
   @Test
@@ -176,8 +227,10 @@ public final class HostUpdateSchedulerTest {
     schedule.finish(false, 120000);
     set(HostUpdates.class, host, "busy", false);
     set(ConnectivityManager.class, network, "connected", false);
+    set(HostUpdates.class, host, "online", false);
     invoke(host, "tick");
     set(ConnectivityManager.class, network, "connected", true);
+    set(HostUpdates.class, host, "online", true);
     clock(1000);
     invoke(host, "tick");
     assertEquals(1, worker.tasks.size());
@@ -206,6 +259,51 @@ public final class HostUpdateSchedulerTest {
     assertEquals(1, worker.tasks.size());
     assertFalse((Boolean) get(host, "active"));
     assertTrue((Boolean) invoke(host, "cancelled"));
+  }
+
+  @Test
+  public void usageEdgesUseCachedNetworkWithoutBinderAndIgnoreOldNetworkLoss() throws Exception {
+    input(true, false, true);
+    set(ConnectivityManager.class, network, "rejectQuery", true);
+    var callback = (ConnectivityManager.NetworkCallback) get(host, "networkCallback");
+    var old = new android.net.Network();
+    var current = new android.net.Network();
+    var capabilities = new android.net.NetworkCapabilities();
+    capabilities.validated = true;
+    callback.onAvailable(old);
+    callback.onCapabilitiesChanged(old, capabilities);
+    callback.onAvailable(current);
+    callback.onCapabilitiesChanged(current, capabilities);
+    callback.onLost(old);
+    host.usageChanged();
+    invoke(host, "tick");
+    assertTrue((Boolean) get(host, "online"));
+    assertEquals(0, get(network, "queries"));
+    callback.onLost(current);
+    assertFalse((Boolean) get(host, "online"));
+    host.stopScheduling();
+    callback.onAvailable(current);
+    callback.onCapabilitiesChanged(current, capabilities);
+    assertFalse((Boolean) get(host, "active"));
+  }
+
+  @Test
+  public void unavailableListenerQueuesOnlyOneBackgroundReadAndLateResultCannotRestart()
+      throws Exception {
+    input(true, false, true);
+    set(HostUpdates.class, host, "networkCallback", null);
+    set(HostUpdates.class, host, "online", false);
+    invoke(host, "tick");
+    invoke(host, "tick");
+    host.usageChanged();
+    assertEquals(0, get(network, "queries"));
+    assertEquals(1, worker.tasks.size());
+    worker.tasks.remove(0).run();
+    assertEquals(1, get(network, "queries"));
+    host.stopScheduling();
+    Handler.class.getMethod("drain").invoke(null);
+    assertFalse((Boolean) get(host, "active"));
+    assertEquals(0, timers());
   }
 
   /** worker完成加载与主线程故障停用确定性交替，真实activate取消路径必须关闭并abort。 */
@@ -459,6 +557,8 @@ public final class HostUpdateSchedulerTest {
       if (connection != null) connection.close();
       if (practiceOwner != null) PracticeBridge.leave(practiceOwner);
       set(Bootstrap.class, null, "process", null);
+      set(Bootstrap.class, null, "updates", null);
+      set(Bootstrap.class, null, "activation", null);
     }
 
     private void connect(java.util.function.Supplier<Bundle> state) throws Exception {
@@ -533,6 +633,35 @@ public final class HostUpdateSchedulerTest {
       assertTrue(Bootstrap.playbackPreparing());
       PracticeBridge.setReady(practiceOwner, true);
       assertFalse(Bootstrap.playbackPreparing());
+    }
+
+    @Test
+    public void ordinaryApkWaitsForExistingHotWorkAndActivationButNotItsOwnBusinessLease()
+        throws Exception {
+      var host = allocate(HostUpdates.class);
+      set(Bootstrap.class, null, "updates", host);
+      assertTrue(Bootstrap.ordinaryUpdateIdle());
+      set(HostUpdates.class, host, "busy", true);
+      assertFalse(Bootstrap.ordinaryUpdateIdle());
+      set(HostUpdates.class, host, "busy", false);
+      set(Bootstrap.class, null, "activation", allocate(GroupActivation.class));
+      assertFalse(Bootstrap.ordinaryUpdateIdle());
+      set(Bootstrap.class, null, "activation", null);
+      set(
+          Bootstrap.class,
+          null,
+          "process",
+          new ProcessHooks() {
+            public void initialize() {}
+
+            public void trimMemory(int level) {}
+
+            public boolean canReplace() {
+              return false;
+            }
+          });
+      assertTrue(Bootstrap.businessWorking());
+      assertTrue(Bootstrap.ordinaryUpdateIdle());
     }
   }
 }

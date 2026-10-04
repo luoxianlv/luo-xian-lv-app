@@ -1,8 +1,8 @@
 package app.luoxianlv;
 
 import android.os.SystemClock;
-import app.luoxianlv.core.score.ScoreParser;
-import app.luoxianlv.core.score.ScoreWork;
+import app.luoxianlv.library.ScoreParser;
+import app.luoxianlv.library.ScoreWork;
 import java.util.ArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;

@@ -136,7 +136,7 @@ public final class NavigationFrameInstrumentation extends Instrumentation {
         HandlerThread collector = new HandlerThread("navigation-frames");
         collector.start();
         boolean passed = false;
-        android.content.SharedPreferences library = app.luoxianlv.data.Kv.INSTANCE.of(getTargetContext(), "song_library");
+        android.content.SharedPreferences library = app.luoxianlv.shared.Kv.INSTANCE.of(getTargetContext(), "song_library");
         String previousSongs = library.getString("songs", "[]");
         // 恢复上次测试进程被外部终止时遗留的专用测试曲目。
         try {
@@ -187,7 +187,7 @@ public final class NavigationFrameInstrumentation extends Instrumentation {
             for (int i = 0; i < 6; i++) {
                 transition("设置返回曲库", "设置", "网站账号", null);
                 // 内部事件接口仅在未裁剪包测试，R8 可将单例改成静态调用。
-                if (refresh) runOnMainSync(() -> app.luoxianlv.ui.AppEvents.INSTANCE.notifyLibraryChanged());
+                if (refresh) runOnMainSync(() -> app.luoxianlv.library.AppEvents.INSTANCE.notifyLibraryChanged());
                 transition("设置返回曲库", "曲库", "导入谱子", null);
                 transition("设置返回发现", "设置", "网站账号", null);
                 transition("设置返回发现", "发现", "搜索谱子", null);

@@ -4,8 +4,8 @@ import android.app.Instrumentation
 import android.content.Intent
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import app.luoxianlv.practice.PracticePlaybackGate
 import app.luoxianlv.ui.practice.PracticeActivity
-import app.luoxianlv.ui.practice.PracticePlaybackGate
 import java.io.File
 
 /** 通过无障碍点击实际 Compose 入口，验证完整进入流程。 */
@@ -23,10 +23,10 @@ internal fun Instrumentation.checkStageEntry() {
                 zip.closeEntry()
             }
     }
-    if (app.luoxianlv.wallpaper.data.WallpaperProjectStore.hasBundled(targetContext)) {
-        app.luoxianlv.wallpaper.data.WallpaperProjectStore.reset(targetContext)
+    if (app.luoxianlv.wallpaper.WallpaperProjectStore.hasBundled(targetContext)) {
+        app.luoxianlv.wallpaper.WallpaperProjectStore.reset(targetContext)
     } else {
-        app.luoxianlv.wallpaper.data.WallpaperProjectStore.import(
+        app.luoxianlv.wallpaper.WallpaperProjectStore.import(
             targetContext,
             android.net.Uri.fromFile(fixture),
             false,
@@ -66,14 +66,14 @@ internal fun Instrumentation.checkStageEntry() {
             image.recycle()
         }
     }
-    fun background(view: android.view.View): app.luoxianlv.wallpaper.render.PracticeBackdrop? =
+    fun background(view: android.view.View): app.luoxianlv.wallpaper.PracticeBackdrop? =
         when (view) {
-            is app.luoxianlv.wallpaper.render.PracticeBackdrop -> view
+            is app.luoxianlv.wallpaper.PracticeBackdrop -> view
             is android.view.ViewGroup ->
                 (0 until view.childCount).firstNotNullOfOrNull { background(view.getChildAt(it)) }
             else -> null
         }
-    var warmed: app.luoxianlv.wallpaper.render.PracticeBackdrop? = null
+    var warmed: app.luoxianlv.wallpaper.PracticeBackdrop? = null
     await("Home did not preload actual wallpaper") {
         var ready = false
         runOnMainSync {
@@ -83,7 +83,7 @@ internal fun Instrumentation.checkStageEntry() {
         ready
     }
     fun assertRendererPaused(
-        backdrop: app.luoxianlv.wallpaper.render.PracticeBackdrop,
+        backdrop: app.luoxianlv.wallpaper.PracticeBackdrop,
         expected: Boolean,
     ) {
         await("Wallpaper pause state did not become $expected") {
@@ -171,15 +171,15 @@ internal fun Instrumentation.checkStageEntry() {
             ?: error("Entry did not launch stage")
     var portraitKeys = false
     var portraitReveal = false
-    fun curtain(view: android.view.View): app.luoxianlv.ui.practice.StageCurtain? =
+    fun curtain(view: android.view.View): app.luoxianlv.practice.StageCurtain? =
         when (view) {
-            is app.luoxianlv.ui.practice.StageCurtain -> view
+            is app.luoxianlv.practice.StageCurtain -> view
             is android.view.ViewGroup ->
                 (0 until view.childCount).firstNotNullOfOrNull { curtain(view.getChildAt(it)) }
             else -> null
         }
     fun hasKeyboard(view: android.view.View): Boolean =
-        view is app.luoxianlv.ui.practice.PracticeKeyboard ||
+        view is app.luoxianlv.practice.PracticeKeyboard ||
             (view is android.view.ViewGroup &&
                 (0 until view.childCount).any { hasKeyboard(view.getChildAt(it)) })
     val frameCheck =
@@ -301,5 +301,5 @@ internal fun Instrumentation.checkStageEntry() {
     capture("returned.png")
     removeMonitor(monitor)
     runOnMainSync { home.finish() }
-    app.luoxianlv.wallpaper.data.WallpaperProjectStore.reset(targetContext)
+    app.luoxianlv.wallpaper.WallpaperProjectStore.reset(targetContext)
 }

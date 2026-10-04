@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.service.DisplayStability
-import app.luoxianlv.service.DisplayState
+import app.luoxianlv.playback.DisplayStability
+import app.luoxianlv.playback.DisplayState
 import org.junit.Assert.*
 import org.junit.Test
 

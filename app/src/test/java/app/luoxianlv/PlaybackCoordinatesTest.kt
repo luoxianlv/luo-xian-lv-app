@@ -1,8 +1,8 @@
 package app.luoxianlv
 
-import app.luoxianlv.core.score.PlayMode
-import app.luoxianlv.data.KeyLayout
-import app.luoxianlv.service.PlaybackCoordinates
+import app.luoxianlv.library.PlayMode
+import app.luoxianlv.playback.PlaybackCoordinates
+import app.luoxianlv.recognition.KeyLayout
 import org.junit.Assert.*
 import org.junit.Test
 

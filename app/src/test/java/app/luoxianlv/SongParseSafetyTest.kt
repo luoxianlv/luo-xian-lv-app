@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.data.Song
+import app.luoxianlv.library.Song
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * 坏谱面不能让曲库闪退。
  *
- * 曲库列表行渲染要读 [Song.durationMs]，而它会触发惰性解析；[app.luoxianlv.core.score.ScoreParser] 对不合法谱面抛
+ * 曲库列表行渲染要读 [Song.durationMs]，而它会触发惰性解析；[app.luoxianlv.library.ScoreParser] 对不合法谱面抛
  * IllegalArgumentException —— 抛在组合期就是整屏闪退（打开曲库即崩）。 这里锁住「解析失败退化为空谱面」这一行为，以后谁把 runCatching 去掉都会直接挂测试。
  */
 class SongParseSafetyTest {

@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.ui.practice.PracticeGeometry
-import app.luoxianlv.ui.practice.PracticeSession
+import app.luoxianlv.practice.PracticeGeometry
+import app.luoxianlv.practice.PracticeSession
 import org.junit.Assert.*
 import org.junit.Test
 

@@ -1,6 +1,6 @@
 package app.luoxianlv;
 
-import app.luoxianlv.business.MainPage;
+import app.luoxianlv.app.MainPage;
 import app.luoxianlv.hot.NativeHostActivity;
 import app.luoxianlv.hot.contract.NativePage;
 

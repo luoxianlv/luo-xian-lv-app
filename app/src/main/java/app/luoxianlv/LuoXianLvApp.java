@@ -1,7 +1,7 @@
 package app.luoxianlv;
 
 import android.app.Application;
-import app.luoxianlv.business.AppProcess;
+import app.luoxianlv.app.AppProcess;
 import app.luoxianlv.debug.CrashLog;
 import app.luoxianlv.hot.contract.ProcessHooks;
 

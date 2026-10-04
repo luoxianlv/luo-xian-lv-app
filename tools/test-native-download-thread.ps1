@@ -12,9 +12,9 @@ function Exact-Block([string]$Text,[string]$Signature) {
     }
     throw '限定源码块未闭合'
 }
-$helper=[IO.File]::ReadAllText((Join-Path $repoRoot 'app-host/src/androidTest/java/app/luoxianlv/host/NativeDownloadChecks.java'),$utf8)
-$bootstrap=[IO.File]::ReadAllText((Join-Path $repoRoot 'app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),$utf8)
-$page=[IO.File]::ReadAllText((Join-Path $repoRoot 'hot-core/src/main/java/app/luoxianlv/hot/PageSwapHost.java'),$utf8)
+$helper=[IO.File]::ReadAllText((Join-Path $repoRoot 'modules/app-host/src/androidTest/java/app/luoxianlv/host/NativeDownloadChecks.java'),$utf8)
+$bootstrap=[IO.File]::ReadAllText((Join-Path $repoRoot 'modules/app-host/src/main/java/app/luoxianlv/host/Bootstrap.java'),$utf8)
+$page=[IO.File]::ReadAllText((Join-Path $repoRoot 'modules/hot-core/src/main/java/app/luoxianlv/hot/PageSwapHost.java'),$utf8)
 $old=(& git -C $repoRoot show 'b85980d:app-host/src/androidTest/java/app/luoxianlv/host/NativeDownloadChecks.java')-join "`n"
 if($LASTEXITCODE-ne 0){throw '缺少真实失败前helper源码负对照'}
 $blocks=@('private interface Action','private interface Condition','private static boolean mainCondition(',
@@ -101,7 +101,7 @@ $source=$source.Replace('PAGE_IN_USE',$pageInUse).Replace('PAGE_GATE',$pageGate)
     Replace('EXACT_HELPER_BLOCKS',($blocks-join "`n")).Replace('EXACT_ORIGINAL_BLOCK',$original)
 $sourcePath=Join-Path $runRoot 'NativeDownloadThreadProof.java'
 [IO.File]::WriteAllText($sourcePath,$source,$utf8)
-$core=Join-Path $repoRoot 'hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
+$core=Join-Path $repoRoot 'modules/hot-core/build/intermediates/javac/debug/compileDebugJavaWithJavac/classes'
 $arguments=@('-encoding','UTF-8','--release','17','-cp',$core,'-d',$runRoot,$sourcePath)
 $argsFile=Join-Path $runRoot 'javac.args'
 [IO.File]::WriteAllLines($argsFile,($arguments|ForEach-Object{'"'+$_.Replace('\','/')+'"'}),$utf8)

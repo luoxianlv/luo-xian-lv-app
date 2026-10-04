@@ -77,9 +77,20 @@ fun parseAppRelease(
     val sources = mutableListOf<UpdateSource>()
     val channels = json.optJSONObject("channels")
     val topSize = json.optLong("apkSize", 0)
+    if (delivery != null) require(topSize in 1..512L * 1024 * 1024) { "签名更新缺少有效的安装包大小" }
     for (id in listOf(preferred, "oss", "github").distinct()) {
         val channel = channels?.optJSONObject(id) ?: continue
         val url = channel.optString("url").ifBlank { null } ?: continue
+        if (delivery != null) {
+            if (channel.has("sha256"))
+                require(channel.optString("sha256").lowercase() == sha) {
+                    "下载渠道与签名目标不一致"
+                }
+            if (channel.has("size"))
+                require(channel.optLong("size", -1) == topSize) {
+                    "下载渠道与签名目标不一致"
+                }
+        }
         val channelSha =
             channel.optString("sha256").lowercase().takeIf { it.matches(Regex("[a-f0-9]{64}")) }
                 ?: sha

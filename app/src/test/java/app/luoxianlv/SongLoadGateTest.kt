@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.core.playback.SongLoadGate
+import app.luoxianlv.playback.SongLoadGate
 import org.junit.Assert.*
 import org.junit.Test
 

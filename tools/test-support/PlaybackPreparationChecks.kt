@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.business.playback.ActualPlaybackEdgeFixture
+import app.luoxianlv.playback.ActualPlaybackEdgeFixture
 import org.junit.Assert.*
 import org.junit.Test
 

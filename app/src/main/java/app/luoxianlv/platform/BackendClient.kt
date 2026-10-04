@@ -1,7 +1,5 @@
 package app.luoxianlv.platform
 
-import app.luoxianlv.data.AccountSession
-import app.luoxianlv.data.SessionStore
 import app.luoxianlv.update.ClientVersion
 import java.net.HttpURLConnection
 import java.net.URL
@@ -113,6 +111,6 @@ internal fun <T> background(
     callback: (Result<T>) -> Unit,
     block: () -> T,
 ) {
-    if (!app.luoxianlv.business.BusinessJobs.thread("平台请求") { callback(runCatching(block)) })
+    if (!app.luoxianlv.app.BusinessJobs.thread("平台请求") { callback(runCatching(block)) })
         callback(Result.failure(IllegalStateException("本代工作已停用，请重新操作")))
 }

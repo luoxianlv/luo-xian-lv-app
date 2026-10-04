@@ -17,6 +17,9 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'native-apk-signature.ps1')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $nativeRoot = (Resolve-Path -LiteralPath $AppRoot).Path
+$nativeModuleRoot = if (Test-Path -LiteralPath (Join-Path $nativeRoot 'modules/app-host/build.gradle.kts')) {
+    Join-Path $nativeRoot 'modules'
+} else { $nativeRoot }
 
 function Read-PublicJson([string]$Path, [long]$MaximumBytes = 16MB) {
     $file = Get-Item -LiteralPath $Path
@@ -42,7 +45,7 @@ function Get-FingerprintFile([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-if (-not $HostApk) { $HostApk = Find-OnlyApk (Join-Path $nativeRoot 'app-host/build/outputs/apk/release') }
+if (-not $HostApk) { $HostApk = Find-OnlyApk (Join-Path $nativeModuleRoot 'app-host/build/outputs/apk/release') }
 $HostApk = (Resolve-Path -LiteralPath $HostApk).Path
 if (-not $ApkSigner) {
     $sdkRoot = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } elseif ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } else { Join-Path $env:LOCALAPPDATA 'Android/Sdk' }
@@ -54,7 +57,7 @@ if (-not $ApkSigner) {
     if (-not $ApkSigner) { throw 'apksigner is required for public signature verification.' }
 }
 $ApkSigner = (Resolve-Path -LiteralPath $ApkSigner).Path
-if (-not $ReportOutput) { $ReportOutput = Join-Path $nativeRoot 'app-host/build/native-release-verification.json' }
+if (-not $ReportOutput) { $ReportOutput = Join-Path $nativeModuleRoot 'app-host/build/native-release-verification.json' }
 $ReportOutput = [System.IO.Path]::GetFullPath($ReportOutput)
 if ([System.IO.Path]::GetExtension($ReportOutput) -ine '.json') { throw 'Verification output must be a JSON file.' }
 
@@ -75,21 +78,21 @@ try {
     [void]$inputs.Add($HostApk)
     $moduleApks = @{
         host = $HostApk
-        runtime = Join-Path $nativeRoot 'app-runtime/build/native-link/release/runtime.apk'
-        business = Join-Path $nativeRoot 'app-business/build/native-link/release/business.apk'
+        runtime = Join-Path $nativeModuleRoot 'app-runtime/build/native-link/release/runtime.apk'
+        business = Join-Path $nativeModuleRoot 'app-business/build/native-link/release/business.apk'
     }
     $sdkJars = @{
-        host = Join-Path $nativeRoot 'hot-contract/build/native-sdk/release/host-contract-sdk.jar'
-        runtime = Join-Path $nativeRoot 'app-runtime/build/native-sdk/release/runtime-sdk.jar'
+        host = Join-Path $nativeModuleRoot 'hot-contract/build/native-sdk/release/host-contract-sdk.jar'
+        runtime = Join-Path $nativeModuleRoot 'app-runtime/build/native-sdk/release/runtime-sdk.jar'
     }
     $packageIds = @{ host = 128; runtime = 127; business = 129 }
     foreach ($role in @('host', 'runtime', 'business')) {
         [void]$inputs.Add([System.IO.Path]::GetFullPath($moduleApks[$role]))
         if ($role -ne 'business') { [void]$inputs.Add([System.IO.Path]::GetFullPath($sdkJars[$role])) }
         foreach ($metadata in @('report.json', 'sdk-contract.json', 'classes.txt', 'exports.txt', 'mapping.txt')) {
-            [void]$inputs.Add([System.IO.Path]::GetFullPath((Join-Path $nativeRoot "app-$role/build/native-report/release/$metadata")))
+            [void]$inputs.Add([System.IO.Path]::GetFullPath((Join-Path $nativeModuleRoot "app-$role/build/native-report/release/$metadata")))
         }
-        [void]$inputs.Add([System.IO.Path]::GetFullPath((Join-Path $nativeRoot "app-$role/build/outputs/mapping/release/mapping.txt")))
+        [void]$inputs.Add([System.IO.Path]::GetFullPath((Join-Path $nativeModuleRoot "app-$role/build/outputs/mapping/release/mapping.txt")))
     }
     if ($inputs.Contains($ReportOutput)) { throw 'Verification output must not overwrite an input artifact.' }
     $canWriteReport = $true
@@ -103,7 +106,7 @@ try {
     & javac -encoding UTF-8 -d $classes $javaSource $dexSource
     if ($LASTEXITCODE -ne 0) { throw 'Standalone SDK/DEX audit compilation failed.' }
     foreach ($role in @('host', 'runtime', 'business')) {
-        $directory = Join-Path $nativeRoot "app-$role/build/native-report/release"
+        $directory = Join-Path $nativeModuleRoot "app-$role/build/native-report/release"
         $reportPath = Join-Path $directory 'report.json'
         foreach ($metadata in @('report.json', 'sdk-contract.json', 'classes.txt', 'exports.txt')) {
             [void]$inputs.Add([System.IO.Path]::GetFullPath((Join-Path $directory $metadata)))
@@ -140,7 +143,7 @@ try {
             Assert-Same $r.mappingObject.path 'mapping.txt' "$role frozen mapping path"
             Assert-FileObject $mapping $r.mappingObject "$role frozen mapping"
             Assert-Same $r.mappingObject.sha256 $r.build.mappingHash "$role mapping build binding"
-            $currentMapping = Join-Path $nativeRoot "app-$role/build/outputs/mapping/release/mapping.txt"
+            $currentMapping = Join-Path $nativeModuleRoot "app-$role/build/outputs/mapping/release/mapping.txt"
             Assert-FileObject $currentMapping $r.mappingObject "$role current AGP mapping"
             [void]$inputs.Add([System.IO.Path]::GetFullPath($mapping))
             [void]$inputs.Add([System.IO.Path]::GetFullPath($currentMapping))

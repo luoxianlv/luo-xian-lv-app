@@ -91,11 +91,11 @@ public final class HostStableRecoveryHandoffTest {
   }
 
   private static byte[] vector(String name) throws Exception {
-    return Files.readAllBytes(new File("hot-core/src/test/resources/permit-v1", name).toPath());
+    return Files.readAllBytes(new File("modules/hot-core/src/test/resources/permit-v1", name).toPath());
   }
 
   private static HotManifest oldManifest() throws Exception {
-    try (var archive = new ZipFile("hot-core/src/test/resources/protocol-v1/base.lxhp");
+    try (var archive = new ZipFile("modules/hot-core/src/test/resources/protocol-v1/base.lxhp");
         var input = archive.getInputStream(archive.getEntry("manifest.json"))) {
       return new HotManifest(input.readAllBytes());
     }

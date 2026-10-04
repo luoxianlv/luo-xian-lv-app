@@ -48,8 +48,8 @@ try {
             }
         }
         Invoke-Adb reverse tcp:18472 tcp:18472
-    } else { Invoke-Adb install -r (Join-Path $repo 'app-host/build/outputs/apk/debug/app-host-debug.apk') }
-    Invoke-Adb install -r (Join-Path $repo 'app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')
+    } else { Invoke-Adb install -r (Join-Path $repo 'modules/app-host/build/outputs/apk/debug/app-host-debug.apk') }
+    Invoke-Adb install -r (Join-Path $repo 'modules/app-host/build/outputs/apk/androidTest/debug/app-host-debug-androidTest.apk')
     $reports = Join-Path $repo '.local'
     [System.IO.Directory]::CreateDirectory($reports) | Out-Null
     $report = Join-Path $reports ('native-host-' + [Guid]::NewGuid().ToString('N') + '.txt')

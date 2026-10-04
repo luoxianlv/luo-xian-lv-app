@@ -14,10 +14,12 @@ import android.view.ViewGroup
 import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import app.luoxianlv.ui.practice.*
-import app.luoxianlv.ui.wallpaper.WallpaperImportModel
-import app.luoxianlv.wallpaper.data.WallpaperProjectStore
-import app.luoxianlv.wallpaper.render.PracticeBackdrop
+import app.luoxianlv.practice.*
+import app.luoxianlv.ui.practice.PracticeActivity
+import app.luoxianlv.ui.practice.WallpaperImportActivity
+import app.luoxianlv.wallpaper.PracticeBackdrop
+import app.luoxianlv.wallpaper.WallpaperImportModel
+import app.luoxianlv.wallpaper.WallpaperProjectStore
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -197,7 +199,7 @@ class WallpaperImportInstrumentation : Instrumentation() {
                                 .filterIsInstance<PracticeBackdrop>()
                                 .firstOrNull()
                                 ?.renderState == "ready" &&
-                                app.luoxianlv.ui.practice.PracticePlaybackGate.ready
+                                app.luoxianlv.practice.PracticePlaybackGate.ready
                     }
                     if (!ready) Thread.sleep(200)
                 }

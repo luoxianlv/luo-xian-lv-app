@@ -5,8 +5,8 @@ import android.content.Intent
 import android.os.SystemClock
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.mutableStateOf
-import app.luoxianlv.ui.components.NoticeSnackbarHost
-import app.luoxianlv.ui.components.SnackbarNotice
+import app.luoxianlv.shared.NoticeSnackbarHost
+import app.luoxianlv.shared.SnackbarNotice
 import app.luoxianlv.ui.theme.LuoXianLvTheme
 
 /** 验证真实 Activity 生命周期中的提示到期、页面回收和新消息替换。 */

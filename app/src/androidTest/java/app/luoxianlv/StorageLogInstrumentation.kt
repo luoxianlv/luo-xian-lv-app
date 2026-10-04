@@ -4,11 +4,11 @@ import android.app.Instrumentation
 import android.os.Bundle
 import android.util.Log
 import androidx.core.content.FileProvider
-import app.luoxianlv.debug.AppLog
-import app.luoxianlv.debug.DebugExport
+import app.luoxianlv.diagnostics.AppLog
+import app.luoxianlv.diagnostics.DebugExport
 import app.luoxianlv.hot.contract.HostDiagnostics
-import app.luoxianlv.storage.AppStorage
-import app.luoxianlv.wallpaper.data.WallpaperProjectStore
+import app.luoxianlv.shared.AppStorage
+import app.luoxianlv.wallpaper.WallpaperProjectStore
 import java.io.File
 import java.util.UUID
 import java.util.zip.ZipFile

@@ -86,7 +86,8 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
       - name: 测试核心并构建优化三层产物
         run: |
-          bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest :app-business:testDebugUnitTest \
+          python tools/verify-update-vendor.py
+          bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest :update-core:testDebugUnitTest :app-business:testDebugUnitTest \
             :app-host:exportReleaseNativeBuildReport -PnativeOptimize=true \
             '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' --max-workers=2 \
             --no-daemon --console=plain --stacktrace
@@ -98,9 +99,9 @@ jobs:
         with:
           name: native-release-audit
           path: |
-            app-host/build/native-release-verification.json
-            app-host/build/native-report/release/
-            app-runtime/build/native-report/release/
-            app-business/build/native-report/release/
+            modules/app-host/build/native-release-verification.json
+            modules/app-host/build/native-report/release/
+            modules/app-runtime/build/native-report/release/
+            modules/app-business/build/native-report/release/
           if-no-files-found: error
           retention-days: 14
