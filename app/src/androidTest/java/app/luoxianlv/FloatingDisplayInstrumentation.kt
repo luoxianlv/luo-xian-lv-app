@@ -15,9 +15,9 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.EditText
-import app.luoxianlv.business.playback.PlaybackConnection
-import app.luoxianlv.service.FloatingControls
-import app.luoxianlv.ui.floating.PlayerUi.dp
+import app.luoxianlv.playback.FloatingControls
+import app.luoxianlv.playback.PlaybackConnection
+import app.luoxianlv.playback.PlayerUi.dp
 import java.util.concurrent.atomic.AtomicReference
 
 /** 验证真实系统窗口的通知去重、转屏复用与选歌内容保留；只供测试设备运行。 */

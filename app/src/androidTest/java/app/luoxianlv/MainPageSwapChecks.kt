@@ -5,10 +5,10 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import androidx.lifecycle.Lifecycle
-import app.luoxianlv.business.MainPage
+import app.luoxianlv.app.MainPage
 import app.luoxianlv.hot.MainSwapFixture
 import app.luoxianlv.hot.PageSwapHost
-import app.luoxianlv.wallpaper.render.PracticeBackdrop
+import app.luoxianlv.wallpaper.PracticeBackdrop
 import java.util.concurrent.atomic.AtomicReference
 
 /** 重建实际主业务页面，不下载新 Dex；用于发现只测简单 View 无法覆盖的 Compose 集成问题。 */

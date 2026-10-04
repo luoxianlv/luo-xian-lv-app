@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.data.hiddenBuiltInsJson
-import app.luoxianlv.data.parseHiddenBuiltIns
+import app.luoxianlv.library.hiddenBuiltInsJson
+import app.luoxianlv.library.parseHiddenBuiltIns
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

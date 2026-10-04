@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.ui.practice.IdlePrewarmSchedule
+import app.luoxianlv.practice.IdlePrewarmSchedule
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

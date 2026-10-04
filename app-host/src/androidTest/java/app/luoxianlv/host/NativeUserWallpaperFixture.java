@@ -63,9 +63,9 @@ final class NativeUserWallpaperFixture {
     Context module = moduleContext(runner, home, source);
     ClassLoader loader = source.prepared.classLoader();
     Class<?> storeType =
-        Class.forName("app.luoxianlv.wallpaper.data.WallpaperProjectStore", true, loader);
+        Class.forName("app.luoxianlv.wallpaper.WallpaperProjectStore", true, loader);
     Object store = storeType.getField("INSTANCE").get(null);
-    Class<?> storageType = Class.forName("app.luoxianlv.storage.AppStorage", true, loader);
+    Class<?> storageType = Class.forName("app.luoxianlv.shared.AppStorage", true, loader);
     File wallpapers =
         ((File)
                 storageType
@@ -243,7 +243,7 @@ final class NativeUserWallpaperFixture {
     Context module = moduleContext(runner, home, source);
     ClassLoader loader = source.prepared.classLoader();
     Class<?> storeType =
-        Class.forName("app.luoxianlv.wallpaper.data.WallpaperProjectStore", true, loader);
+        Class.forName("app.luoxianlv.wallpaper.WallpaperProjectStore", true, loader);
     Object store = storeType.getField("INSTANCE").get(null);
     Class<?> entryType = Class.forName(storeType.getName() + "$Entry", true, loader);
     File external = target.getExternalFilesDir(null);
@@ -305,7 +305,7 @@ final class NativeUserWallpaperFixture {
       require(stage != null, "实际演练场未启动");
       Activity playing = stage;
       Class<?> backdropType =
-          Class.forName("app.luoxianlv.wallpaper.render.PracticeBackdrop", true, loader);
+          Class.forName("app.luoxianlv.wallpaper.PracticeBackdrop", true, loader);
       var projectField = backdropType.getDeclaredField("project");
       var webField = backdropType.getDeclaredField("web");
       var posterField = backdropType.getDeclaredField("posterView");

@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.service.FloatingDock
+import app.luoxianlv.playback.FloatingDock
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

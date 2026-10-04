@@ -1,6 +1,6 @@
 package app.luoxianlv.ui.practice;
 
-import app.luoxianlv.business.practice.PracticePage;
+import app.luoxianlv.practice.PracticePage;
 import app.luoxianlv.hot.NativeHostActivity;
 import app.luoxianlv.hot.contract.NativePage;
 

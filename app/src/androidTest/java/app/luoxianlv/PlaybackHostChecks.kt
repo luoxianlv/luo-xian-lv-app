@@ -6,12 +6,12 @@ import android.graphics.Path
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.Display
-import app.luoxianlv.business.playback.PlaybackSession
 import app.luoxianlv.hot.NativeAccessibilityService
 import app.luoxianlv.hot.contract.AccessibilityBinding
 import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.hot.contract.PlaybackValues
 import app.luoxianlv.hot.contract.PracticeBridge
+import app.luoxianlv.playback.PlaybackSession
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger

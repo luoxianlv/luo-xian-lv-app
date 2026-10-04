@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.service.PlaybackInterruptionGuard
+import app.luoxianlv.playback.PlaybackInterruptionGuard
 import org.junit.Assert.*
 import org.junit.Test
 

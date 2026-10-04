@@ -352,7 +352,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
         field.setAccessible(true);
         heldProcess = (app.luoxianlv.hot.contract.ProcessHooks) field.get(null);
         var loader = Bootstrap.source().prepared.classLoader();
-        var jobs = Class.forName("app.luoxianlv.business.BusinessJobs", true, loader);
+        var jobs = Class.forName("app.luoxianlv.app.BusinessJobs", true, loader);
         var function = Class.forName("kotlin.jvm.functions.Function0", false, loader);
         var began = new java.util.concurrent.CountDownLatch(1);
         Object action =
@@ -588,14 +588,14 @@ public final class NativeAppInstrumentation extends Instrumentation {
         ClassLoader runtime = Class.forName("kotlin.Unit", false, business).getClassLoader();
         require(business != runtime && runtime == business.getParent(), "业务没有复用独立共享运行时");
         require(
-            Class.forName("app.luoxianlv.business.MainPage", false, business).getClassLoader()
+            Class.forName("app.luoxianlv.app.MainPage", false, business).getClassLoader()
                 == business,
             "主页不是业务模块提供");
         for (String name :
             new String[] {
               "kotlin.Unit",
               "androidx.compose.ui.platform.ComposeView",
-              "app.luoxianlv.business.MainPage"
+              "app.luoxianlv.app.MainPage"
             }) {
           boolean missing = false;
           try {
@@ -709,7 +709,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
               View keyboard =
                   view(
                       playing.getWindow().getDecorView(),
-                      "app.luoxianlv.ui.practice.PracticeKeyboard");
+                      "app.luoxianlv.practice.PracticeKeyboard");
               require(
                   keyboard != null
                       && keyboard.getClass().getClassLoader()
@@ -740,7 +740,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
       if (holdWork && heldProcess != null) {
         try {
           var loader = Bootstrap.source().prepared.classLoader();
-          var jobs = Class.forName("app.luoxianlv.business.BusinessJobs", false, loader);
+          var jobs = Class.forName("app.luoxianlv.app.BusinessJobs", false, loader);
           var gate =
               (app.luoxianlv.hot.contract.WorkGate)
                   jobs.getMethod("getGate").invoke(jobs.getField("INSTANCE").get(null));

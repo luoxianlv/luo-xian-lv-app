@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.wallpaper.render.awaitStartupPreparation
+import app.luoxianlv.wallpaper.awaitStartupPreparation
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking

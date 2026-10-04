@@ -1,14 +1,14 @@
 package app.luoxianlv.update
 
 import android.content.Context
-import app.luoxianlv.business.BusinessJobs
-import app.luoxianlv.core.harmonica.RustCompiledMidi
-import app.luoxianlv.data.Kv
-import app.luoxianlv.data.Song
-import app.luoxianlv.data.SongRepository
-import app.luoxianlv.debug.AppLog
+import app.luoxianlv.app.BusinessJobs
+import app.luoxianlv.diagnostics.AppLog
+import app.luoxianlv.library.AppEvents
+import app.luoxianlv.library.RustCompiledMidi
+import app.luoxianlv.library.Song
+import app.luoxianlv.library.SongRepository
 import app.luoxianlv.platform.PlatformClient
-import app.luoxianlv.ui.AppEvents
+import app.luoxianlv.shared.Kv
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean

@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.wallpaper.render.PreviewByteCache
+import app.luoxianlv.wallpaper.PreviewByteCache
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit

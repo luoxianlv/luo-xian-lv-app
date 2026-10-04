@@ -11,9 +11,9 @@ import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
-import app.luoxianlv.business.playback.PlaybackConnection
-import app.luoxianlv.data.SongRepository
 import app.luoxianlv.hot.contract.ForegroundPolicy
+import app.luoxianlv.library.SongRepository
+import app.luoxianlv.playback.PlaybackConnection
 import app.luoxianlv.service.PlaybackForegroundService
 import java.util.concurrent.atomic.AtomicBoolean
 

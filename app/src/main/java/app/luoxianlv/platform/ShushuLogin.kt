@@ -5,8 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Base64
-import app.luoxianlv.data.AccountSession
-import app.luoxianlv.data.Kv
+import app.luoxianlv.shared.Kv
 import java.security.MessageDigest
 import java.security.SecureRandom
 import org.json.JSONObject

@@ -4,11 +4,10 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import app.luoxianlv.BuildConfig
-import app.luoxianlv.core.harmonica.RustCompiledMidi
-import app.luoxianlv.core.harmonica.RustMidiCompiler
-import app.luoxianlv.data.SessionStore
-import app.luoxianlv.data.SongRepository
-import app.luoxianlv.data.SyncApplyResult
+import app.luoxianlv.library.RustCompiledMidi
+import app.luoxianlv.library.RustMidiCompiler
+import app.luoxianlv.library.SongRepository
+import app.luoxianlv.library.SyncApplyResult
 import java.net.URL
 import org.json.JSONObject
 
@@ -67,7 +66,7 @@ class PlatformClient(private val context: Context) {
         onResult: (Result<List<SyncedScore>>) -> Unit,
     ) {
         if (
-            !app.luoxianlv.business.BusinessJobs.thread("同步曲库") {
+            !app.luoxianlv.app.BusinessJobs.thread("同步曲库") {
                 onResult(
                     runCatching {
                         require(deviceId.isNotBlank()) { "设备标识不能为空" }
@@ -214,7 +213,7 @@ class PlatformClient(private val context: Context) {
                     bytes.toString(Charsets.UTF_8).removePrefix("﻿").trim().also {
                         require(it.any(Char::isDigit)) { "谱面内容为空" }
                     }
-                RustCompiledMidi(text, app.luoxianlv.core.score.ScoreParser.tempo(text, 120), 0)
+                RustCompiledMidi(text, app.luoxianlv.library.ScoreParser.tempo(text, 120), 0)
             }
         }
     }

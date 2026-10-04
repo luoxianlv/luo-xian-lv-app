@@ -1,8 +1,8 @@
 package app.luoxianlv
 
-import app.luoxianlv.core.score.PlayMode
-import app.luoxianlv.service.PlaybackCoordinates
-import app.luoxianlv.ui.practice.PracticeGeometry
+import app.luoxianlv.library.PlayMode
+import app.luoxianlv.playback.PlaybackCoordinates
+import app.luoxianlv.practice.PracticeGeometry
 import org.junit.Assert.*
 import org.junit.Test
 

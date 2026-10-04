@@ -1,6 +1,5 @@
 package app.luoxianlv.platform
 
-import app.luoxianlv.data.AccountSession
 import org.json.JSONObject
 
 internal fun parseAccountSession(root: JSONObject): AccountSession {

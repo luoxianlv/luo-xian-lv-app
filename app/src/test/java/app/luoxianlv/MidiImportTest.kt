@@ -1,8 +1,8 @@
 package app.luoxianlv
 
-import app.luoxianlv.ui.importer.MAX_MIDI_BYTES
-import app.luoxianlv.ui.importer.readMidi
-import app.luoxianlv.ui.importer.validateMidiName
+import app.luoxianlv.library.MAX_MIDI_BYTES
+import app.luoxianlv.library.readMidi
+import app.luoxianlv.library.validateMidiName
 import org.junit.Assert.*
 import org.junit.Test
 

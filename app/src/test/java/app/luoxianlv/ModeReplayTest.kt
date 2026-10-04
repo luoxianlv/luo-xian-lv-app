@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.core.score.PlayMode
-import app.luoxianlv.profile.ScreenRecognizer
+import app.luoxianlv.library.PlayMode
+import app.luoxianlv.recognition.ScreenRecognizer
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.io.File

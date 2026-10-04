@@ -7,11 +7,12 @@ import android.view.ViewGroup
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.findViewTreeLifecycleOwner
-import app.luoxianlv.business.practice.PracticePage
-import app.luoxianlv.core.score.PlayMode
 import app.luoxianlv.hot.MainSwapFixture
 import app.luoxianlv.hot.PageSwapHost
-import app.luoxianlv.ui.practice.*
+import app.luoxianlv.library.PlayMode
+import app.luoxianlv.practice.*
+import app.luoxianlv.practice.PracticePage
+import app.luoxianlv.ui.practice.PracticeActivity
 import java.util.concurrent.atomic.AtomicReference
 
 /** 使用包内新业务实例检查演练场迁移；不冒充下载新 Dex 或真实 60 秒观察。 */

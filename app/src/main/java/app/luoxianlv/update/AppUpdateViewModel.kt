@@ -11,10 +11,10 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.luoxianlv.BuildConfig
-import app.luoxianlv.business.BusinessJobs
-import app.luoxianlv.data.Kv
+import app.luoxianlv.app.BusinessJobs
 import app.luoxianlv.hot.contract.SharedFiles
-import app.luoxianlv.storage.AppStorage
+import app.luoxianlv.shared.AppStorage
+import app.luoxianlv.shared.Kv
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL

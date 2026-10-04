@@ -4,7 +4,7 @@ import android.app.Instrumentation
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import app.luoxianlv.wallpaper.render.WallpaperResources
+import app.luoxianlv.wallpaper.WallpaperResources
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch

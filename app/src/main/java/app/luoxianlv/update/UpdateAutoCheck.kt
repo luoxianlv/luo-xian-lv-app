@@ -1,7 +1,7 @@
 package app.luoxianlv.update
 
 import android.content.Context
-import app.luoxianlv.data.Kv
+import app.luoxianlv.shared.Kv
 
 /** 自动检查当前固定开启。保留旧开关的存储代码，但不再读取其关闭状态。 启动和回前台检查沿用原有时机与节流，手动检查不受节流影响。 */
 internal object UpdateAutoCheck {

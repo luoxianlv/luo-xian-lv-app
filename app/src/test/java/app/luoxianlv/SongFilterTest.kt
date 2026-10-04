@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.data.Song
-import app.luoxianlv.ui.library.SongFilter
+import app.luoxianlv.library.Song
+import app.luoxianlv.library.SongFilter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

@@ -1,51 +1,24 @@
-# 原生热更更新核心
+# 热更宿主核心
 
-当前处于本地 `Dev` 实施阶段。此模块提供签名、存储、联网与安全激活组件，发布仍由独立 CLI 完成。现有主 APP 尚未迁移到三层加载结构，也未自动启用这些组件。
+`hot-core` 为 `app-host` 提供下载、验签、加载、激活和恢复能力。使用 Java，仅依赖 Android/JDK；业务 Kotlin 和 Compose 由独立 APK 提供。
 
-更新与恢复基础使用 Java，仅依赖 Android/JDK 能力，避免它本身依赖待更新的 Kotlin/Compose。业务模块仍按正式设计使用原生 Kotlin/Compose。
+源码位于 `src/main/java/app/luoxianlv/hot/`：
 
-已完成：
+| 流程 | 入口 |
+| --- | --- |
+| 配置与身份 | `HostUpdateConfig`、`InstallationIdentity` |
+| 签名与清单 | `HotSignatures`、`SignedSnapshot` |
+| 调度与下载 | `UpdateClient`、`UpdateSchedule`、`ObjectDownloader` |
+| 内容存储 | `ContentStore`、`ContentLeases` |
+| 激活与交接 | `ActivationController`、`GroupHandover` |
+| 加载与恢复 | `NativeLoader`、`BundledBaseline`、`OutcomeRecovery` |
 
-- 严格 UTF-8 JSON，拒绝重复键、字段别名、浮点控制值、孤立 Unicode 代理项和超限内容。
-- P-256/SHA-256，验原始 JSON 字节和用途域；根授权、用途范围、有效期、撤销与信任版本下限。
-- ZIP 中央目录与本地头边界、链接/加密/重复路径检查；流式对象 SHA-256 验证。
-- 只读内部对象、准确基线恢复、候选与当前版本分离、损坏对象拒绝、原子提交。
-- 执行前激活日志、首帧进入试运行、60 秒有效前台观察、故障回退、按快照隔离、旧回调和陈旧写入拒绝。
+共享接口位于 `hot-contract`。业务代码位于 [app 功能目录](../app/src/main/java/app/luoxianlv)，模块关系见[项目结构](../docs/project-structure.md)，版本约束与发布流程见[热更机制](../docs/hot-update.md)。
 
-`ContentStore` 和 `ActivationJournal` 必须由后台更新控制器调用，不能直接放到主线程。准备包不会激活；`begin` 必须在验证本次服务端许可及安全点后才调用。系统进程退出记录的采集由后续宿主桥接负责；不能仅凭日志未结束就上报内容崩溃。
+在仓库根目录运行核心测试：
 
-新增：短期激活许可验证与一次性消耗、内部信任持久化、按实际内容隔离、稳定后的故障回退、受控资源挂载，以及一进程一套运行时的真实加载器。
-
-`NativeLoader` 只接受薄宿主；若父加载器仍带有 Kotlin 会明确拒绝，不能在迁移尚未完成时把旧 APP 当成薄宿主。Android 沙箱拒绝只读文件硬链接，因此 APK 名称副本使用重新校验、只读写入和原子提交；原始对象仍独立保存。运行时单独固定路径，避免清理旧业务快照时误删正在使用的运行时。
-
-`ActivationController` 已统一当前授权重验、服务端尝试编号、短期许可、首帧日志和有效观察时间；新决定可以取消未曝光的候选。主线程使用非阻塞锁，后台提交尚未完成时延后一帧，不等待验签或文件同步。
-
-`PageSwapHost` 已提供同窗口原生页面替换：等待手势/滚动/宿主事务结束，深复制有界基础状态，候选在旧页面后面渲染，实际首帧提交后再绑定输入；准备期间输入改变会保留旧页面、取消本次切换。试运行错误原位恢复，旧代际有任务租约时延后释放。隐藏候选不能触发宿主事件或改系统栏。此处的两个代际上限是单个页面宿主内的保证，跨 Activity/服务的全局代际管理仍需完成。
-
-`UpdateClient` 已串起安装登记、当前决定、整组下载、内部只读保存、激活前复查和一次性许可；在线对象与离线 ZIP 使用同一个 `SignedSnapshot` 验证器。健康回报必须显式启用，关闭时不会因回报而进行网络请求或安装登记。
-
-当前待完成：自动轮询/生命周期宿主接入、持久化健康回报队列、进程级代际/任务管理、磁盘清理和完整 APP 页面/服务迁移。这里没有内置生产根，也没有把公开测试根接入正式 APP；单页在线验收不能描述成完整 APP 已全面热更。
-
-验证：
-
-```powershell
-.\gradlew.bat :hot-core:testDebugUnitTest :hot-core:assembleDebugAndroidTest
-adb install -r hot-core/build/outputs/apk/androidTest/debug/hot-core-debug-androidTest.apk
-adb shell am instrument -w app.luoxianlv.hot.test/app.luoxianlv.hot.HotCoreInstrumentation
+```sh
+bash ./gradlew :hot-core:testDebugUnitTest
 ```
 
-测试 APK 使用独立包名 `app.luoxianlv.hot.test`，不修改用户主 APP 数据。公开向量来自 Go 仓库 `testdata/protocol-v1`，其中产物仅是非可执行测试字节，不是实际 DEX。
-
-常规设备检查还包含四种真实窗口事务：稳定切换并释放租约、创建失败、试运行失败、准备期间状态改变。采用没有额外动画帧的静态 View，避免按钮动画掩盖提交回调时序问题。JVM 核心当前 42 项测试通过。
-
-下载基础已增加：`UpdateSchedule` 合并触发、播放优先和指数退避；`DownloadBudget` 按内容记录整组 20 MiB 计费预算，重试和重启不重置；`ObjectDownloader` 保留准确断点，检查范围与最终哈希；`HttpObjectSource` 使用有界 HTTPS 连接并拒绝跳转传播凭据。预算在读取前最多预留 1 MiB，中途失败不返还未用预留，宁可稍早等待非计费网络，也不反复重置额度。首次准入必须传入整组缺失大小。
-
-设备已验证真实 HTTP Range 和 `Android/data/<测试包>/files/hot/downloads` 暂存。仅独立测试 APK 允许回环 HTTP；明确测试地址直连以避开模拟器开发代理，生产下载继续使用系统网络设置。
-
-可选 `-e native true` 使用 `.local/hot-core-test-assets/native/` 中本地构建且正式签名的两个实际业务包。检查真实关于页、第二版新增 View、共享运行时复用和生命周期转发；主 APP 只完成了关于页/主题源码提取，尚未切换成薄宿主。
-
-`-e online http://127.0.0.1:18472` 另需已配置的本机 Rust 测试发布及 ADB 反向端口。它以已知基础关于页模拟 APK 内置组合，真正从 API 下载新业务对象、验证服务端许可、在同一窗口显示新增原生 View，完成至少 60 秒实际前台观察，再向本机测试环境回报健康并验证重试。初始基础组合的建立是测试布置，不能当作生产冷启动/离线恢复实现。
-
-静态 Compose 场景发现并修复：`registerFrameCommitCallback` 要在请求绘制前注册，不能等到 `onDraw`，否则会错过当前帧，静态页面可能永远不切换。取消时注销回调；不靠重复动画或扩大超时掩盖问题。
-
-完整设计以相邻 `luo-xian-lv-hot-update/docs/design/` 为准。通过这些测试不等于整体系统完成或所有设备已验证。
+设备仪器入口为 `app.luoxianlv.hot.test/app.luoxianlv.hot.HotCoreInstrumentation`；真实宿主回归使用 `app.luoxianlv.debug.test/app.luoxianlv.host.NativeAppInstrumentation`。构建与安装命令见[开发指南](../docs/development.md)。

@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.ui.components.dispatchWindowTouch
+import app.luoxianlv.shared.dispatchWindowTouch
 import org.junit.Assert.*
 import org.junit.Test
 

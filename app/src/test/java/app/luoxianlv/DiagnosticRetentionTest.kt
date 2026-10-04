@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.debug.DiagnosticRetention
+import app.luoxianlv.diagnostics.DiagnosticRetention
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.*

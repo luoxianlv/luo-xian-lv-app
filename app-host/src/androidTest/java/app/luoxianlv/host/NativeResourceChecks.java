@@ -207,7 +207,7 @@ final class NativeResourceChecks {
             && Math.abs(gain - config.getInt("harmonicaGainPermille") / 1000f) < .00001f,
         "业务配置消费者没有读取当前资源");
 
-    var sampler = Class.forName("app.luoxianlv.audio.HarmonicaSampler", true, loader);
+    var sampler = Class.forName("app.luoxianlv.practice.HarmonicaSampler", true, loader);
     var companion = sampler.getField("Companion").get(null);
     Map<?, ?> samples =
         (Map<?, ?>) companion.getClass().getMethod("load", Context.class).invoke(companion, module);
@@ -257,7 +257,7 @@ final class NativeResourceChecks {
         () -> {
           try {
             var sphereType =
-                Class.forName("app.luoxianlv.ui.practice.WhiteSphereShader", true, loader);
+                Class.forName("app.luoxianlv.practice.WhiteSphereShader", true, loader);
             var sphere = sphereType.getDeclaredConstructor(Context.class).newInstance(module);
             var strengthField = sphereType.getDeclaredField("strength");
             strengthField.setAccessible(true);

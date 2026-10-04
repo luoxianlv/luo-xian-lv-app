@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $rendererRoot = (Resolve-Path -LiteralPath $AppRoot).Path
 $rendererScratch = Join-Path $rendererRoot ('.local/renderer-budget-checks-' + [guid]::NewGuid().ToString('N'))
 [void][System.IO.Directory]::CreateDirectory($rendererScratch)
-$rendererSource = [System.IO.File]::ReadAllText((Join-Path $rendererRoot 'app/src/main/java/app/luoxianlv/business/OfficialRendererGate.kt'))
+$rendererSource = [System.IO.File]::ReadAllText((Join-Path $rendererRoot 'app/src/main/java/app/luoxianlv/app/OfficialRendererGate.kt'))
 $rendererStart = $rendererSource.IndexOf('internal class RendererValidationBudget(')
 $rendererEnd = $rendererSource.IndexOf('// RENDERER_BUDGET_END')
 if ($rendererStart -lt 0 -or $rendererEnd -le $rendererStart) { throw 'Actual renderer budget implementation not found.' }

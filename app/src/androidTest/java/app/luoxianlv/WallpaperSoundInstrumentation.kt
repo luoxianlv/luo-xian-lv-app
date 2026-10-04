@@ -9,12 +9,12 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
+import app.luoxianlv.practice.PracticeKeyboard
+import app.luoxianlv.practice.PracticePlaybackGate
 import app.luoxianlv.ui.practice.PracticeActivity
-import app.luoxianlv.ui.practice.PracticeKeyboard
-import app.luoxianlv.ui.practice.PracticePlaybackGate
 import app.luoxianlv.ui.practice.WallpaperPickerActivity
-import app.luoxianlv.wallpaper.data.DefaultWallpaper
-import app.luoxianlv.wallpaper.data.WallpaperProjectStore
+import app.luoxianlv.wallpaper.DefaultWallpaper
+import app.luoxianlv.wallpaper.WallpaperProjectStore
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch

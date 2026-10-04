@@ -1,7 +1,7 @@
 package app.luoxianlv
 
-import app.luoxianlv.ui.library.LibraryUiState
-import app.luoxianlv.ui.library.ServiceStatus
+import app.luoxianlv.library.LibraryUiState
+import app.luoxianlv.library.ServiceStatus
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

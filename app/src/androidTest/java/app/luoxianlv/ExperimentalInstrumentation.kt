@@ -13,14 +13,15 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.lifecycle.findViewTreeLifecycleOwner
-import app.luoxianlv.business.playback.PlaybackConnection
-import app.luoxianlv.data.ConfigStore
-import app.luoxianlv.data.ExperimentalOptions
-import app.luoxianlv.data.Song
 import app.luoxianlv.hot.contract.AccessibilityBinding
 import app.luoxianlv.hot.contract.PlaybackBridge
-import app.luoxianlv.ui.components.ImportFilePicker
-import app.luoxianlv.ui.practice.*
+import app.luoxianlv.library.Song
+import app.luoxianlv.playback.PlaybackConnection
+import app.luoxianlv.practice.*
+import app.luoxianlv.recognition.ConfigStore
+import app.luoxianlv.settings.ExperimentalOptions
+import app.luoxianlv.shared.ImportFilePicker
+import app.luoxianlv.ui.practice.PracticeActivity
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -125,8 +126,7 @@ class ExperimentalInstrumentation : Instrumentation() {
                 keys = checkNotNull(keyboard(active.window.decorView))
                 // 坐标回归不测视频解码压力，避免模拟器错过节拍后误报命中失败。
                 fun pauseBackdrop(view: View) {
-                    if (view is app.luoxianlv.wallpaper.render.PracticeBackdrop)
-                        view.suspendRendering()
+                    if (view is app.luoxianlv.wallpaper.PracticeBackdrop) view.suspendRendering()
                     if (view is ViewGroup)
                         repeat(view.childCount) { pauseBackdrop(view.getChildAt(it)) }
                 }
@@ -145,7 +145,7 @@ class ExperimentalInstrumentation : Instrumentation() {
                         override fun success(screenshot: AccessibilityBinding.Frame) {
                             Thread {
                                 screenshotFailed =
-                                    app.luoxianlv.service.recognition.ScreenshotAnalyzer.recognize(
+                                    app.luoxianlv.recognition.ScreenshotAnalyzer.recognize(
                                         screenshot
                                     ) == null
                                 blocked.countDown()

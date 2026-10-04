@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.wallpaper.data.WallpaperArchive
+import app.luoxianlv.wallpaper.WallpaperArchive
 import java.io.File
 import java.nio.charset.Charset
 import java.util.zip.ZipEntry

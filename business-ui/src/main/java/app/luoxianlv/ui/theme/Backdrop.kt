@@ -79,7 +79,7 @@ val OnBackdropContent: Color
 /**
  * 顶级页面的整屏渐变底。
  *
- * 由 [app.luoxianlv.ui.navigation.AppNavHost] 画在系统栏内边距**之外**， 所以能 edge-to-edge，不会在状态栏 /
+ * 由 [app.luoxianlv.app.AppNavHost] 画在系统栏内边距**之外**， 所以能 edge-to-edge，不会在状态栏 /
  * 手势条下方露出背景色接缝。
  */
 val BackdropBrush: Brush

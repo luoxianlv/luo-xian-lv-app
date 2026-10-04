@@ -569,7 +569,7 @@ final class NativeUserScoreFixture {
           });
       if (failure.get() != null) throw new AssertionError("获取真实业务 Context 失败", failure.get());
       ClassLoader loader = source.prepared.classLoader();
-      Class<?> kvType = Class.forName("app.luoxianlv.data.Kv", true, loader);
+      Class<?> kvType = Class.forName("app.luoxianlv.shared.Kv", true, loader);
       Object kv = kvType.getField("INSTANCE").get(null);
       var adaptersField = kvType.getDeclaredField("adapters");
       adaptersField.setAccessible(true);
@@ -584,9 +584,9 @@ final class NativeUserScoreFixture {
       }
       require(prefs.getBoolean("speed_migrated_v2", false), "生产曲库仍需速度迁移，拒绝以只读名义写入");
       String before = hash(canonicalPreferences(prefs.getAll(), false));
-      Class<?> repositoryType = Class.forName("app.luoxianlv.data.SongRepository", true, loader);
+      Class<?> repositoryType = Class.forName("app.luoxianlv.library.SongRepository", true, loader);
       Object repository = repositoryType.getConstructor(Context.class).newInstance(module.get());
-      Class<?> parserType = Class.forName("app.luoxianlv.core.score.ScoreParser", true, loader);
+      Class<?> parserType = Class.forName("app.luoxianlv.library.ScoreParser", true, loader);
       require(Bootstrap.source() == source, "构造生产曲库期间业务来源改变");
       require(before.equals(hash(canonicalPreferences(prefs.getAll(), false))), "构造生产 Repository 改变了偏好");
       return new Access(target, source, repositoryType, parserType, prefs, repository);

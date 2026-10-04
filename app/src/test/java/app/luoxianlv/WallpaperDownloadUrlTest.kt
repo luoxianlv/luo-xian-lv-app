@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.wallpaper.data.validatedWallpaperDownloadUrl
+import app.luoxianlv.wallpaper.validatedWallpaperDownloadUrl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test

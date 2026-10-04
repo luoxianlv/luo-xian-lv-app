@@ -179,7 +179,7 @@ public final class NativeReleaseInstrumentation extends Instrumentation {
       require(analyticsType.getClassLoader() == businessLoader, "Release analytics implementation is not business-owned");
       onMain(() -> {
         try {
-          var disclaimer = Class.forName("app.luoxianlv.data.DisclaimerStore", false, businessLoader);
+          var disclaimer = Class.forName("app.luoxianlv.app.DisclaimerStore", false, businessLoader);
           Object store = disclaimer.getConstructor(Context.class).newInstance(compose.getContext());
           Object agreed = disclaimer.getMethod("agreedSha").invoke(store);
           Object companion = disclaimer.getField("Companion").get(null);

@@ -310,7 +310,7 @@ final class GroupHandoverChecks {
 
   private java.util.concurrent.CountDownLatch holdCandidateWork() throws Exception {
     var loader = next.classLoader();
-    var jobs = Class.forName("app.luoxianlv.business.BusinessJobs", true, loader);
+    var jobs = Class.forName("app.luoxianlv.app.BusinessJobs", true, loader);
     var function = Class.forName("kotlin.jvm.functions.Function0", false, loader);
     var began = new java.util.concurrent.CountDownLatch(1);
     var release = new java.util.concurrent.CountDownLatch(1);

@@ -1,6 +1,6 @@
 package app.luoxianlv
 
-import app.luoxianlv.wallpaper.render.StartupTaskExecutor
+import app.luoxianlv.wallpaper.StartupTaskExecutor
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
