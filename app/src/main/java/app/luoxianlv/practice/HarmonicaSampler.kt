@@ -12,6 +12,7 @@ import app.luoxianlv.hot.contract.OfficialAssets
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.LockSupport
 
 /** 每个演练场持有一条口琴音频流；构造前先在 IO 线程解码采样。 */
 class HarmonicaSampler(
@@ -89,10 +90,11 @@ class HarmonicaSampler(
                                             buffer,
                                             offset,
                                             buffer.size - offset,
-                                            AudioTrack.WRITE_BLOCKING,
+                                            AudioTrack.WRITE_NON_BLOCKING,
                                         )
-                                    check(written > 0) { "音频输出中断 ($written)" }
-                                    offset += written
+                                    check(written >= 0) { "音频输出中断 ($written)" }
+                                    if (written == 0) LockSupport.parkNanos(1_000_000L)
+                                    else offset += written
                                 }
                             }
                         } catch (_: Exception) {
@@ -103,6 +105,8 @@ class HarmonicaSampler(
                         } finally {
                             running = false
                             try {
+                                runCatching { track.pause() }
+                                runCatching { track.flush() }
                                 runCatching { track.stop() }
                                 track.release()
                             } finally {
@@ -140,11 +144,8 @@ class HarmonicaSampler(
     override fun close() {
         closed = true
         running = false
-        // 暂停用于唤醒阻塞写入；音轨仅由输出线程释放。
-        runCatching {
-            track.pause()
-            track.flush()
-        }
+        // 非阻塞写入使输出线程自行退出；UI 不等待厂商音频 Binder。
+        LockSupport.unpark(worker)
     }
 
     companion object {

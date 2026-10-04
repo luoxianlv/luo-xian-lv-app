@@ -25,6 +25,8 @@ final class HostUpdates {
       new UpdateSchedule(SystemClock::elapsedRealtime, Math::random);
   private ConnectivityManager connectivity;
   private ConnectivityManager.NetworkCallback networkCallback;
+  private Network currentNetwork;
+  private boolean checkingNetwork;
   private final ScheduledExecutorService worker =
       Executors.newSingleThreadScheduledExecutor(
           task -> {
@@ -380,23 +382,7 @@ final class HostUpdates {
             BundledBaseline.objects(application));
     connectivity = application.getSystemService(ConnectivityManager.class);
     if (connectivity != null) {
-      networkCallback =
-          new ConnectivityManager.NetworkCallback() {
-            @Override
-            public void onAvailable(Network network) {
-              networkChanged();
-            }
-
-            @Override
-            public void onLost(Network network) {
-              networkChanged();
-            }
-
-            @Override
-            public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
-              networkChanged();
-            }
-          };
+      networkCallback = networkListener();
       try {
         connectivity.registerDefaultNetworkCallback(networkCallback, main);
       } catch (RuntimeException unavailable) {
@@ -404,6 +390,53 @@ final class HostUpdates {
         Log.w("原生宿主", "网络监听不可用，保留当前版本并等待前台生命周期重新检查");
       }
     }
+  }
+
+  private ConnectivityManager.NetworkCallback networkListener() {
+    return new ConnectivityManager.NetworkCallback() {
+      @Override
+      public void onAvailable(Network network) {
+        if (blocked) return;
+        currentNetwork = network;
+        online = false;
+        networkChanged();
+      }
+
+      @Override
+      public void onLost(Network network) {
+        if (blocked || !network.equals(currentNetwork)) return;
+        currentNetwork = null;
+        online = false;
+        networkChanged();
+      }
+
+      @Override
+      public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
+        if (blocked || !network.equals(currentNetwork)) return;
+        online =
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && (state.config.environment.equals("test")
+                    || capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+        networkChanged();
+      }
+    };
+  }
+
+  /** 注册失败时仍可恢复网络；慢查询只占后台 worker，且最多一条在途。 */
+  private void refreshNetworkFallback() {
+    if (blocked || networkCallback != null || checkingNetwork) return;
+    checkingNetwork = true;
+    worker.execute(
+        () -> {
+          boolean value = connected();
+          main.post(
+              () -> {
+                checkingNetwork = false;
+                if (blocked) return;
+                online = value;
+                usageChanged();
+              });
+        });
   }
 
   private void networkChanged() {
@@ -431,7 +464,7 @@ final class HostUpdates {
     boolean foreground = Bootstrap.foregroundInUse();
     boolean playback = Bootstrap.playbackInUse();
     active = foreground || playback;
-    online = connected();
+    // 网络回调维护缓存，播放/生命周期边沿不得同步查询系统 Binder。
     priorityWork = Bootstrap.playbackPreparing();
     if (cancelled()) cancelRequest();
     schedule.availability(foreground, playback, online, priorityWork);
@@ -469,6 +502,7 @@ final class HostUpdates {
     }
     availability();
     if (!active || blocked) return;
+    refreshNetworkFallback();
     long now = SystemClock.elapsedRealtime();
     if (pending != null && now - preparedAt >= PREPARED_TTL) pending = null;
     if (busy || !online || priorityWork) {

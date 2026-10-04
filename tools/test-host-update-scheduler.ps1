@@ -79,8 +79,9 @@ package android.net;
 import android.os.Handler;
 public class ConnectivityManager {
   public boolean connected,validated;
-  public int unregistered;
-  public Network getActiveNetwork() { return connected?new Network():null; }
+  public int unregistered,queries;
+  public boolean rejectQuery;
+  public Network getActiveNetwork() { queries++; if(rejectQuery) throw new AssertionError("Binder queried on usage edge"); return connected?new Network():null; }
   public NetworkCapabilities getNetworkCapabilities(Network network) {
     NetworkCapabilities value=new NetworkCapabilities(); value.validated=validated; return value;
   }

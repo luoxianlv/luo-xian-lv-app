@@ -31,16 +31,16 @@ object MidiCoreFixer {
 
     private val running = AtomicBoolean(false)
 
-    /** 进入主界面 / 回前台时调用；本身轻量（一次 prefs 读取），可随意重复调用。 */
+    /** 进入主界面 / 回前台时调用；存储初始化与节流检查均在后台执行。 */
     fun kick(context: Context) {
         val app = context.applicationContext
-        val prefs = Kv.of(app, STORE)
-        val now = System.currentTimeMillis()
-        if (now - prefs.getLong(KEY_LAST_CHECK, 0L) < CHECK_INTERVAL_MS) return
         if (!running.compareAndSet(false, true)) return
         if (
             !BusinessJobs.thread("曲目版本检查") {
                 try {
+                    val prefs = Kv.of(app, STORE)
+                    val now = System.currentTimeMillis()
+                    if (now - prefs.getLong(KEY_LAST_CHECK, 0L) < CHECK_INTERVAL_MS) return@thread
                     prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
                     runCheck(app)
                 } catch (t: Throwable) {

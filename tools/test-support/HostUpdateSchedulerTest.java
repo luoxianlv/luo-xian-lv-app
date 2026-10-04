@@ -114,6 +114,8 @@ public final class HostUpdateSchedulerTest {
     set(HostUpdates.class, host, "coldPulse", (Runnable) () -> {});
     set(HostUpdates.class, host, "worker", worker);
     set(HostUpdates.class, host, "connectivity", network);
+    set(HostUpdates.class, host, "online", true);
+    set(HostUpdates.class, host, "networkCallback", invoke(host, "networkListener"));
   }
 
   @After
@@ -129,6 +131,7 @@ public final class HostUpdateSchedulerTest {
     assertEquals(0, timers());
     input(true, false, false);
     set(ConnectivityManager.class, network, "connected", false);
+    set(HostUpdates.class, host, "online", false);
     invoke(host, "tick");
     assertEquals(0, worker.tasks.size());
     assertTrue(timers() > 0); // 前台仅探测状态，没有网络检查。
@@ -176,8 +179,10 @@ public final class HostUpdateSchedulerTest {
     schedule.finish(false, 120000);
     set(HostUpdates.class, host, "busy", false);
     set(ConnectivityManager.class, network, "connected", false);
+    set(HostUpdates.class, host, "online", false);
     invoke(host, "tick");
     set(ConnectivityManager.class, network, "connected", true);
+    set(HostUpdates.class, host, "online", true);
     clock(1000);
     invoke(host, "tick");
     assertEquals(1, worker.tasks.size());
@@ -206,6 +211,51 @@ public final class HostUpdateSchedulerTest {
     assertEquals(1, worker.tasks.size());
     assertFalse((Boolean) get(host, "active"));
     assertTrue((Boolean) invoke(host, "cancelled"));
+  }
+
+  @Test
+  public void usageEdgesUseCachedNetworkWithoutBinderAndIgnoreOldNetworkLoss() throws Exception {
+    input(true, false, true);
+    set(ConnectivityManager.class, network, "rejectQuery", true);
+    var callback = (ConnectivityManager.NetworkCallback) get(host, "networkCallback");
+    var old = new android.net.Network();
+    var current = new android.net.Network();
+    var capabilities = new android.net.NetworkCapabilities();
+    capabilities.validated = true;
+    callback.onAvailable(old);
+    callback.onCapabilitiesChanged(old, capabilities);
+    callback.onAvailable(current);
+    callback.onCapabilitiesChanged(current, capabilities);
+    callback.onLost(old);
+    host.usageChanged();
+    invoke(host, "tick");
+    assertTrue((Boolean) get(host, "online"));
+    assertEquals(0, get(network, "queries"));
+    callback.onLost(current);
+    assertFalse((Boolean) get(host, "online"));
+    host.stopScheduling();
+    callback.onAvailable(current);
+    callback.onCapabilitiesChanged(current, capabilities);
+    assertFalse((Boolean) get(host, "active"));
+  }
+
+  @Test
+  public void unavailableListenerQueuesOnlyOneBackgroundReadAndLateResultCannotRestart()
+      throws Exception {
+    input(true, false, true);
+    set(HostUpdates.class, host, "networkCallback", null);
+    set(HostUpdates.class, host, "online", false);
+    invoke(host, "tick");
+    invoke(host, "tick");
+    host.usageChanged();
+    assertEquals(0, get(network, "queries"));
+    assertEquals(1, worker.tasks.size());
+    worker.tasks.remove(0).run();
+    assertEquals(1, get(network, "queries"));
+    host.stopScheduling();
+    Handler.class.getMethod("drain").invoke(null);
+    assertFalse((Boolean) get(host, "active"));
+    assertEquals(0, timers());
   }
 
   /** worker完成加载与主线程故障停用确定性交替，真实activate取消路径必须关闭并abort。 */
