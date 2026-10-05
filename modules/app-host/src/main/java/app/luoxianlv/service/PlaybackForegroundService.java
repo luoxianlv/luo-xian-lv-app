@@ -12,6 +12,7 @@ import android.util.Log;
 import app.luoxianlv.MainActivity;
 import app.luoxianlv.host.Bootstrap;
 import app.luoxianlv.host.R;
+import app.luoxianlv.hot.ForegroundStopper;
 import app.luoxianlv.hot.contract.ForegroundPolicy;
 import app.luoxianlv.hot.contract.HostDiagnostics;
 
@@ -27,6 +28,7 @@ public final class PlaybackForegroundService extends Service {
   private int lastStartId;
   private ForegroundPolicy policy;
   private AutoCloseable preparation;
+  private ForegroundStopper stopping;
 
   /** 来源由整组事务切换；常驻服务不能一直保留旧业务策略的加载器。 */
   public static void businessChanged() {
@@ -65,6 +67,7 @@ public final class PlaybackForegroundService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
+    if (stopping != null) stopping.cancel();
     // 停止命令、重启的绑定实例也先登记，不能只在 onCreate 中调用。
     promoteToForeground();
     foreground = true;
@@ -174,13 +177,18 @@ public final class PlaybackForegroundService extends Service {
   }
 
   private void stopIfLatest() {
-    // 旧命令不能撤掉较新启动请求所需的通知。
-    if (lastStartId != 0 && stopSelfResult(lastStartId)) {
-      closePreparation();
-      stopForeground(STOP_FOREGROUND_REMOVE);
-      foreground = false;
-      diagnostic("已停止：启动序号=" + lastStartId);
+    if (stopping == null) {
+      stopping =
+          new ForegroundStopper(
+              this,
+              startId -> {
+                closePreparation();
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                foreground = false;
+                diagnostic("已停止：启动序号=" + startId);
+              });
     }
+    stopping.stop(lastStartId);
   }
 
   private void diagnostic(String message) {
@@ -189,6 +197,7 @@ public final class PlaybackForegroundService extends Service {
 
   @Override
   public void onDestroy() {
+    if (stopping != null) stopping.cancel();
     closePreparation();
     if (instance == this) instance = null;
     foreground = false;
@@ -199,7 +208,8 @@ public final class PlaybackForegroundService extends Service {
   /** 与无障碍和 Activity 生命周期一样，仅在主线程调用。 */
   public static void start(Context context) {
     stopRequested = false;
-    if (startPending || (instance != null && instance.foreground)) return;
+    boolean restart = instance != null && instance.stopping != null && instance.stopping.cancel();
+    if (startPending || (instance != null && instance.foreground && !restart)) return;
     startPending = true;
     try {
       context.startForegroundService(new Intent(context, PlaybackForegroundService.class));
