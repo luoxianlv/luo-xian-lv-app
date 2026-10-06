@@ -296,6 +296,11 @@ fun InputModeScreen(onBack: () -> Unit, startAfterSetup: Boolean = false) {
                     modifier = Modifier.padding(horizontal = 6.dp),
                 )
             }
+            if (state.mode != "accessibility") {
+                item(key = "security-setting") {
+                    InputSecurityHint(Modifier.padding(horizontal = 6.dp))
+                }
+            }
         }
     }
     if (showPairing) {

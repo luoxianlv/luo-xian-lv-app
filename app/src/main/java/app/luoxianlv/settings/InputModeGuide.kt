@@ -147,6 +147,7 @@ internal fun InputModeGuide(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                InputSecurityHint()
                 if (!wireless) {
                     Text(
                         "后台连接仍失败时，请在系统应用管理或电池设置中允许 Shizuku 后台运行。",
@@ -242,6 +243,17 @@ private fun InputLicenseDialog(onDismiss: () -> Unit, onOpenDocumentation: (Stri
 }
 
 private const val SHIZUKU_GUIDE = "https://shizuku.rikka.app/guide/setup/"
+
+@Composable
+internal fun InputSecurityHint(modifier: Modifier = Modifier) {
+    Text(
+        "部分手机还需要开启「USB 调试（安全设置）」。它与普通「USB 调试」是两个开关；已连接但游戏没有反应时，请检查此项。",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier,
+    )
+}
+
 private const val SHIZUKU_LICENSE = "https://github.com/RikkaApps/Shizuku/blob/v13.6.0/LICENSE"
 private const val SHIZUKU_API_LICENSE =
     "https://github.com/RikkaApps/Shizuku-API/blob/510fc988c02c3475d8c25db170f96792f105bdf8/LICENSE"
