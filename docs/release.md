@@ -35,6 +35,8 @@
 
 手动 Release 的 `native_package` 默认开启。标签触发时，仅当 `NATIVE_RELEASE_DEFAULT=true` 且标签源码支持原生宿主才走原生路线；重建不支持该架构的旧标签时关闭此参数。工作流脚本与标签源码分别检出，已有标签不必移动。
 
+手动 Release 和签名包准备提供 `skip_tests`，默认关闭。本地已验证时可开启；标签自动发布仍执行测试，版本、签名、APK 结构和存储回读校验不能跳过。Gradle 使用任务缓存和并行构建。
+
 ## 发布顺序
 
 1. 更新 `versionName`、递增 `versionCode`，同步 `.github/release-notes/<version>.json`，通过 CI。

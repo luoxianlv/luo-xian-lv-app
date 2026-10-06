@@ -9,6 +9,11 @@ on:
         description: 要发布的已有版本标签（如 v1.0.1）
         required: true
         type: string
+      skip_tests:
+        description: 本地已测过，跳过单元测试（保留打包和校验）
+        required: true
+        default: false
+        type: boolean
       native_package:
         description: 使用三层原生宿主（需要配置公开热更配置；旧标签保持关闭）
         required: true
@@ -66,7 +71,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-provider: basic
-      - name: Test and package signed APK
+      - name: Build and verify signed APK
         working-directory: source
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -75,6 +80,7 @@ jobs:
           ORG_GRADLE_PROJECT_releaseKeyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
           UPDATE_BASE_URL: ${{ vars.UPDATE_BASE_URL }}
           ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+          RELEASE_SKIP_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_tests && 'true' || 'false' }}
           NATIVE_RELEASE_PACKAGE: ${{ steps.package_route.outputs.native }}
           NATIVE_HOT_CONFIG_JSON: ${{ vars.NATIVE_HOT_CONFIG_JSON }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/package-release.sh"
