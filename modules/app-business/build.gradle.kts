@@ -14,8 +14,8 @@ android {
         applicationId = "app.luoxianlv.business"
         minSdk = 26
         targetSdk = 37
-        versionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 18
-        versionName = findProperty("appVersionName") as String? ?: "1.1.0"
+        versionCode = providers.gradleProperty("appVersionCode").get().toInt()
+        versionName = providers.gradleProperty("appVersionName").get()
         val origin = findProperty("updateBaseUrl") as String? ?: "https://www.luoxianlv.cn"
         require(origin.matches(Regex("https?://[A-Za-z0-9.:-]+")))
         val source = findProperty("updateSource") as String? ?: "oss"
