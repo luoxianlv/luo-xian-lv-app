@@ -113,6 +113,8 @@ public:
         return count;
     }
 
+    bool touchPressed() const { return touching_; }
+
     int maximumAutomatic() const { return std::min(kMaxAutomaticPointers, kMaxPointers - slots_); }
 
     // 同一槽的新 tracking id 先抬起旧触点，再交给下一帧创建，避免编号被错误复用。

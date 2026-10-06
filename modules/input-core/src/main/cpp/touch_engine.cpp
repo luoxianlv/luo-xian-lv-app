@@ -1,5 +1,6 @@
 #include "touch_model.h"
 #include "touch_contact.h"
+#include "touch_type_a.h"
 
 #include <android/log.h>
 #include <jni.h>
@@ -57,8 +58,9 @@ struct Descriptor {
     std::string path, name;
     input_id identity{};
     input_absinfo slot{}, x{}, y{};
-    bool hasTouchButton = false;
-    int count() const { return slot.maximum + 1; }
+    bool hasTouchButton = false, hasSlots = false, hasTrackingIds = false;
+    int count() const { return hasSlots ? slot.maximum + 1 : kMaxSimultaneousPointers; }
+    const char* protocol() const { return hasSlots ? "type-b" : "type-a"; }
 };
 
 class UniqueFd {
@@ -75,19 +77,27 @@ bool inspect(int fd, const std::string& path, Descriptor& out) {
     constexpr size_t wordBits = sizeof(unsigned long) * 8;
     std::array<unsigned long, (INPUT_PROP_MAX / wordBits) + 1> properties{};
     std::array<unsigned long, (KEY_MAX / wordBits) + 1> keys{};
+    std::array<unsigned long, (ABS_MAX / wordBits) + 1> axes{};
     char name[256]{};
     if (ioctl(fd, EVIOCGPROP(sizeof(properties)), properties.data()) < 0 ||
         (properties[INPUT_PROP_DIRECT / wordBits] & (1UL << (INPUT_PROP_DIRECT % wordBits))) == 0 ||
         ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0 ||
         ioctl(fd, EVIOCGID, &out.identity) < 0 ||
-        ioctl(fd, EVIOCGABS(ABS_MT_SLOT), &out.slot) < 0 ||
+        ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(axes)), axes.data()) < 0 ||
         ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &out.x) < 0 ||
         ioctl(fd, EVIOCGABS(ABS_MT_POSITION_Y), &out.y) < 0) return false;
+    auto axis = [&](int code) { return (axes[code / wordBits] & (1UL << (code % wordBits))) != 0; };
+    if (!axis(ABS_MT_POSITION_X) || !axis(ABS_MT_POSITION_Y)) return false;
+    out.hasSlots = axis(ABS_MT_SLOT);
+    out.hasTrackingIds = axis(ABS_MT_TRACKING_ID);
     if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys.data()) <= BTN_TOUCH / 8) return false;
     out.hasTouchButton = (keys[BTN_TOUCH / wordBits] & (1UL << (BTN_TOUCH % wordBits))) != 0;
     input_absinfo tracking{};
-    if (ioctl(fd, EVIOCGABS(ABS_MT_TRACKING_ID), &tracking) < 0 || out.slot.minimum != 0 ||
-        out.slot.maximum < 0 || out.slot.maximum >= kMaxPointers - 1 ||
+    if ((out.hasSlots && (!out.hasTrackingIds ||
+            ioctl(fd, EVIOCGABS(ABS_MT_SLOT), &out.slot) < 0 ||
+            ioctl(fd, EVIOCGABS(ABS_MT_TRACKING_ID), &tracking) < 0 ||
+            out.slot.minimum != 0 || out.slot.maximum < 0 || out.slot.maximum >= kMaxPointers - 1)) ||
+        (!out.hasSlots && !out.hasTouchButton) ||
         out.x.minimum >= out.x.maximum || out.y.minimum >= out.y.maximum ||
         static_cast<int64_t>(out.x.maximum) - out.x.minimum > INT32_MAX ||
         static_cast<int64_t>(out.y.maximum) - out.y.minimum > INT32_MAX) return false;
@@ -139,6 +149,12 @@ ContactState readContact(int fd, const Descriptor& descriptor,
     int before = -1, after = -1;
     if (descriptor.hasTouchButton && !readTouch(before))
         return evaluateContact(-1, true, before, after, errno);
+    if (!descriptor.hasSlots) {
+        // Type A 没有内核槽位快照；仅在前后接触键均抬起时从空帧开始读取。
+        if (!readTouch(after)) return evaluateContact(-1, true, before, after, errno);
+        if (tracking) tracking->fill(-1);
+        return evaluateContact(0, true, before, after);
+    }
     std::array<int32_t, kMaxPointers + 1> values{};
     values.fill(INT32_MIN); // ioctl 可能只写实际槽数；缺失项不能从初始 0 推断为有效 tracking。
     values[0] = ABS_MT_TRACKING_ID;
@@ -171,7 +187,9 @@ public:
            int width, int height, int rotation)
         : descriptor_(descriptor), inputFd_(fd), width_(width), height_(height),
           model_(descriptor.count(), descriptor.x.minimum, descriptor.x.maximum,
-                 descriptor.y.minimum, descriptor.y.maximum, width, height, rotation, descriptor.hasTouchButton) {
+                 descriptor.y.minimum, descriptor.y.maximum, width, height, rotation, descriptor.hasTouchButton),
+          typeA_(descriptor.x.minimum, descriptor.x.maximum, descriptor.y.minimum,
+                 descriptor.y.maximum, descriptor.hasTrackingIds) {
         contactState_.touchSupported = descriptor.hasTouchButton;
         listener_ = env->NewGlobalRef(listener);
         if (!listener_ || env->ExceptionCheck()) return;
@@ -247,12 +265,17 @@ public:
         initialX_[0] = ABS_MT_POSITION_X;
         initialY_[0] = ABS_MT_POSITION_Y;
         const size_t snapshotBytes = sizeof(int32_t) * (descriptor_.count() + 1);
-        if (ioctl(inputFd_, EVIOCGABS(ABS_MT_SLOT), &selected) < 0 ||
+        if (descriptor_.hasSlots && (ioctl(inputFd_, EVIOCGABS(ABS_MT_SLOT), &selected) < 0 ||
             ioctl(inputFd_, EVIOCGMTSLOTS(snapshotBytes), initialX_.data()) < 0 ||
-            ioctl(inputFd_, EVIOCGMTSLOTS(snapshotBytes), initialY_.data()) < 0) {
+            ioctl(inputFd_, EVIOCGMTSLOTS(snapshotBytes), initialY_.data()) < 0)) {
             const int failureErrno = errno;
             ioctl(inputFd_, EVIOCGRAB, 0);
             return rejectActivation("无法读取触屏坐标快照（errno=" + std::to_string(failureErrno) + "）");
+        }
+        if (!descriptor_.hasSlots) {
+            selected.value = 0;
+            initialX_.fill(descriptor_.x.minimum);
+            initialY_.fill(descriptor_.y.minimum);
         }
         if (selected.value < 0 || selected.value >= descriptor_.count()) {
             ioctl(inputFd_, EVIOCGRAB, 0);
@@ -330,6 +353,7 @@ private:
     jobject listener_ = nullptr;
     jmethodID frameMethod_ = nullptr, finishedMethod_ = nullptr;
     TouchModel model_;
+    TypeATouchReader typeA_;
     std::array<int, kMaxPointers> previousTracking_{};
     std::array<int32_t, kMaxPointers + 1> initialX_{}, initialY_{}, initialTracking_{};
     int initialSlot_ = 0;
@@ -502,13 +526,20 @@ private:
             return false;
         }
         if (event.type == EV_KEY && event.code == BTN_TOUCH && descriptor_.hasTouchButton) {
-            if (!model_.touch(event.value)) {
+            if (!(descriptor_.hasSlots ? model_.touch(event.value) : typeA_.touch(event.value))) {
                 emergency("触屏上报了异常接触状态，已归还触屏");
                 return false;
             }
         } else if (event.type == EV_ABS) {
             bool valid = true;
-            switch (event.code) {
+            if (!descriptor_.hasSlots) {
+                switch (event.code) {
+                    case ABS_MT_TRACKING_ID: valid = typeA_.tracking(event.value); break;
+                    case ABS_MT_POSITION_X: valid = typeA_.x(event.value); break;
+                    case ABS_MT_POSITION_Y: valid = typeA_.y(event.value); break;
+                    default: break;
+                }
+            } else switch (event.code) {
                 case ABS_MT_SLOT: valid = model_.select(event.value); break;
                 case ABS_MT_TRACKING_ID: valid = model_.tracking(event.value); break;
                 case ABS_MT_POSITION_X: valid = model_.x(event.value); break;
@@ -516,7 +547,12 @@ private:
                 default: break;
             }
             if (!valid) { emergency("触屏上报了异常触点，已归还触屏"); return false; }
+        } else if (!descriptor_.hasSlots && event.type == EV_SYN && event.code == SYN_MT_REPORT) {
+            if (!typeA_.packet()) { emergency("触屏触点数据包不完整，已归还触屏"); return false; }
         } else if (event.type == EV_SYN && event.code == SYN_REPORT) {
+            if (!descriptor_.hasSlots && !typeA_.commit(model_)) {
+                emergency("触屏同步帧不完整，已归还触屏"); return false;
+            }
             if (model_.physicalCount() > kMaxSimultaneousPointers) {
                 emergency("真实触点超过系统容量，已归还触屏");
                 return false;
@@ -550,6 +586,7 @@ private:
     void applyPendingActivation() {
         activation_.apply([this] {
             model_.clear();
+            typeA_.clear();
             for (int i = 0; i < descriptor_.count(); ++i) {
                 model_.select(i);
                 model_.tracking(initialTracking_[i + 1]);
@@ -637,11 +674,12 @@ Java_app_luoxianlv_input_TouchEngine_nativeProbe(JNIEnv* env, jclass, jstring pr
     std::string preference = javaString(env, preferred);
     if (env->ExceptionCheck()) return nullptr;
     findDevice(preference, descriptor, error);
-    std::array<std::string, 12> values = {descriptor.path, descriptor.name, std::to_string(descriptor.count()),
+    std::array<std::string, 14> values = {descriptor.path, descriptor.name, std::to_string(descriptor.count()),
         std::to_string(descriptor.x.minimum), std::to_string(descriptor.x.maximum),
         std::to_string(descriptor.y.minimum), std::to_string(descriptor.y.maximum),
         std::to_string(descriptor.identity.vendor), std::to_string(descriptor.identity.product),
-        std::to_string(descriptor.identity.version), std::to_string(descriptor.identity.bustype), error};
+        std::to_string(descriptor.identity.version), std::to_string(descriptor.identity.bustype), error,
+        descriptor.protocol(), descriptor.hasTrackingIds ? "1" : "0"};
     jclass strings = env->FindClass("java/lang/String");
     if (!strings || env->ExceptionCheck()) return nullptr;
     jobjectArray result = env->NewObjectArray(values.size(), strings, nullptr);

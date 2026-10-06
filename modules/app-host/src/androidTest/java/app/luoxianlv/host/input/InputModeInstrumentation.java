@@ -37,6 +37,7 @@ public final class InputModeInstrumentation extends Instrumentation {
   private static final String READY = "files/touch-ready.json";
   private final ArrayList<SharedInput.Session> sessions = new ArrayList<>();
   private String mergedMode;
+  private String expectedTouchProtocol;
   private int wirelessConnectPort;
   private int expectedHelperUid = 2000;
   private String wirelessCode, wirelessPairPort;
@@ -55,6 +56,7 @@ public final class InputModeInstrumentation extends Instrumentation {
   @Override public void onCreate(Bundle arguments) {
     super.onCreate(arguments);
     mergedMode = arguments == null ? null : arguments.getString("mergedMode");
+    expectedTouchProtocol = arguments == null ? null : arguments.getString("expectedTouchProtocol");
     if (arguments != null) expectedHelperUid = Integer.parseInt(arguments.getString("expectedHelperUid", "2000"));
     wirelessConnectPort = arguments == null ? 0 : Integer.parseInt(arguments.getString("wirelessConnectPort", "0"));
     wirelessCode = arguments == null ? null : arguments.getString("wirelessCode");
@@ -110,7 +112,8 @@ public final class InputModeInstrumentation extends Instrumentation {
         checkScreenshot();
         app.luoxianlv.host.FixedInputChecks.run(this);
         if (floatingWithoutAccessibility) FloatingWithoutAccessibilityChecks.run(this, automation);
-        result.putString("stream", "输入模式验收通过：真实截图、固定琴键演奏、状态观测、真实双触点、音符间隙保留手指、抬手等待与取消、非接触残留槽、租约释放及旧 owner 关闭隔离。\n");
+        result.putString("stream", "输入模式验收通过：协议=" + bridge.state().getString("touchProtocol")
+            + "，真实截图、固定琴键演奏、长按合流、音符间隙保留手指、抬手等待与取消、协议帧处理、租约释放及旧 owner 隔离。\n");
         if (floatingWithoutAccessibility)
           result.putString("stream", result.getString("stream") + "通过：关闭无障碍，真实输入连接下通过业务启动悬浮窗，展开、选歌、收起与关闭；未点击播放。\n");
       } else {
@@ -248,6 +251,9 @@ public final class InputModeInstrumentation extends Instrumentation {
     require(bridge.state().getInt("uid", -1) == expectedHelperUid, "合流助手与指定服务身份不符");
     require("Luoxianlv Audit Direct Touch".equals(bridge.state().getString("name")),
         "拒绝操作非测试触屏设备");
+    if (expectedTouchProtocol != null)
+      require(expectedTouchProtocol.equals(bridge.state().getString("touchProtocol")),
+          "未采用指定测试触屏协议，实际=" + bridge.state().getString("touchProtocol"));
     var playback = PlaybackBridge.current();
     require(playback == null || !playback.query("state").getBoolean("floatingVisible"),
         "请先隐藏悬浮窗，避免测试触点被其他窗口接收");
@@ -334,7 +340,61 @@ public final class InputModeInstrumentation extends Instrumentation {
     SystemClock.sleep(200);
     require(cancellation.calls.get() == 1, "任务完成回调重复");
     checkActivationWait(size, rotation);
-    checkStaleContact(size, rotation);
+    if ("type-a".equals(bridge.state().getString("touchProtocol"))) checkTypeAPackets(size, rotation);
+    else checkStaleContact(size, rotation);
+  }
+
+  /** Type A 包顺序可以改变；仍要保持长按手指及自动音符的实际身份。 */
+  private void checkTypeAPackets(Point size, int rotation) throws Exception {
+    require(rotation == 0, "多包测试使用明确的竖屏自然坐标");
+    var session = lease();
+    try {
+      long start = SystemClock.uptimeMillis();
+      Outcome note = new Outcome();
+      session.press(new float[] {size.x * .8f, size.y * .7f}, 8000,
+          size.x, size.y, rotation, note);
+      await("Type A 多点测试没有接管", () -> bridge.state().getBoolean("active"), 5000);
+      physicalPoint("down", .25f, .65f, rotation); fingerDown = true;
+      awaitFrames("Type A 首个真实手指没有合流", frames -> hasCombined(frames, size.x, start), 5000);
+      long twoAt = SystemClock.uptimeMillis();
+      physical("two 8192 21299 13107 18022");
+      awaitFrames("Type A 两个物理手指没有与音符合流", frames -> frames.stream().anyMatch(frame -> {
+        try { return isTouch(frame) && frame.getLong("eventTimeMs") >= twoAt && frame.getJSONArray("pointers").length() == 3; }
+        catch (Exception malformed) { return false; }
+      }), 5000);
+      ArrayList<JSONObject> before = readFrames();
+      JSONObject observed = null;
+      for (JSONObject frame : before) if (isTouch(frame) && frame.getLong("eventTimeMs") >= twoAt
+          && frame.getJSONArray("pointers").length() == 3) observed = frame;
+      require(observed != null, "缺少实际三指帧");
+      int heldId = -1;
+      for (int i = 0; i < 3; ++i) {
+        JSONObject point = observed.getJSONArray("pointers").getJSONObject(i);
+        if (point.getDouble("x") < size.x * .3) heldId = point.getInt("id");
+      }
+      require(heldId >= 0, "未识别固定长按手指");
+      final int retained = heldId;
+      long swappedAt = SystemClock.uptimeMillis();
+      physical("swap");
+      awaitFrames("Type A 乱序帧没有送达", frames -> frames.stream().anyMatch(frame -> {
+        try {
+          if (!isTouch(frame) || frame.getLong("eventTimeMs") < swappedAt || frame.getJSONArray("pointers").length() != 3) return false;
+          JSONArray points = frame.getJSONArray("pointers");
+          for (int i = 0; i < 3; ++i) if (points.getJSONObject(i).getDouble("x") < size.x * .3)
+            return points.getJSONObject(i).getInt("id") == retained;
+          return false;
+        } catch (Exception malformed) { return false; }
+      }), 5000);
+      for (JSONObject frame : readFrames()) if (isTouch(frame) && frame.getLong("eventTimeMs") >= twoAt)
+        require(frame.getInt("actionMasked") != MotionEvent.ACTION_CANCEL, "Type A 乱序包取消了持续手势");
+      physical("up"); fingerDown = false;
+      require(note.completed.getCount() == 1, "物理抬手结束了自动音符");
+      session.release();
+      await("Type A 多点测试没有归还触屏", session::idle, 5000);
+    } finally {
+      if (fingerDown) { physical("up"); fingerDown = false; }
+      session.close();
+    }
   }
 
   /** 追踪编号残留不等于手指按下；仅接触开关变化也必须实时加入和移除真实触点。 */

@@ -38,6 +38,11 @@ jobs:
       - name: 检查安装签名解析边界
         shell: pwsh
         run: ./tools/test-native-apk-signature.ps1
+      - name: 验证触屏协议与合流模型
+        run: |
+          cmake -S modules/input-core/src/main/cpp -B build/input-model -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/input-model --parallel 2
+          ctest --test-dir build/input-model --output-on-failure
 
   build:
     runs-on: ubuntu-24.04

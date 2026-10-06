@@ -183,6 +183,8 @@ object DebugExport {
                     "productId",
                     "physicalSlots",
                     "deviceMatchMethod",
+                    "touchProtocol",
+                    "hardwareTrackingIds",
                     "hostUid",
                     "ownerUid",
                     "helperUid",

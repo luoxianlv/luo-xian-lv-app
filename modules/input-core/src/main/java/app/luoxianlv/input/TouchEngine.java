@@ -88,7 +88,7 @@ public final class TouchEngine implements AutoCloseable {
             ensureLoaded();
             stage = "device-probe";
             String[] info = nativeProbe(preferredDevice == null ? "" : preferredDevice);
-            if (info == null || info.length != 12) return failure(stage, "触屏预检没有返回有效信息", null);
+            if (info == null || info.length != 14) return failure(stage, "触屏预检没有返回有效信息", null);
             if (!info[11].isEmpty()) return failure(stage, info[11], null);
             stage = "device-capabilities";
             Bundle result = new Bundle();
@@ -108,6 +108,8 @@ public final class TouchEngine implements AutoCloseable {
             // 合流输出是独立的虚拟触摸流；与 scrcpy 一样使用设备 0，不伪装成物理 InputDevice。
             result.putInt("deviceId", MergedTouchDispatcher.DEVICE_ID);
             result.putString("deviceMatchMethod", "virtual-injection");
+            result.putString("touchProtocol", info[12]);
+            result.putBoolean("hardwareTrackingIds", "1".equals(info[13]));
             result.putBoolean("supported", true);
             result.putString("message", "触屏预检通过");
             result.putString("diagnosticStage", "ready");
