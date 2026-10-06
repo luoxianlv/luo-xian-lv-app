@@ -306,6 +306,54 @@ public final class HostUpdateSchedulerTest {
     assertEquals(0, timers());
   }
 
+  @Test
+  public void duplicateNetworkAvailabilityAndCapabilitiesDoNotScanOrRequeueMainMessages()
+      throws Exception {
+    input(true, false, true);
+    var callback = (ConnectivityManager.NetworkCallback) get(host, "networkCallback");
+    var current = new android.net.Network();
+    var capabilities = new android.net.NetworkCapabilities();
+    callback.onAvailable(current);
+    callback.onCapabilitiesChanged(current, capabilities);
+    int scans = Handler.class.getField("removeCalls").getInt(null);
+    int queued = timers();
+    for (int i = 0; i < 1000; i++) {
+      callback.onAvailable(current);
+      callback.onCapabilitiesChanged(current, capabilities);
+    }
+    assertTrue((Boolean) get(host, "online"));
+    assertEquals(scans, Handler.class.getField("removeCalls").getInt(null));
+    assertEquals(queued, timers());
+    assertEquals(0, get(network, "queries"));
+  }
+
+  @Test
+  public void capabilityOnlineEdgesStillResumeAndCancelWorkWhileDuplicatesStayQuiet()
+      throws Exception {
+    input(true, false, false);
+    set(HostUpdateConfig.class, get(get(host, "state"), "config"), "environment", "release");
+    var callback = (ConnectivityManager.NetworkCallback) get(host, "networkCallback");
+    var current = new android.net.Network();
+    var capabilities = new android.net.NetworkCapabilities();
+    callback.onAvailable(current);
+    int scans = Handler.class.getField("removeCalls").getInt(null);
+    for (int i = 0; i < 1000; i++) callback.onCapabilitiesChanged(current, capabilities);
+    assertFalse((Boolean) get(host, "online"));
+    assertEquals(scans, Handler.class.getField("removeCalls").getInt(null));
+    capabilities.validated = true;
+    callback.onCapabilitiesChanged(current, capabilities);
+    assertTrue((Boolean) get(host, "online"));
+    invoke(host, "tick");
+    assertEquals(1, worker.tasks.size());
+    capabilities.validated = false;
+    callback.onCapabilitiesChanged(current, capabilities);
+    assertFalse((Boolean) get(host, "online"));
+    assertTrue((Boolean) invoke(host, "cancelled"));
+    scans = Handler.class.getField("removeCalls").getInt(null);
+    for (int i = 0; i < 1000; i++) callback.onCapabilitiesChanged(current, capabilities);
+    assertEquals(scans, Handler.class.getField("removeCalls").getInt(null));
+  }
+
   /** worker完成加载与主线程故障停用确定性交替，真实activate取消路径必须关闭并abort。 */
   private void handoffAcrossStop(boolean queuedBeforeStop, int failureMode) throws Exception {
     var directory = java.nio.file.Files.createTempDirectory("host-stop-handoff-").toFile();

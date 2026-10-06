@@ -11,11 +11,18 @@ import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
+import app.luoxianlv.hot.ForegroundStopper
 import app.luoxianlv.hot.contract.ForegroundPolicy
 import app.luoxianlv.library.SongRepository
 import app.luoxianlv.playback.PlaybackConnection
 import app.luoxianlv.service.PlaybackForegroundService
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.function.IntConsumer
+import java.util.function.IntPredicate
 
 /** 在真实系统服务调度下覆盖重复恢复、快速开关、原实例重启与通知停止。 */
 class PlaybackServiceInstrumentation : Instrumentation() {
@@ -106,6 +113,8 @@ class PlaybackServiceInstrumentation : Instrumentation() {
             awaitState("同一实例重新登记前台") { service()?.foreground == true }
             check(service()?.activeSince == firstStart)
 
+            checkPendingStopRestart()
+
             // 系统允许延迟展示前台通知；服务登记成功不等于通知已出现在列表中。
             awaitState("系统发布前台通知", timeoutMs = 20000) {
                 targetContext
@@ -173,7 +182,7 @@ class PlaybackServiceInstrumentation : Instrumentation() {
             }
             result.putString(
                 "stream",
-                "通过：基础值与状态隔离、旧连接/迟到手势和截图丢弃、20 次启动即取消、100 次重复恢复、绑定实例停止再启动、通知停止、交错开关、延迟崩溃观察及三类业务异常前已登记前台/失败后恢复。\n",
+                "通过：基础值与状态隔离、旧连接/迟到手势和截图丢弃、20 次启动即取消、100 次重复恢复、绑定实例停止再启动、停止请求阻塞时主线程继续/重启取得新启动序号/迟到成功结果丢弃、通知停止、交错开关、延迟崩溃观察及三类业务异常前已登记前台/失败后恢复。\n",
             )
             success = true
         } catch (error: Throwable) {
@@ -184,5 +193,72 @@ class PlaybackServiceInstrumentation : Instrumentation() {
             activity?.let { runOnMainSync { it.finish() } }
         }
         finish(if (success) Activity.RESULT_OK else Activity.RESULT_CANCELED, result)
+    }
+
+    /** 系统停止入口用可控等待替代，其余启动、绑定和主线程调度由真实系统执行。 */
+    private fun checkPendingStopRestart() {
+        val type = PlaybackForegroundService::class.java
+        val instanceField = type.getDeclaredField("instance").apply { isAccessible = true }
+        val stoppingField = type.getDeclaredField("stopping").apply { isAccessible = true }
+        val startField = type.getDeclaredField("lastStartId").apply { isAccessible = true }
+        val worker = Executors.newSingleThreadExecutor()
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val lateApplied = AtomicBoolean()
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val constructor =
+            ForegroundStopper::class
+                .java
+                .getDeclaredConstructor(
+                    Executor::class.java,
+                    Executor::class.java,
+                    IntPredicate::class.java,
+                    IntConsumer::class.java,
+                )
+                .apply { isAccessible = true }
+        val injected =
+            constructor.newInstance(
+                worker,
+                Executor { main.post(it) },
+                IntPredicate {
+                    check(android.os.Looper.myLooper() != android.os.Looper.getMainLooper())
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS)) { "停止请求等待超时" }
+                    true
+                },
+                IntConsumer { lateApplied.set(true) },
+            )
+        var host: Any? = null
+        var previous: Any? = null
+        var priorStart = 0
+        try {
+            runOnMainSync {
+                host = instanceField.get(null)
+                check(host != null)
+                previous = stoppingField.get(host)
+                priorStart = startField.getInt(host)
+                stoppingField.set(host, injected)
+                PlaybackConnection.instance!!.showFloating(false)
+            }
+            check(entered.await(3, TimeUnit.SECONDS)) { "后台停止请求未开始" }
+            runOnMainSync { PlaybackConnection.instance!!.showFloating(true) }
+            awaitState("停止等待期间重新发送启动命令", timeoutMs = 3000) {
+                var newer = false
+                runOnMainSync { newer = startField.getInt(host) > priorStart }
+                newer && service()?.foreground == true
+            }
+            release.countDown()
+            worker.submit {}.get(3, TimeUnit.SECONDS)
+            runOnMainSync { check(!lateApplied.get()) { "旧停止结果覆盖了新启动" } }
+            check(service()?.foreground == true)
+        } finally {
+            release.countDown()
+            runOnMainSync {
+                injected.cancel()
+                if (host != null && instanceField.get(null) === host)
+                    stoppingField.set(host, previous)
+            }
+            worker.shutdownNow()
+        }
     }
 }

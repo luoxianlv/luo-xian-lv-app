@@ -18,6 +18,7 @@ import app.luoxianlv.hot.ForegroundStopper;
 import app.luoxianlv.hot.contract.NativePlaybackSession;
 import app.luoxianlv.hot.contract.ForegroundPolicy;
 import app.luoxianlv.hot.contract.HostDiagnostics;
+import app.luoxianlv.playback.PlaybackServicePolicy;
 
 /** 系统前台承诺由 Java 宿主兑现，通知创建不得等待业务加载或谱面准备。 */
 public final class PlaybackForegroundService extends Service {

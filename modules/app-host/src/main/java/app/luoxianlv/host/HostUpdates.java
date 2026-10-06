@@ -416,7 +416,7 @@ final class HostUpdates {
     return new ConnectivityManager.NetworkCallback() {
       @Override
       public void onAvailable(Network network) {
-        if (blocked) return;
+        if (blocked || network.equals(currentNetwork)) return;
         currentNetwork = network;
         online = false;
         networkChanged();
@@ -433,10 +433,13 @@ final class HostUpdates {
       @Override
       public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
         if (blocked || !network.equals(currentNetwork)) return;
-        online =
+        boolean connected =
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 && (state.config.environment.equals("test")
                     || capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED));
+        // 能力通知可能高频重复；在线状态未变时不反复扫描、重排主线程消息队列。
+        if (online == connected) return;
+        online = connected;
         networkChanged();
       }
     };
