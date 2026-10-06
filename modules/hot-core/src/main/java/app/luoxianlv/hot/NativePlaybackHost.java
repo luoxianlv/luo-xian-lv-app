@@ -475,6 +475,11 @@ public abstract class NativePlaybackHost implements AutoCloseable {
         callback.failure(-1);
         return;
       }
+      var input = SharedInput.current();
+      if (input != null && !SharedInput.ACCESSIBILITY.equals(input.state().getString("mode", SharedInput.ACCESSIBILITY))) {
+        captureInput(input, displayId, callback);
+        return;
+      }
       NativeAccessibilityService accessibility = NativeAccessibilityService.current();
       if (accessibility == null) {
         callback.failure(SCREENSHOT_ACCESSIBILITY_UNAVAILABLE);
@@ -487,6 +492,38 @@ public abstract class NativePlaybackHost implements AutoCloseable {
         captures--;
         platformRequestFinished();
         throw failure;
+      }
+    }
+
+    private void captureInput(SharedInput.Bridge input, int displayId, ScreenshotCallback callback) {
+      captures++;
+      long epoch = activationEpoch;
+      var finished = new java.util.concurrent.atomic.AtomicBoolean();
+      ScreenshotCallback result = new ScreenshotCallback() {
+        private void deliver(Runnable action) {
+          if (Looper.myLooper() == Looper.getMainLooper()) action.run(); else main.post(action);
+        }
+        @Override public void success(AccessibilityBinding.Frame frame) {
+          deliver(() -> {
+            if (!finished.compareAndSet(false, true)) { frame.close(); return; }
+            captures--; platformRequestFinished();
+            if (!current(epoch)) { frame.close(); return; }
+            try { callback.success(frame); }
+            catch (Throwable failure) { frame.close(); failed(Binding.this, failure); }
+          });
+        }
+        @Override public void failure(int code) {
+          deliver(() -> {
+            if (!finished.compareAndSet(false, true)) return;
+            captures--; platformRequestFinished();
+            invoke(epoch, () -> callback.failure(code));
+          });
+        }
+      };
+      try { input.screenshot(displayId, result); }
+      catch (Exception | LinkageError failure) {
+        HostDiagnostics.log(Log.WARN, "截图", "输入服务截图请求失败：类型=" + failure.getClass().getSimpleName(), null);
+        result.failure(-1);
       }
     }
 

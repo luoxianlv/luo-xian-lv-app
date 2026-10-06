@@ -1,6 +1,7 @@
 package app.luoxianlv.input;
 
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import app.luoxianlv.input.IInputCallback;
 
 interface IInputService {
@@ -11,5 +12,6 @@ interface IInputService {
     void release() = 4;
     void heartbeat() = 5;
     void releaseSession(long ticket) = 6;
+    ParcelFileDescriptor screenshot(int displayId) = 7;
     void destroy() = 16777114;
 }

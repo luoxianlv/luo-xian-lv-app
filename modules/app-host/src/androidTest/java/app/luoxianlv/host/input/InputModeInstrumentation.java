@@ -33,13 +33,15 @@ import org.json.JSONObject;
 public final class InputModeInstrumentation extends Instrumentation {
   private String fixtureCommand = "/data/local/tmp/luoxianlv-input-fixture/touch-fixture";
   private static final String RECEIVER = "app.luoxianlv.audit.touchprobe";
-  private static final String LOG = "/sdcard/Android/data/" + RECEIVER + "/files/touch-events.jsonl";
-  private static final String READY = "/sdcard/Android/data/" + RECEIVER + "/files/touch-ready.json";
+  private static final String LOG = "files/touch-events.jsonl";
+  private static final String READY = "files/touch-ready.json";
   private final ArrayList<SharedInput.Session> sessions = new ArrayList<>();
   private String mergedMode;
   private int wirelessConnectPort;
+  private int expectedHelperUid = 2000;
   private String wirelessCode, wirelessPairPort;
   private boolean fixture;
+  private boolean floatingWithoutAccessibility;
   private boolean notificationPair, pairedSaved, previousPaired, previousPairedPresent;
   private boolean wirelessOffline, networkChanged, startupAuto;
   private boolean previousWifi;
@@ -52,10 +54,12 @@ public final class InputModeInstrumentation extends Instrumentation {
   @Override public void onCreate(Bundle arguments) {
     super.onCreate(arguments);
     mergedMode = arguments == null ? null : arguments.getString("mergedMode");
+    if (arguments != null) expectedHelperUid = Integer.parseInt(arguments.getString("expectedHelperUid", "2000"));
     wirelessConnectPort = arguments == null ? 0 : Integer.parseInt(arguments.getString("wirelessConnectPort", "0"));
     wirelessCode = arguments == null ? null : arguments.getString("wirelessCode");
     wirelessPairPort = arguments == null ? null : arguments.getString("wirelessPairPort");
     fixture = arguments != null && "true".equals(arguments.getString("fixture"));
+    floatingWithoutAccessibility = arguments != null && "true".equals(arguments.getString("floatingWithoutAccessibility"));
     notificationPair = arguments != null && "true".equals(arguments.getString("notificationPair"));
     wirelessOffline = arguments != null && "true".equals(arguments.getString("wirelessOffline"));
     startupAuto = arguments != null && "true".equals(arguments.getString("startupAuto"));
@@ -100,7 +104,12 @@ public final class InputModeInstrumentation extends Instrumentation {
             "mergedMode 必须为 shizuku 或 wireless");
         automation = getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
         checkMerged();
-        result.putString("stream", "输入模式验收通过：状态观测、真实双触点、音符间隙保留手指、抬手等待与取消、非接触残留槽、租约释放及旧 owner 关闭隔离。\n");
+        checkScreenshot();
+        app.luoxianlv.host.FixedInputChecks.run(this);
+        if (floatingWithoutAccessibility) FloatingWithoutAccessibilityChecks.run(this, automation);
+        result.putString("stream", "输入模式验收通过：真实截图、固定琴键演奏、状态观测、真实双触点、音符间隙保留手指、抬手等待与取消、非接触残留槽、租约释放及旧 owner 关闭隔离。\n");
+        if (floatingWithoutAccessibility)
+          result.putString("stream", result.getString("stream") + "通过：关闭无障碍，真实输入连接下通过业务启动悬浮窗，展开、选歌、收起与关闭；未点击播放。\n");
       } else {
         result.putString("stream", "输入模式状态验收通过；本次未指定 fixture，未执行真实触点合流测试。\n");
       }
@@ -149,6 +158,31 @@ public final class InputModeInstrumentation extends Instrumentation {
       }
     }
     finish(success ? Activity.RESULT_OK : Activity.RESULT_CANCELED, result);
+  }
+
+  private void checkScreenshot() throws Exception {
+    CountDownLatch done = new CountDownLatch(1);
+    java.util.concurrent.atomic.AtomicReference<app.luoxianlv.hot.contract.AccessibilityBinding.Frame> result = new java.util.concurrent.atomic.AtomicReference<>();
+    AtomicBoolean onMain = new AtomicBoolean();
+    runOnMainSync(() -> bridge.screenshot(0, new app.luoxianlv.hot.contract.AccessibilityBinding.ScreenshotCallback() {
+      @Override public void success(app.luoxianlv.hot.contract.AccessibilityBinding.Frame frame) {
+        onMain.set(Looper.myLooper() == Looper.getMainLooper()); result.set(frame); done.countDown();
+      }
+      @Override public void failure(int code) { done.countDown(); }
+    }));
+    require(done.await(10, TimeUnit.SECONDS), "输入服务截图超时");
+    var frame = result.get();
+    require(frame != null && onMain.get(), "没有实际截图或回调未回到主线程");
+    try {
+      require(frame.width > 100 && frame.height > 100 && frame.buffer == null, "截图没有返回有效软件图像");
+      // 真实业务识别器消费软件帧，验证不依赖无障碍 HardwareBuffer。
+      var loader = app.luoxianlv.host.Bootstrap.source().prepared.classLoader();
+      Class<?> analyzer = Class.forName("app.luoxianlv.recognition.ScreenshotAnalyzer", true, loader);
+      var recognize = java.util.Arrays.stream(analyzer.getDeclaredMethods()).filter(m -> m.getName().equals("recognize")).findFirst().orElseThrow();
+      recognize.setAccessible(true);
+      recognize.invoke(analyzer.getField("INSTANCE").get(null), frame, null);
+      require(frame.takeBitmap() == null, "识别器没有消费截图所有权");
+    } finally { frame.close(); }
   }
 
   private void checkControl() throws Exception {
@@ -206,13 +240,16 @@ public final class InputModeInstrumentation extends Instrumentation {
     await("合流未就绪，请预先授权/配对并启动测试触屏：" + bridge.state().getString("message"),
         () -> bridge.state().getBoolean("connected") && bridge.state().getBoolean("touchReady"), 30000);
     if (notificationPair) require(bridge.state().getBoolean("paired"), "通知未完成真实配对，拒绝把旧连接算作成功");
-    require(bridge.state().getInt("uid", -1) == 2000, "合流助手不是普通 ADB shell 身份");
+    require(expectedHelperUid == 2000 || (expectedHelperUid == 0 && SharedInput.SHIZUKU.equals(mergedMode)),
+        "仅允许官方 Shizuku 身份；无线调试必须为普通 shell");
+    require(bridge.state().getInt("uid", -1) == expectedHelperUid, "合流助手与指定服务身份不符");
     require("Luoxianlv Audit Direct Touch".equals(bridge.state().getString("name")),
         "拒绝操作非测试触屏设备");
     var playback = PlaybackBridge.current();
     require(playback == null || !playback.query("state").getBoolean("floatingVisible"),
         "请先隐藏悬浮窗，避免测试触点被其他窗口接收");
-    require(bridge.state().getInt("deviceId", -1) >= 0, "未映射到真实 Android 输入设备");
+    require(bridge.state().getInt("deviceId", -1) == 0, "合流输出必须使用虚拟触摸设备");
+    require("virtual-injection".equals(bridge.state().getString("deviceMatchMethod")), "合流仍依赖物理设备名匹配");
     require(shell("pm path " + RECEIVER).trim().startsWith("package:"), "独立触点接收 APK 尚未安装");
     probeRun = "run_" + android.os.Process.myPid() + "_" + SystemClock.elapsedRealtime();
     require(shell("am start -W -n " + RECEIVER + "/.MainActivity --ez clear_logs true --es probe_run " + probeRun).contains("Starting"),
@@ -227,7 +264,9 @@ public final class InputModeInstrumentation extends Instrumentation {
         6000, size.x, size.y, rotation, initial);
     await("首音没有实际接管触屏", () -> bridge.state().getBoolean("active"), 5000);
     awaitFrames("独立接收页未收到首音，拒绝仅凭active状态继续", frames -> frames.stream().anyMatch(frame -> {
-      try { return isTouch(frame) && frame.getInt("actionMasked") == MotionEvent.ACTION_DOWN; }
+      // InputDispatcher 会将注入设备编号改为虚拟编号 -1，旧系统也可能保留输入参数 0。
+      try { return isTouch(frame) && (frame.getInt("deviceId") == -1 || frame.getInt("deviceId") == 0)
+          && frame.getInt("actionMasked") == MotionEvent.ACTION_DOWN; }
       catch (Exception malformed) { return false; }
     }), 5000);
     physicalPoint("down", .25f, .65f, rotation); fingerDown = true;
@@ -539,7 +578,7 @@ public final class InputModeInstrumentation extends Instrumentation {
 
   private ArrayList<JSONObject> readFrames() throws Exception {
     ArrayList<JSONObject> records = new ArrayList<>();
-    String logged = shell("cat " + LOG + " 2>&1");
+    String logged = shell("run-as " + RECEIVER + " cat " + LOG + " 2>&1");
     require(!logged.contains("Permission denied") && !logged.contains("No such file"),
         "触点接收日志无法读取：" + logged.trim());
     for (String line : logged.split("\n")) {
@@ -556,7 +595,7 @@ public final class InputModeInstrumentation extends Instrumentation {
 
   private boolean receiverReady(Point size, int rotation) {
     try {
-      JSONObject ready = new JSONObject(shell("cat " + READY + " 2>/dev/null"));
+      JSONObject ready = new JSONObject(shell("run-as " + RECEIVER + " cat " + READY + " 2>/dev/null"));
       return probeRun.equals(ready.optString("runId")) && ready.optBoolean("focused")
           && ready.optInt("width") == size.x && ready.optInt("height") == size.y
           && ready.optInt("rotation", -1) == rotation

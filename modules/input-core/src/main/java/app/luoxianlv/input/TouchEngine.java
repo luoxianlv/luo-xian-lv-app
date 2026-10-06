@@ -4,13 +4,10 @@ import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Process;
-import android.view.InputDevice;
-import android.view.Display;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.Objects;
-import java.util.ArrayList;
 
 /** 只在 shell 助手运行的触点合流内核；预检不接管设备。 */
 public final class TouchEngine implements AutoCloseable {
@@ -20,7 +17,6 @@ public final class TouchEngine implements AutoCloseable {
     }
 
     private static boolean loaded;
-    private static final Method associatedDisplayGetter = findAssociatedDisplayGetter();
 
     private final Listener listener;
     private volatile long handle;
@@ -86,22 +82,6 @@ public final class TouchEngine implements AutoCloseable {
         }
     }
 
-    private static Method findAssociatedDisplayGetter() {
-        try { return InputDevice.class.getMethod("getAssociatedDisplayId"); }
-        catch (NoSuchMethodException ignored) { return null; }
-    }
-
-    static boolean targetsMainDisplay(InputDevice device) {
-        // 早期 Android 没有输入设备与副屏的绑定属性，触屏默认属于主屏幕。
-        if (associatedDisplayGetter == null) return true;
-        try {
-            int associated = (Integer) associatedDisplayGetter.invoke(device);
-            return associated == Display.DEFAULT_DISPLAY || associated == Display.INVALID_DISPLAY;
-        } catch (ReflectiveOperationException | RuntimeException error) {
-            throw new IllegalStateException("无法确认触屏关联的屏幕", error);
-        }
-    }
-
     public static Bundle probe(String preferredDevice) {
         String stage = "native-load";
         try {
@@ -110,7 +90,7 @@ public final class TouchEngine implements AutoCloseable {
             String[] info = nativeProbe(preferredDevice == null ? "" : preferredDevice);
             if (info == null || info.length != 12) return failure(stage, "触屏预检没有返回有效信息", null);
             if (!info[11].isEmpty()) return failure(stage, info[11], null);
-            stage = "android-device-match";
+            stage = "device-capabilities";
             Bundle result = new Bundle();
             result.putString("path", info[0]);
             result.putString("name", info[1]);
@@ -125,36 +105,9 @@ public final class TouchEngine implements AutoCloseable {
             result.putInt("bus", Integer.parseInt(info[10]));
             result.putInt("maxAutomaticPointers", Math.min(10, 32 - result.getInt("physicalSlots")));
             result.putInt("maxPointers", 16);
-            ArrayList<InputDeviceMatcher.Device> candidates = new ArrayList<>();
-            for (int id : InputDevice.getDeviceIds()) {
-                InputDevice device = InputDevice.getDevice(id);
-                if (device == null || !device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)) continue;
-                candidates.add(new InputDeviceMatcher.Device(id, device.getName(), device.getVendorId(),
-                        device.getProductId(), device.getDescriptor(), targetsMainDisplay(device)));
-            }
-            result.putInt("inputCandidateCount", candidates.size());
-            InputDeviceMatcher.Match matched = InputDeviceMatcher.byIdentity(info[1], result.getInt("vendorId"),
-                    result.getInt("productId"), candidates);
-            if (!matched.found()) {
-                String mapError = "";
-                long began = android.os.SystemClock.elapsedRealtime();
-                try { matched = InputDeviceMatcher.bySystemMap(info[0], SystemInputDeviceMap.read(), candidates); }
-                catch (Exception error) { mapError = safeErrorType(error); }
-                result.putLong("deviceMapReadMs", android.os.SystemClock.elapsedRealtime() - began);
-                result.putString("deviceMapReadError", mapError);
-            }
-            result.putString("deviceMatchMethod", matched.method());
-            if (!matched.found()) {
-                result.putAll(failure(stage, matched.error() + "，请重新检查连接或使用无障碍模式", null));
-                return result;
-            }
-            InputDevice chosen = InputDevice.getDevice(matched.id());
-            if (chosen == null || !chosen.supportsSource(InputDevice.SOURCE_TOUCHSCREEN) || !targetsMainDisplay(chosen)) {
-                result.putAll(failure(stage, "匹配期间触屏发生变化，请重新检查", null));
-                return result;
-            }
-            result.putString("descriptor", chosen.getDescriptor());
-            result.putInt("deviceId", matched.id());
+            // 合流输出是独立的虚拟触摸流；与 scrcpy 一样使用设备 0，不伪装成物理 InputDevice。
+            result.putInt("deviceId", MergedTouchDispatcher.DEVICE_ID);
+            result.putString("deviceMatchMethod", "virtual-injection");
             result.putBoolean("supported", true);
             result.putString("message", "触屏预检通过");
             result.putString("diagnosticStage", "ready");

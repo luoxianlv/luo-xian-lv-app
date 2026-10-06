@@ -300,7 +300,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         }
         AppLog.init(this)
         AppLog.log(
-            "无障碍服务已连接：${Build.MANUFACTURER}/${Build.MODEL} 系统 API=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) 显示=${displayState()}"
+            "播放会话已建立：输入模式=${app.luoxianlv.hot.contract.SharedInput.current()?.state()?.getString("mode")}；${Build.MANUFACTURER}/${Build.MODEL} 系统 API=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) 显示=${displayState()}"
         )
         repository = SongRepository(this)
         keys = ConfigStore.load(this)
@@ -354,7 +354,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             halfToneOn = halfToneOn,
             fixedKeys = fixedKeys,
             fixAttempted = fixAttemptedForSong,
-            floatingVisible = if (active) floatingVisible else restoredFloating,
+            floatingVisible = if (active) floating.isRequested else restoredFloating,
             floatingState = floating.snapshot(),
             error = error,
         )
@@ -425,7 +425,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     override fun deactivate() {
         if (!active || closed) return
-        restoredFloating = floatingVisible
+        restoredFloating = floating.isRequested
         pauseNow()
         active = false
         stopMonitoring()
@@ -491,6 +491,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                     putBoolean("loadingSong", loadingSong)
                     putBoolean("waitingToPlay", waitingToPlay)
                     putBoolean("floatingVisible", floatingVisible)
+                    putBoolean("floatingRequested", floating.isRequested)
+                    putString("floatingError", floating.windowError)
                     putBoolean("floatingEnabled", repository.floatingEnabled)
                     putString("error", error)
                     putFloat("speed", speed)

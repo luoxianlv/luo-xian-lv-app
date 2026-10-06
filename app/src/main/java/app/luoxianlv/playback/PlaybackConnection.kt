@@ -87,6 +87,9 @@ class PlaybackConnection private constructor(private val port: PlaybackPort) {
     val floatingVisible
         get() = state.getBoolean("floatingVisible")
 
+    val floatingError
+        get() = state.getString("floatingError")
+
     val error
         get() = state.getString("error")
 

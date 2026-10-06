@@ -144,8 +144,11 @@ object DebugExport {
                     "binderAlive",
                     "binderReady",
                     "permissionGranted",
+                    "overlayGranted",
+                    "accessibilityEnabled",
                     "permissionState",
                     "permissionCheckError",
+                    "shizukuUid",
                     "connected",
                     "touchReady",
                     "active",
@@ -175,14 +178,11 @@ object DebugExport {
                     "diagnosticStage",
                     "diagnosticType",
                     "diagnosticMessage",
-                    "inputCandidateCount",
                     "deviceId",
                     "vendorId",
                     "productId",
                     "physicalSlots",
                     "deviceMatchMethod",
-                    "deviceMapReadMs",
-                    "deviceMapReadError",
                     "hostUid",
                     "ownerUid",
                     "helperUid",
@@ -242,6 +242,7 @@ object DebugExport {
     }
 
     private fun diagnostics(context: Context): JSONObject {
+        val window = app.luoxianlv.hot.contract.PlaybackBridge.current()?.query("state")
         val d = PlaybackConnection.instance?.diagnostics()
         val layout = ConfigStore.load(context)
         val prefs = Kv.of(context, "ratio_config_v3").all
@@ -251,6 +252,10 @@ object DebugExport {
         }
         return JSONObject()
             .put("serviceRunning", d != null)
+            .put("floatingEnabled", window?.getBoolean("floatingEnabled"))
+            .put("floatingRequested", window?.getBoolean("floatingRequested"))
+            .put("floatingVisible", window?.getBoolean("floatingVisible"))
+            .put("floatingError", window?.getString("floatingError"))
             .put("serviceEnabled", d?.serviceEnabled)
             .put("playing", d?.playing)
             .put("preparing", d?.preparing)

@@ -310,6 +310,12 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 // 授权和后台初始化是两回事；等真实桥接建立，不误弹无障碍引导。
                 val until = android.os.SystemClock.elapsedRealtime() + 10000
                 while (PlaybackConnection.instance?.floatingVisible != true) {
+                    PlaybackConnection.instance?.floatingError?.let { reason ->
+                        repository.floatingEnabled = false
+                        _local.update { it.copy(floatingEnabled = false, notice = reason) }
+                        PlaybackConnection.instance?.showFloating(false)
+                        return@launch
+                    }
                     if (android.os.SystemClock.elapsedRealtime() >= until) {
                         _local.update { it.copy(notice = "启动暂未完成，请稍后重试") }
                         break

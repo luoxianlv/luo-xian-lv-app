@@ -48,6 +48,8 @@ public final class InputUserService extends IInputService.Stub {
     if (ownerUid < 10000) throw new IllegalArgumentException("助手缺少有效宿主身份");
     this.ownerUid = ownerUid;
     this.nativeLibraryDir = nativeLibraryDir;
+    snapshot.putInt("uid", Process.myUid());
+    snapshot.putInt("ownerUid", ownerUid);
     Log.i("触控共存", "输入助手已创建，宿主UID=" + ownerUid + "，助手UID=" + Process.myUid()
         + "，架构=" + (Process.is64Bit() ? "64位" : "32位"));
     worker.scheduleWithFixedDelay(() -> {
@@ -76,8 +78,8 @@ public final class InputUserService extends IInputService.Stub {
     worker.execute(() -> {
       if (closed) return;
       Bundle state;
-      if (Process.myUid() != 2000) {
-        state = unavailable("请使用无线调试启动 Shizuku，本模式需要 ADB 身份");
+      if (!InputIdentity.privileged(Process.myUid())) {
+        state = unavailable("输入服务缺少系统触控权限，请重新连接 Shizuku 或无线调试");
       } else {
         String probeStage = "native-load";
         try {
@@ -96,7 +98,7 @@ public final class InputUserService extends IInputService.Stub {
 
   @Override public boolean begin(float[] points, int durationMs, int w, int h, int r, long token) {
     checkCaller();
-    if (Process.myUid() != 2000 || points == null || points.length == 0
+    if (!InputIdentity.privileged(Process.myUid()) || points == null || points.length == 0
         || points.length % 2 != 0 || points.length > 20 || durationMs < 1
         || durationMs > 60000 || w < 1 || h < 1 || r < 0 || r > 3
         || token <= 0 || callback == null) return false;
@@ -149,7 +151,7 @@ public final class InputUserService extends IInputService.Stub {
           return;
         }
         stage = "dispatcher-prepare";
-        dispatcher = new MergedTouchDispatcher(prepared.getInt("deviceId", -1), w, h, r);
+        dispatcher = new MergedTouchDispatcher(w, h, r);
       }
       if (activeToken != 0) finished(activeToken, false, "已由后续音符替换");
       cancelActivationWait();
@@ -284,6 +286,14 @@ public final class InputUserService extends IInputService.Stub {
     });
   }
 
+  /** Binder 工作线程执行；截图不占用触屏合流与心跳控制队列。 */
+  @Override public android.os.ParcelFileDescriptor screenshot(int displayId) throws RemoteException {
+    checkCaller();
+    if (closed) throw new RemoteException("输入服务已关闭");
+    try { return ShellScreenshot.capture(displayId); }
+    catch (java.io.IOException failure) { throw new RemoteException("系统截图失败：" + failure.getClass().getSimpleName()); }
+  }
+
   @Override public void heartbeat() {
     checkCaller();
     lastHeartbeat = SystemClock.elapsedRealtime();
@@ -367,7 +377,7 @@ public final class InputUserService extends IInputService.Stub {
       callback = null;
     }
     worker.shutdown();
-    if (Process.myUid() == 2000) System.exit(0);
+    if (InputIdentity.privileged(Process.myUid())) System.exit(0);
   }
 
   /** 自有无线引导器的宿主租约失效时正常清理，不开放新的远程入口。 */

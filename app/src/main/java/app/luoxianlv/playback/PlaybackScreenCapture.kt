@@ -50,8 +50,8 @@ internal class PlaybackScreenCapture(
                         }
                         val frame =
                             PlaybackCoordinates.Frame(
-                                screenshot.buffer.width,
-                                screenshot.buffer.height,
+                                screenshot.width,
+                                screenshot.height,
                             )
                         jobs.incrementAndGet()
                         val receivedAt = SystemClock.uptimeMillis()

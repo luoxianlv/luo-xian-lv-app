@@ -32,6 +32,8 @@ JavaVM* vm = nullptr;
 constexpr int64_t kHeartbeatTimeoutMs = 4500;
 constexpr int64_t kYieldWaitMs = 500;
 
+bool privilegedIdentity() { return getuid() == 2000 || getuid() == 0; }
+
 int64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
 }
@@ -98,7 +100,7 @@ bool inspect(int fd, const std::string& path, Descriptor& out) {
 }
 
 bool findDevice(const std::string& preferred, Descriptor& result, std::string& error) {
-    if (getuid() != 2000) { error = "触控共存需要通过 Shizuku 或无线调试启动 shell 助手"; return false; }
+    if (!privilegedIdentity()) { error = "触控共存需要已授权的 Shizuku 或无线调试连接"; return false; }
     DIR* directory = opendir("/dev/input");
     if (!directory) { error = "系统不允许读取触屏设备目录"; return false; }
     int matches = 0;
@@ -657,7 +659,7 @@ Java_app_luoxianlv_input_TouchEngine_nativeProbe(JNIEnv* env, jclass, jstring pr
 extern "C" JNIEXPORT jlong JNICALL
 Java_app_luoxianlv_input_TouchEngine_nativePrepare(JNIEnv* env, jclass, jobject listener,
         jstring path, jstring name, jint vendor, jint product, jint width, jint height, jint rotation) {
-    if (getuid() != 2000) { fail(env, "触控内核只接受 shell 助手身份"); return 0; }
+    if (!privilegedIdentity()) { fail(env, "触控内核需要 Shizuku 或无线调试的系统输入身份"); return 0; }
     std::string inputPath = javaString(env, path);
     if (inputPath.rfind("/dev/input/event", 0) != 0 || inputPath.find("..") != std::string::npos ||
         width < 2 || height < 2 || width > 32768 || height > 32768 || rotation < 0 || rotation > 3 || !listener) {

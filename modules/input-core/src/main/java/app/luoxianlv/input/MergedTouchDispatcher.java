@@ -1,6 +1,7 @@
 package app.luoxianlv.input;
 
 import android.graphics.Point;
+import android.os.Build;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Display;
@@ -15,28 +16,24 @@ import java.util.Arrays;
 /** 将合流后的触点快照转为完整的 Android 多点事件序列。仅由内核工作线程调用。 */
 public final class MergedTouchDispatcher {
     private static final String TAG = "触控共存";
-    private final int deviceId, width, height, rotation;
+    // scrcpy Controller.DEFAULT_DEVICE_ID：像素坐标的注入事件不需要物理触屏设备编号。
+    static final int DEVICE_ID = 0;
+    private final int width, height, rotation;
     private final Object inputManager;
     private final Method inject;
+    private final Method setDisplayId;
     private final Display display;
-    private final String descriptor;
     private final TreeMap<Integer, float[]> active = new TreeMap<>();
     private final PointerIds pointerIds = new PointerIds();
     private final Point size = new Point();
     private long downTime;
 
-    public MergedTouchDispatcher(int deviceId, int width, int height, int rotation) {
-        if (deviceId < 0 || width < 2 || height < 2 || rotation < 0 || rotation > 3)
+    public MergedTouchDispatcher(int width, int height, int rotation) {
+        if (width < 2 || height < 2 || rotation < 0 || rotation > 3)
             throw new IllegalArgumentException("输入设备或屏幕参数无效");
-        this.deviceId = deviceId;
         this.width = width;
         this.height = height;
         this.rotation = rotation;
-        InputDevice device = InputDevice.getDevice(deviceId);
-        if (device == null || !device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN) ||
-                !TouchEngine.targetsMainDisplay(device))
-            throw new IllegalStateException("目标触屏已断开");
-        descriptor = device.getDescriptor();
         try {
             Class<?> managerClass;
             try { managerClass = Class.forName("android.hardware.input.InputManagerGlobal"); }
@@ -45,6 +42,7 @@ public final class MergedTouchDispatcher {
             instance.setAccessible(true);
             inputManager = instance.invoke(null);
             inject = managerClass.getMethod("injectInputEvent", InputEvent.class, int.class);
+            setDisplayId = Build.VERSION.SDK_INT >= 29 ? InputEvent.class.getMethod("setDisplayId", int.class) : null;
             Class<?> displays = Class.forName("android.hardware.display.DisplayManagerGlobal");
             Object global = displays.getDeclaredMethod("getInstance").invoke(null);
             display = (Display) displays.getMethod("getRealDisplay", int.class).invoke(global, Display.DEFAULT_DISPLAY);
@@ -92,9 +90,7 @@ public final class MergedTouchDispatcher {
 
     @SuppressWarnings("deprecation")
     private boolean geometryMatches() {
-        InputDevice device = InputDevice.getDevice(deviceId);
-        if (device == null || !descriptor.equals(device.getDescriptor()) ||
-                !TouchEngine.targetsMainDisplay(device) || !display.isValid() ||
+        if (!display.isValid() ||
                 display.getRotation() != rotation) return false;
         display.getRealSize(size);
         return size.x == width && size.y == height;
@@ -138,8 +134,9 @@ public final class MergedTouchDispatcher {
             coordinates[index++] = coordinate;
         }
         MotionEvent event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, active.size(),
-                properties, coordinates, 0, 0, 1, 1, deviceId, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
+                properties, coordinates, 0, 0, 1, 1, DEVICE_ID, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
         try {
+            if (setDisplayId != null) setDisplayId.invoke(event, Display.DEFAULT_DISPLAY);
             // WAIT_FOR_RESULT 返回输入系统的接受结果；独立看门狗处理 Binder 长时间停顿。
             return Boolean.TRUE.equals(inject.invoke(inputManager, event, 1));
         } catch (ReflectiveOperationException | RuntimeException e) {

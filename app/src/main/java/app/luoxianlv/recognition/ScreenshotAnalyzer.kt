@@ -16,15 +16,18 @@ internal object ScreenshotAnalyzer {
         var conversionMs = 0L
         var analysisMs = 0L
         val result = runCatching {
+            val software = screenshot.takeBitmap()
             val hardware =
-                try {
-                    Bitmap.wrapHardwareBuffer(screenshot.buffer, screenshot.colorSpace)
-                } finally {
-                    screenshot.close()
-                }
+                if (software == null)
+                    try {
+                        Bitmap.wrapHardwareBuffer(screenshot.buffer, screenshot.colorSpace)
+                    } finally {
+                        screenshot.close()
+                    }
+                else null
             val bitmap =
                 try {
-                    hardware?.copy(Bitmap.Config.ARGB_8888, false)
+                    software ?: hardware?.copy(Bitmap.Config.ARGB_8888, false)
                 } finally {
                     hardware?.recycle()
                 }

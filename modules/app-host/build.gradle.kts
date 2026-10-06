@@ -31,8 +31,8 @@ android {
         applicationId = "app.luoxianlv"
         minSdk = 26
         targetSdk = 37
-        versionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 19
-        versionName = findProperty("appVersionName") as String? ?: "1.1.1"
+        versionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 20
+        versionName = findProperty("appVersionName") as String? ?: "1.2.0"
         testInstrumentationRunner = "app.luoxianlv.host.NativeAppInstrumentation"
     }
     if (hasReleaseSigning) {

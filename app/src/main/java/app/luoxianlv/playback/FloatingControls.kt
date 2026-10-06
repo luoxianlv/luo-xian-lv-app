@@ -16,7 +16,6 @@ import android.widget.ImageView
 import app.luoxianlv.R
 import app.luoxianlv.app.BusinessJobs
 import app.luoxianlv.diagnostics.AppLog
-import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.library.Song
 import app.luoxianlv.library.SongRepository
 import app.luoxianlv.playback.PlayerUi.dp
@@ -25,7 +24,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.*
 
 /**
- * 悬浮窗（无障碍 overlay）。
+ * 使用独立悬浮窗权限的播放器窗口。
  *
  * 视觉跟随 App 主题：白卡（92% 不透明 + 细描边 + 阴影）、品牌蓝主按钮、 深藏青标题；深色模式下白卡换成深石板蓝、字色反相（见 [palette]）。两个形态：
  * - 收起：44dp 气泡（浅色白底 / 深色深蓝底）+ 蓝音符，可拖动；
@@ -66,6 +65,9 @@ class FloatingControls(private val service: PlaybackSession) {
     private var displayRequested = false
     private var showRetries = 0
     private var destroyed = false
+    var windowError: String? = null
+        private set
+
     private var displayedGeometry: FloatingDisplayGeometry? = null
     private var pendingGeometry: FloatingDisplayGeometry? = null
     private val applyGeometry = Runnable { applyDisplayGeometry() }
@@ -102,13 +104,12 @@ class FloatingControls(private val service: PlaybackSession) {
             }
         }
 
-    /**
-     * 悬浮窗此刻是否（应当）显示在屏幕上。
-     *
-     * [show] / [hide] 同步改写 [displayRequested]，拖拽、选歌窗临时顶掉面板都不影响它， 所以界面可以直接拿它判断「运行中」——不必再看持久化偏好：
-     * 服务被系统回收后偏好仍是 true，界面就会谎报运行中，点「关闭」还会再打开一次。
-     */
+    /** 只有系统成功挂载的播放器或选歌窗口才算已显示。 */
     val isVisible: Boolean
+        get() = displayRequested && (root?.isAttachedToWindow == true || playlistWindow.isShowing)
+
+    /** 热更交接保留显示意图，避免窗口尚未挂载时丢失一次有效启动。 */
+    val isRequested: Boolean
         get() = displayRequested
 
     fun snapshot() =
@@ -138,6 +139,7 @@ class FloatingControls(private val service: PlaybackSession) {
         destroyed = false
         displayRequested = true
         showRetries = 0
+        windowError = null
         if (root != null) return
         val open = restoredExpanded ?: false
         restoredExpanded = null
@@ -296,7 +298,13 @@ class FloatingControls(private val service: PlaybackSession) {
 
     private fun render(open: Boolean) {
         revision++
-        if (destroyed || !displayRequested || !PlaybackBridge.isEnabled(service)) return
+        if (destroyed || !displayRequested) return
+        if (!FloatingWindowLayout.allowed()) {
+            displayRequested = false
+            windowError = "悬浮窗权限尚未就绪，请重新允许显示在其他应用上方"
+            AppLog.w("悬浮窗", checkNotNull(windowError))
+            return
+        }
         if (!open) speedControlsVisible = false
         palette = PlayerUi.palette(context)
         // 先清标记再摘下窗口，避免关闭选歌窗时递归恢复面板。
@@ -358,15 +366,21 @@ class FloatingControls(private val service: PlaybackSession) {
             root = view
             displayedGeometry = geometry
             showRetries = 0
+            windowError = null
+            AppLog.i("悬浮窗", "播放器窗口已挂载：形态=${if (open) "面板" else "气泡"}，类型=${params?.type}")
             if (open) handler.post(tick)
             if (!open) preparePanelWhenIdle()
-        } catch (_: WindowManager.BadTokenException) {
+        } catch (failure: WindowManager.BadTokenException) {
             root = null
-            // 部分系统稍后才绑定无障碍窗口；取得窗口令牌后重试。
-            retryShow()
-        } catch (_: IllegalStateException) {
+            retryShow(failure)
+        } catch (failure: IllegalStateException) {
             root = null
-            retryShow()
+            retryShow(failure)
+        } catch (failure: SecurityException) {
+            root = null
+            displayRequested = false
+            windowError = "系统未允许显示悬浮窗，请检查悬浮窗权限"
+            AppLog.w("悬浮窗", checkNotNull(windowError), failure)
         }
     }
 
@@ -449,19 +463,17 @@ class FloatingControls(private val service: PlaybackSession) {
         Looper.myQueue().addIdleHandler(panelPrewarm!!)
     }
 
-    private fun retryShow() {
+    private fun retryShow(failure: Exception) {
+        if (showRetries == 0) AppLog.w("悬浮窗", "系统暂未挂载播放器窗口，将稍后重试", failure)
         if (
-            !destroyed &&
-                displayRequested &&
-                PlaybackBridge.isEnabled(service) &&
-                ++showRetries <= 3
+            !destroyed && displayRequested && FloatingWindowLayout.allowed() && ++showRetries <= 3
         ) {
             handler.removeCallbacks(showWindow)
             handler.postDelayed(showWindow, 500)
         } else {
-            // 重试也没挂上：认输并把显示意图清掉，
-            // 否则 [isVisible] 会一直报「运行中」，界面上却什么都没有。
             displayRequested = false
+            windowError = "悬浮窗未能显示，请检查权限后重新启动"
+            AppLog.w("悬浮窗", "播放器窗口重试结束仍未挂载：类型=${failure.javaClass.simpleName}")
         }
     }
 

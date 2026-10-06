@@ -34,6 +34,11 @@ public final class SharedInput {
   }
 
   public interface Bridge {
+    /** 按所选输入模式截图，回调在主线程交付。 */
+    default void screenshot(int displayId, AccessibilityBinding.ScreenshotCallback callback) {
+      callback.failure(-1);
+    }
+
     /** 返回内存快照，不在 UI 查询中进行 Binder 或设备 IO。 */
     Bundle state();
 

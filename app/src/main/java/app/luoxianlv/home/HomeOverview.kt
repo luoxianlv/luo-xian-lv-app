@@ -1,7 +1,8 @@
 package app.luoxianlv.home
 
+import android.content.Intent
 import android.graphics.RectF
-import androidx.compose.foundation.layout.Arrangement
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -109,11 +111,22 @@ internal fun HomeOverview(
         // 页脚：与参考实现的「Thanks to YumeBox」同款。
         // 放在信息区底部而不是压在插画上，既避免和插画主体重叠，也把右下角的空间用上。
         Spacer(modifier = Modifier.weight(1f))
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            horizontalArrangement = Arrangement.Center,
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             VersionFooter()
+            val context = LocalContext.current
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse("https://www.luoxianlv.cn/support"))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            ) {
+                Text("赞助我们", style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }

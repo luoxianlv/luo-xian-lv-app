@@ -1,8 +1,8 @@
 # 输入助手
 
-本模块在 shell 助手中将真实手指和自动按键合成同一条多点触摸流。普通无障碍模式不使用内核，也不要求 Root。
+本模块在已授权的输入服务中将真实手指和自动按键合成同一条多点触摸流。普通无障碍模式不使用内核，也不要求 Root。
 
-设置入口为「设置 → 演奏 → 输入模式」。默认无障碍；Shizuku 需以 ADB 身份启动并授权，内置无线调试需 Android 11 以上，配对码可从通知填写。悬浮窗使用系统悬浮窗权限；自动截图识别需要无障碍服务，固定按键位置和演练场不依赖截图。
+设置入口为「设置 → 演奏 → 输入模式」。默认无障碍；Shizuku 需启动并授权，兼容官方的 ADB 与 root 身份，不要求用户取得 Root。内置无线调试需 Android 11 以上，配对码可从通知填写。悬浮窗使用系统悬浮窗权限；自动截图识别需要无障碍服务，固定按键位置和演练场不依赖截图。
 
 ## 连接与宿主
 
@@ -17,7 +17,7 @@
 
 ## 内核调用
 
-`TouchEngine.probe()` 只读取设备能力，`prepare()` 建立会话但不抓取触屏。预检要求设备具有 `INPUT_PROP_DIRECT`、Type B 多点槽位与有效坐标轴，优先按名称、厂商和产品标识唯一匹配 Android 输入设备；不一致时，读取系统输入设备表，通过设备路径、描述符及逻辑设备关联精确匹配，不猜测设备。明确关联副屏的设备会被拒绝；早期 Android 没有此属性时按默认主屏处理。`activate()` 要求所有手指离屏，再执行 `EVIOCGRAB`。
+`TouchEngine.probe()` 只读取设备能力，`prepare()` 建立会话但不抓取触屏。预检要求唯一的物理触屏具有 `INPUT_PROP_DIRECT`、Type B 多点槽位与有效坐标轴。合流输出采用 scrcpy 的虚拟设备 0、触屏来源及主屏幕注入方式，不依赖厂商设备名称或 `dumpsys input` 文本格式。屏幕方向和尺寸变化仍需重新准备，物理设备断开立即释放。`activate()` 要求所有手指离屏，再执行 `EVIOCGRAB`。
 
 首次演奏时手指尚未抬起，助手每 25 毫秒重试，最多等待 500 毫秒；取消、暂停或释放会话立即终止等待。超时不会把设备标为不支持，抬手后仍可再次播放。状态中的 `waitingForFingers` 与 `activationWaitMs` 用于起播计时；权限、设备和注入错误不属于可重试的抬手状态。
 
@@ -49,4 +49,6 @@ cmake --build build/model-test
 ctest --test-dir build/model-test --output-on-failure
 ```
 
-实现依据：Linux [多点触摸协议](https://docs.kernel.org/input/multi-touch-protocol.html)、[输入事件规范](https://docs.kernel.org/input/event-codes.html)、AOSP [输入注入接口](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/hardware/input/InputManagerGlobal.java)及 [Android 16 指针容量](https://android.googlesource.com/platform/frameworks/native/+/android-16.0.0_r1/include/input/Input.h)。本模块独立编写，不包含第三方应用代码或二进制。
+接入方式对照 [Shizuku 官方 Demo](https://github.com/RikkaApps/Shizuku-API/blob/a27f6e4151ba7b39965ca47edb2bf0aeed7102e5/demo/src/main/java/rikka/shizuku/demo/DemoActivity.java)与 [Hail](https://github.com/aistra0528/Hail/blob/main/app/src/main/kotlin/com/aistra/hail/utils/HShizuku.kt)，触摸事件参数参考 [scrcpy Controller](https://github.com/Genymobile/scrcpy/blob/master/server/src/main/java/com/genymobile/scrcpy/control/Controller.java)。触点合流独立编写，未引入这些项目的业务代码或二进制；无线配对移植文件及许可见前述依赖说明。
+
+内核依据：Linux [多点触摸协议](https://docs.kernel.org/input/multi-touch-protocol.html)、[输入事件规范](https://docs.kernel.org/input/event-codes.html)、AOSP [输入注入接口](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/hardware/input/InputManagerGlobal.java)及 [Android 16 指针容量](https://android.googlesource.com/platform/frameworks/native/+/android-16.0.0_r1/include/input/Input.h)。

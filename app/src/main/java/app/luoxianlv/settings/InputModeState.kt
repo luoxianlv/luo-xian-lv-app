@@ -84,7 +84,7 @@ internal data class InputModeState(
                 !overlayGranted -> "先允许显示在其他应用上方，再选择输入模式。"
                 usable -> if (mode == "accessibility") "使用无障碍自动演奏" else "已连接，支持的手机可边操作边演奏"
                 mode == "shizuku" && !busy && !installed -> "安装后，按 Shizuku 内的指引启动。"
-                mode == "shizuku" && !busy && !binderAlive -> "打开 Shizuku，通过无线调试启动后再回来。"
+                mode == "shizuku" && !busy && !binderAlive -> "打开 Shizuku，按其中的指引启动后再回来。"
                 mode == "shizuku" && !busy && !binderReady -> "正在等待 Shizuku 完成连接，稍后会自动检查授权。"
                 mode == "shizuku" && !busy && permissionState == "unavailable" ->
                     "暂时无法读取授权状态，请确认 Shizuku 正常运行后重新检查。"

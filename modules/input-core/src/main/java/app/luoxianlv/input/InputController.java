@@ -43,6 +43,9 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor(
       task -> new Thread(task, "input-connection"));
+  private final java.util.concurrent.ExecutorService screenshots = Executors.newSingleThreadExecutor(
+      task -> new Thread(task, "input-screenshot"));
+  private final AtomicBoolean screenshotPending = new AtomicBoolean();
   private final CopyOnWriteArrayList<Runnable> observers = new CopyOnWriteArrayList<>();
   private final ConcurrentHashMap<Long, Request> requests = new ConcurrentHashMap<>();
   private final AtomicLong tokens = new AtomicLong();
@@ -143,7 +146,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
 
   /** 防止助手或未来独立输入进程执行宿主业务和统计初始化。 */
   public static boolean isHelperProcess(Context context) {
-    if (Process.myUid() == 2000) return true;
+    if (InputIdentity.privileged(Process.myUid())) return true;
     if (Build.VERSION.SDK_INT < 28) return false;
     String name = Application.getProcessName();
     return name != null && (name.endsWith(":touch_shell") || name.endsWith(":wireless_shell"));
@@ -433,8 +436,15 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       if (Shizuku.getVersion() < 13) {
         shizukuConnection.cancel(); message("请升级 Shizuku 至 v13 或更新版本"); return;
       }
-      if (Shizuku.getUid() != 2000) {
-        shizukuConnection.cancel(); message("请通过无线调试启动 Shizuku"); return;
+      int serverUid = Shizuku.getUid();
+      Bundle server = new Bundle(snapshot);
+      server.putInt("shizukuUid", serverUid);
+      publish(server);
+      if (!InputIdentity.privileged(serverUid)) {
+        shizukuConnection.cancel();
+        diagnose("核对 Shizuku 身份", null, "Shizuku 服务身份不可用，请重新启动 Shizuku 后连接");
+        HostDiagnostics.log(Log.WARN, TAG, "Shizuku 返回不支持的服务UID=" + serverUid, null);
+        return;
       }
       var installed = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
       int version = Build.VERSION.SDK_INT >= 28
@@ -498,7 +508,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       binding = true;
       message("正在建立 Shizuku 连接");
       HostDiagnostics.log(Log.INFO, TAG, "请求 Shizuku 输入助手：宿主UID=" + Process.myUid()
-          + " 安装版本=" + version + " 助手修订=" + revision, null);
+          + " ShizukuUID=" + serverUid + " 安装版本=" + version + " 助手修订=" + revision, null);
       stage = "启动 Shizuku 输入助手";
       Shizuku.bindUserService(serviceArgs, connection);
       ServiceConnection expected = connection;
@@ -545,6 +555,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
 
   private void attach(IInputService remote) {
     if (remote == null) { message("连接不可用，请重试"); return; }
+    final int expectedUid = SharedInput.SHIZUKU.equals(mode) ? snapshot.getInt("shizukuUid", -1) : 2000;
     String stage = "关联助手死亡监听";
     try {
       if (service != null && service != remote) disconnectService("输入连接已重连");
@@ -574,7 +585,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
             value.putString("mode", mode);
             value.putBoolean("connected", true);
             value.putBoolean("busy", false);
-            value.putBoolean("touchReady", copy.getInt("uid", -1) == 2000
+            value.putBoolean("touchReady", InputIdentity.matches(expectedUid, copy.getInt("uid", -1))
                 && copy.getBoolean("supported", false));
             boolean contactChanged = copy.containsKey("contactDecision")
                 && (!java.util.Objects.equals(copy.getString("contactDecision"), snapshot.getString("contactDecision"))
@@ -606,6 +617,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       });
       stage = "读取助手预检快照";
       Bundle initial = remote.inspect();
+      if (!InputIdentity.matches(expectedUid, initial.getInt("uid", -1)))
+        throw new SecurityException("输入助手与所选连接的身份不一致");
       Bundle value = new Bundle(snapshot);
       value.putAll(initial);
       value.putBoolean("connected", true);
@@ -627,6 +640,43 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   }
 
   @Override public SharedInput.Session openSession() { return new Lease(owners.incrementAndGet()); }
+
+  @Override public void screenshot(int displayId, app.luoxianlv.hot.contract.AccessibilityBinding.ScreenshotCallback callback) {
+    IInputService remote = service;
+    long epoch = generation;
+    if (closed || remote == null || displayId != 0 || !screenshotPending.compareAndSet(false, true)) {
+      main.post(() -> callback.failure(-1)); return;
+    }
+    try {
+      screenshots.execute(() -> {
+        android.graphics.Bitmap bitmap = null;
+        long began = SystemClock.elapsedRealtime();
+        try (var descriptor = remote.screenshot(displayId)) {
+          if (descriptor == null) throw new java.io.IOException("截图没有返回图像");
+          var options = new android.graphics.BitmapFactory.Options();
+          options.inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888;
+          bitmap = android.graphics.BitmapFactory.decodeFileDescriptor(descriptor.getFileDescriptor(), null, options);
+          if (bitmap == null || bitmap.getWidth() < 2 || bitmap.getHeight() < 2)
+            throw new java.io.IOException("截图图像无效");
+          var frame = new app.luoxianlv.hot.contract.AccessibilityBinding.Frame(bitmap);
+          bitmap = null;
+          HostDiagnostics.log(Log.INFO, "截图", "输入服务截图完成：尺寸=" + frame.width + "x" + frame.height
+              + "，耗时=" + (SystemClock.elapsedRealtime() - began) + "毫秒", null);
+          main.post(() -> {
+            screenshotPending.set(false);
+            if (closed || service != remote || generation != epoch) { frame.close(); callback.failure(-1); }
+            else callback.success(frame);
+          });
+        } catch (Exception | LinkageError failure) {
+          if (bitmap != null) bitmap.recycle();
+          HostDiagnostics.log(Log.WARN, "截图", "输入服务截图失败：类型=" + failure.getClass().getSimpleName(), null);
+          main.post(() -> { screenshotPending.set(false); callback.failure(-1); });
+        }
+      });
+    } catch (RejectedExecutionException stopped) {
+      screenshotPending.set(false); main.post(() -> callback.failure(-1));
+    }
+  }
 
   @Override public AutoCloseable press(float[] points, int durationMs, int width, int height,
       int rotation, SharedInput.Completion completion) {
@@ -848,6 +898,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   @Override public void close() {
     if (closed) return;
     closed = true;
+    screenshots.shutdown();
     if (overlayOps != null) try { overlayOps.stopWatchingMode(overlayWatcher); }
     catch (RuntimeException ignored) { }
     Shizuku.removeBinderReceivedListener(received);
