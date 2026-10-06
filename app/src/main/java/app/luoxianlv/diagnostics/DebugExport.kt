@@ -184,6 +184,7 @@ object DebugExport {
                     "physicalSlots",
                     "deviceMatchMethod",
                     "touchProtocol",
+                    "shizukuTransport",
                     "hardwareTrackingIds",
                     "hostUid",
                     "ownerUid",

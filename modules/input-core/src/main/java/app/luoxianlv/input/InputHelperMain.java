@@ -25,7 +25,7 @@ public final class InputHelperMain {
     if (Process.myUid() != 2000 || arguments.length != 3
         || !arguments[0].matches("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)+")
         || !arguments[1].matches("[0-9a-f]{64}") || !arguments[2].matches("[0-9]{5,10}")) {
-      Log.e("落弦律无线助手", "助手启动失败：阶段=入口身份；类型=SecurityException");
+      Log.e("落弦律输入助手", "助手启动失败：阶段=入口身份；类型=SecurityException");
       System.exit(1);
       return;
     }
@@ -83,7 +83,7 @@ public final class InputHelperMain {
         if (!"com.android.shell".equals(shell.getAttributionSource().getPackageName()))
           throw new SecurityException("助手调用归属不匹配");
       }
-      Log.i("落弦律无线助手", "助手启动：阶段=shell 调用归属已核对");
+      Log.i("落弦律输入助手", "助手启动：阶段=shell 调用归属已核对");
       stage = "交付宿主连接";
       Bundle reply = deliverToHost(shell, arguments[0] + ".input.bridge", userId, arguments[1], extras);
       stage = "接收宿主租约";
@@ -116,10 +116,10 @@ public final class InputHelperMain {
       });
       Looper.loop();
     } catch (Throwable failure) {
-      Log.e("落弦律无线助手", "助手启动失败：阶段=" + stage + "；类型=" + safeFailureType(failure));
+      Log.e("落弦律输入助手", "助手启动失败：阶段=" + stage + "；类型=" + safeFailureType(failure));
       if (service != null) service.shutdownFromHelper();
       // 不输出启动参数、令牌或本机凭据。
-      System.err.println("无线输入助手启动失败");
+      System.err.println("输入助手启动失败");
       System.exit(1);
     }
   }
@@ -149,7 +149,7 @@ public final class InputHelperMain {
       if (holder == null) throw new IllegalStateException("宿主连接入口不可用");
       Object provider = Class.forName("android.app.ContentProviderHolder").getField("provider").get(holder);
       if (provider == null) throw new IllegalStateException("宿主连接入口未就绪");
-      Log.i("落弦律无线助手", "助手启动：阶段=已获得外部桥接入口");
+      Log.i("落弦律输入助手", "助手启动：阶段=已获得外部桥接入口");
       stage = "调用外部桥接入口";
       Class<?> providerClass = Class.forName("android.content.IContentProvider");
       if (Build.VERSION.SDK_INT >= 31) {
@@ -162,13 +162,13 @@ public final class InputHelperMain {
       return (Bundle) call.invoke(provider, callingContext.getPackageName(), null, authority, "connect", nonce, extras);
     } catch (Exception failure) {
       primaryFailure = failure;
-      Log.e("落弦律无线助手", "外部交付失败：阶段=" + stage + "；类型=" + safeFailureType(failure));
+      Log.e("落弦律输入助手", "外部交付失败：阶段=" + stage + "；类型=" + safeFailureType(failure));
       throw failure;
     } finally {
       if (holder != null) {
         try { release.invoke(manager, authority, token, userId); }
         catch (Exception failure) {
-          Log.e("落弦律无线助手", "外部交付失败：阶段=释放外部桥接入口；类型=" + safeFailureType(failure));
+          Log.e("落弦律输入助手", "外部交付失败：阶段=释放外部桥接入口；类型=" + safeFailureType(failure));
           if (primaryFailure != null) primaryFailure.addSuppressed(failure);
           else throw failure;
         }

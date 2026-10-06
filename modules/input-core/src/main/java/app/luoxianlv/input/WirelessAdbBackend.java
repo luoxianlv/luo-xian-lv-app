@@ -420,11 +420,8 @@ public final class WirelessAdbBackend implements InputController.WirelessBackend
           throw new SecurityException("宿主安装信息异常");
         Attempt selected = new Attempt(epoch);
         attempt = selected;
-        String command = "if ! /system/bin/toybox nohup /system/bin/toybox true >/dev/null 2>&1 || ! /system/bin/toybox setsid /system/bin/toybox true >/dev/null 2>&1; "
-            + "then echo LXL_BOOTSTRAP_UNSUPPORTED; exit 1; fi; trap '' HUP; CLASSPATH=" + quote(host.sourceDir) + " LD_LIBRARY_PATH=" + quote(host.nativeLibraryDir)
-            + " /system/bin/toybox nohup /system/bin/toybox setsid /system/bin/app_process /system/bin --nice-name=" + quote(context.getPackageName() + ":wireless_shell")
-            + " app.luoxianlv.input.InputHelperMain " + quote(context.getPackageName()) + " " + quote(selected.token)
-            + " " + quote(Integer.toString(host.uid)) + " </dev/null >/dev/null 2>&1 &";
+        String command = ShellHelperCommand.build(host.sourceDir, host.nativeLibraryDir,
+            context.getPackageName(), host.uid, selected.token, "wireless_shell", true);
         stage = "打开助手启动通道";
         helperStream = adb.open("shell:" + command);
         watchHelper(helperStream, selected);
@@ -673,7 +670,6 @@ public final class WirelessAdbBackend implements InputController.WirelessBackend
 
   private boolean validEpoch(long epoch) { return !closed && epoch == generation.get(); }
   private static boolean validPort(int port) { return port > 0 && port <= 65535; }
-  static String quote(String value) { return "'" + value.replace("'", "'\\''") + "'"; }
   private static void enableTlsExporter() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
       throw new UnsupportedOperationException("无线调试需要 Android 11 或更新版本");

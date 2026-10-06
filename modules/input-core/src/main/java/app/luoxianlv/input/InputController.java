@@ -46,6 +46,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private final java.util.concurrent.ExecutorService screenshots = Executors.newSingleThreadExecutor(
       task -> new Thread(task, "input-screenshot"));
   private final BoundedInputRpc rpc = new BoundedInputRpc(2500);
+  // 旧助手冻结时，不能占满 Shizuku 授权、启动和清理使用的 RPC 通道。
+  private final BoundedInputRpc shizukuRpc = new BoundedInputRpc(2500);
   private final AtomicBoolean screenshotPending = new AtomicBoolean();
   private final CopyOnWriteArrayList<Runnable> observers = new CopyOnWriteArrayList<>();
   private final ConcurrentHashMap<Long, Request> requests = new ConcurrentHashMap<>();
@@ -70,6 +72,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private IBinder.DeathRecipient serviceDeath;
   private ServiceConnection connection;
   private Shizuku.UserServiceArgs serviceArgs;
+  private volatile ShizukuShellSession shellSession;
   private final ShizukuConnectionPolicy shizukuConnection = new ShizukuConnectionPolicy();
   private IBinder shizukuSource;
   private boolean shizukuReady;
@@ -427,7 +430,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   // SDK 的 checkSelfPermission 会缓存已授权状态；直接查询官方 AIDL 及时发现管理器撤权。
   private boolean freshPermission() throws Exception {
     IBinder binder = Shizuku.getBinder();
-    return binder != null && rpc.call(() -> IShizukuService.Stub.asInterface(binder).checkSelfPermission());
+    return binder != null && shizukuRpc.call(() -> IShizukuService.Stub.asInterface(binder).checkSelfPermission());
   }
 
   private void bindShizuku() {
@@ -435,10 +438,10 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     long attempt = shizukuConnection.start(SystemClock.elapsedRealtime());
     if (attempt == 0) return;
     try {
-      if (rpc.call(Shizuku::getVersion) < 13) {
+      if (shizukuRpc.call(Shizuku::getVersion) < 13) {
         shizukuConnection.cancel(); message("请升级 Shizuku 至 v13 或更新版本"); return;
       }
-      int serverUid = rpc.call(Shizuku::getUid);
+      int serverUid = shizukuRpc.call(Shizuku::getUid);
       Bundle server = new Bundle(snapshot);
       server.putInt("shizukuUid", serverUid);
       publish(server);
@@ -457,10 +460,6 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       long installedAt = installed.lastUpdateTime;
       long selectedGeneration = ++generation;
       IBinder source = shizukuSource;
-      serviceArgs = new Shizuku.UserServiceArgs(new ComponentName(context, InputUserService.class))
-          .tag(ShizukuConnectionPolicy.serviceTag(Process.myUid(), Process.myPid(), revision, selectedGeneration))
-          .version(revision).daemon(false)
-          .processNameSuffix("touch_shell");
       Bundle installation = new Bundle(snapshot);
       installation.putInt("hostUid", Process.myUid());
       installation.putInt("serviceRevision", revision);
@@ -469,7 +468,16 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       installation.putString("errorStage", "");
       installation.putString("errorType", "");
       installation.putInt("connectionAttempt", shizukuConnection.attempts());
+      installation.putString("shizukuTransport", serverUid == 2000 ? "shell-process" : "user-service");
       publish(installation);
+      if (serverUid == 2000) {
+        bindShizukuShell(attempt, selectedGeneration, source, version, installedAt, revision);
+        return;
+      }
+      serviceArgs = new Shizuku.UserServiceArgs(new ComponentName(context, InputUserService.class))
+          .tag(ShizukuConnectionPolicy.serviceTag(Process.myUid(), Process.myPid(), revision, selectedGeneration))
+          .version(revision).daemon(false)
+          .processNameSuffix("touch_shell");
       connection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
           enqueueShizukuCallback(() -> {
@@ -514,7 +522,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       stage = "启动 Shizuku 输入助手";
       Shizuku.UserServiceArgs pendingArgs = serviceArgs;
       ServiceConnection pendingConnection = connection;
-      rpc.call(() -> { Shizuku.bindUserService(pendingArgs, pendingConnection); return null; });
+      shizukuRpc.call(() -> { Shizuku.bindUserService(pendingArgs, pendingConnection); return null; });
       ServiceConnection expected = connection;
       worker.schedule(() -> {
         if (!closed && binding && selectedGeneration == generation && connection == expected
@@ -525,6 +533,46 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     } catch (Exception error) {
       failShizuku(stage, error);
     }
+  }
+
+  /** shell 路径复用无线调试的输入服务；仅启动通道改为已授权的 Shizuku 服务。 */
+  private void bindShizukuShell(long attempt, long epoch, IBinder source, int version,
+      long installedAt, int revision) throws Exception {
+    ShizukuShellSession pending = new ShizukuShellSession(shizukuRpc, (session, remote) ->
+        enqueueShizukuCallback(() -> {
+          if (closed || shellSession != session || epoch != generation || !binding
+              || !wantConnection || !SharedInput.SHIZUKU.equals(mode)
+              || source != shizukuSource || source != Shizuku.getBinder()) return;
+          try {
+            var current = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            long code = Build.VERSION.SDK_INT >= 28 ? current.getLongVersionCode() : current.versionCode;
+            if (code != version || current.lastUpdateTime != installedAt)
+              throw new SecurityException("连接期间安装修订发生变化");
+            if (!freshPermission()) throw new SecurityException("Shizuku 授权已失效");
+            if (remote == null || !remote.asBinder().pingBinder())
+              throw new IllegalStateException("输入助手未返回有效连接");
+            if (!shizukuConnection.connected(attempt, SystemClock.elapsedRealtime())) return;
+            binding = false;
+            HostDiagnostics.log(Log.INFO, TAG, "已收到 Shizuku 后台进程连接，开始核对身份和触屏", null);
+            attach(remote);
+          } catch (Exception error) { failShizuku("核对 Shizuku 后台连接", error); }
+        }));
+    shellSession = pending;
+    binding = true;
+    message("正在建立 Shizuku 连接");
+    HostDiagnostics.log(Log.INFO, TAG, "请求 Shizuku 后台进程：宿主UID=" + Process.myUid()
+        + " ShizukuUID=2000 安装版本=" + version + " 助手修订=" + revision, null);
+    pending.start(context, IShizukuService.Stub.asInterface(source));
+    HostDiagnostics.log(Log.INFO, TAG, "Shizuku 启动指令已发送，等待受保护的连接交付", null);
+    worker.schedule(() -> {
+      if (!closed && binding && shellSession == pending && epoch == generation && pending.expired())
+        failShizuku("等待 Shizuku 后台进程交付", null);
+    }, ShizukuShellSession.START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+  }
+
+  android.os.IBinder offerShizukuHelper(String token, IInputService remote) {
+    ShizukuShellSession pending = shellSession;
+    return pending == null ? null : pending.offer(token, remote);
   }
 
   private void failShizuku(String stage, Throwable error) {
@@ -802,6 +850,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     ++generation;
     binding = false;
     shizukuConnection.invalidate();
+    ShizukuShellSession previousShell = shellSession;
+    shellSession = null;
     IInputService old = service;
     if (old != null && ownership.owner() != null) releaseOwner(ownership.owner());
     service = null;
@@ -811,15 +861,16 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       else try { rpc.call(() -> { old.release(); return null; }); } catch (Exception ignored) { }
     }
     serviceDeath = null;
+    if (previousShell != null) previousShell.close();
     Shizuku.UserServiceArgs previousArgs = serviceArgs;
     ServiceConnection previousConnection = connection;
     serviceArgs = null;
     connection = null;
     if (previousArgs != null && previousConnection != null) {
-      try { rpc.call(() -> { Shizuku.unbindUserService(previousArgs, previousConnection, true); return null; }); }
+      // 先移除本地订阅，再删除远端记录，与 GKD 的清理顺序一致。
+      try { shizukuRpc.call(() -> { Shizuku.unbindUserService(previousArgs, previousConnection, false); return null; }); }
       catch (Exception ignored) { }
-      // remove=true 只清远端；启动失败时没有死亡回调，仍需删除 SDK 本地订阅。
-      try { rpc.call(() -> { Shizuku.unbindUserService(previousArgs, previousConnection, false); return null; }); }
+      try { shizukuRpc.call(() -> { Shizuku.unbindUserService(previousArgs, previousConnection, true); return null; }); }
       catch (Exception ignored) { }
     }
     for (Long token : requests.keySet()) complete(token, false, message);
@@ -917,6 +968,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       if (wireless != null) wireless.close();
       observers.clear();
       rpc.close();
+      shizukuRpc.close();
       if (ownership.owner() == null) worker.shutdown();
     });
   }

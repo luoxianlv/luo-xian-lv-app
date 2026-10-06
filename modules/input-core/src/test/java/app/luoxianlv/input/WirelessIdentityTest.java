@@ -20,8 +20,8 @@ public class WirelessIdentityTest {
   }
 
   @Test public void shellPathsAreQuotedAsSingleArguments() {
-    assertEquals("'/data/app/normal/base.apk'", WirelessAdbBackend.quote("/data/app/normal/base.apk"));
-    assertEquals("'a'\\''b'", WirelessAdbBackend.quote("a'b"));
-    assertEquals("'$(id); anything'", WirelessAdbBackend.quote("$(id); anything"));
+    assertEquals("'/data/app/normal/base.apk'", ShellHelperCommand.quote("/data/app/normal/base.apk"));
+    assertEquals("'a'\\''b'", ShellHelperCommand.quote("a'b"));
+    assertEquals("'$(id); anything'", ShellHelperCommand.quote("$(id); anything"));
   }
 }

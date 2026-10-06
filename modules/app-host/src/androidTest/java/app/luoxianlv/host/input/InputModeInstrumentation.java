@@ -44,6 +44,7 @@ public final class InputModeInstrumentation extends Instrumentation {
   private boolean fixture;
   private boolean floatingWithoutAccessibility;
   private boolean frozenConnection;
+  private boolean frozenManager;
   private boolean notificationPair, pairedSaved, previousPaired, previousPairedPresent;
   private boolean wirelessOffline, networkChanged, startupAuto;
   private boolean previousWifi;
@@ -64,6 +65,7 @@ public final class InputModeInstrumentation extends Instrumentation {
     fixture = arguments != null && "true".equals(arguments.getString("fixture"));
     floatingWithoutAccessibility = arguments != null && "true".equals(arguments.getString("floatingWithoutAccessibility"));
     frozenConnection = arguments != null && "true".equals(arguments.getString("frozenConnection"));
+    frozenManager = arguments != null && "true".equals(arguments.getString("frozenManager"));
     notificationPair = arguments != null && "true".equals(arguments.getString("notificationPair"));
     wirelessOffline = arguments != null && "true".equals(arguments.getString("wirelessOffline"));
     startupAuto = arguments != null && "true".equals(arguments.getString("startupAuto"));
@@ -108,6 +110,7 @@ public final class InputModeInstrumentation extends Instrumentation {
             "mergedMode 必须为 shizuku 或 wireless");
         automation = getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
         checkMerged();
+        if (frozenManager) ShizukuManagerFrozenChecks.run(this, automation, bridge);
         if (frozenConnection) ShizukuFrozenChecks.run(this, automation, bridge);
         checkScreenshot();
         app.luoxianlv.host.FixedInputChecks.run(this);

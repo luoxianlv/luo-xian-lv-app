@@ -16,12 +16,12 @@ public final class InputBridgeProvider extends ContentProvider {
   @Override public boolean onCreate() { return true; }
 
   @Override public Bundle call(String method, String argument, Bundle extras) {
-    Log.i("落弦律无线桥接", "连接交付：阶段=进入受保护入口");
+    Log.i("落弦律输入桥接", "连接交付：阶段=进入受保护入口");
     if (Binder.getCallingUid() != 2000 || getContext() == null) {
       rejected("调用身份校验", "SecurityException");
-      throw new SecurityException("仅允许本机无线调试助手");
+      throw new SecurityException("仅允许已授权的 shell 输入助手");
     }
-    try { getContext().enforceCallingPermission("android.permission.DUMP", "缺少无线调试身份"); }
+    try { getContext().enforceCallingPermission("android.permission.DUMP", "缺少 shell 输入身份"); }
     catch (SecurityException failure) { rejected("系统授权校验", "SecurityException"); throw failure; }
     if (!"connect".equals(method) || extras == null) {
       rejected("交付协议校验", "IllegalArgumentException");
@@ -32,20 +32,28 @@ public final class InputBridgeProvider extends ContentProvider {
       rejected("助手 Binder 校验", "IllegalArgumentException");
       throw new IllegalArgumentException("输入助手未就绪");
     }
+    IInputService remote = IInputService.Stub.asInterface(binder);
+    InputController controller = InputController.current();
+    IBinder shizukuLease = controller == null ? null : controller.offerShizukuHelper(argument, remote);
+    if (shizukuLease != null) {
+      Bundle response = new Bundle();
+      response.putBinder("lease", shizukuLease);
+      return response;
+    }
     WirelessAdbBackend backend = WirelessAdbBackend.current();
     if (backend == null) {
       rejected("宿主连接状态校验", "SecurityException");
-      throw new SecurityException("无线连接未发起");
+      throw new SecurityException("输入连接未发起");
     }
     Bundle response = new Bundle();
-    try { response.putBinder("lease", backend.offerHelper(argument, IInputService.Stub.asInterface(binder))); }
+    try { response.putBinder("lease", backend.offerHelper(argument, remote)); }
     catch (SecurityException failure) { rejected("一次性租约校验", "SecurityException"); throw failure; }
-    Log.i("落弦律无线桥接", "连接交付：阶段=租约已授予");
+    Log.i("落弦律输入桥接", "连接交付：阶段=租约已授予");
     return response;
   }
 
   private static void rejected(String stage, String type) {
-    Log.e("落弦律无线桥接", "连接交付被拒：阶段=" + stage + "；类型=" + type);
+    Log.e("落弦律输入桥接", "连接交付被拒：阶段=" + stage + "；类型=" + type);
   }
 
   static final class Lease extends Binder {
