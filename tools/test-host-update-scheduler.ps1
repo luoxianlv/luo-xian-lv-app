@@ -35,13 +35,14 @@ package android.os;
 import java.util.*;
 public class Handler {
   private static final List<Runnable> TASKS=new ArrayList<>();
+  public static int removeCalls;
   public Handler(Looper loop) {}
   public boolean post(Runnable task) { TASKS.add(task); return true; }
   public boolean postDelayed(Runnable task,long delay) { return post(task); }
-  public void removeCallbacks(Runnable task) { TASKS.removeIf(value -> value==task); }
+  public void removeCallbacks(Runnable task) { removeCalls++; TASKS.removeIf(value -> value==task); }
   public void removeCallbacksAndMessages(Object token) { reset(); }
   public static int count() { return TASKS.size(); }
-  public static void reset() { TASKS.clear(); }
+  public static void reset() { TASKS.clear(); removeCalls=0; }
   public static void drain() { List<Runnable> tasks=new ArrayList<>(TASKS); TASKS.clear(); for(Runnable task:tasks) task.run(); }
 }
 '@

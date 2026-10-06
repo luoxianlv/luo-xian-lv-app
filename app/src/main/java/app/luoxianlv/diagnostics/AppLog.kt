@@ -100,47 +100,50 @@ object AppLog {
         error: Throwable?,
         priority: Int,
     ) {
-        val detail = if (error == null) message else "$message\n${Log.getStackTraceString(error)}"
-        Log.println(priority, tag, detail)
-        append("[$level][$tag] $detail")
-    }
-
-    private fun append(message: String) {
-        val d = dir ?: return
+        val d = dir
         val at = Date()
         enqueue {
-            synchronized(lock) {
-                try {
-                    val file = File(d, "play-debug.log")
-                    FileOutputStream(file, true).use {
-                        it.write(
-                            (stamp.format(at) +
-                                    " " +
-                                    message +
-                                    "\n" +
-                                    dropped
-                                        .getAndSet(0)
-                                        .takeIf { count -> count > 0 }
-                                        ?.let { count ->
-                                            "${stamp.format(at)} [警告][日志] 因队列繁忙或写入失败，丢弃 $count 条诊断任务\n"
-                                        }
-                                        .orEmpty())
-                                .toByteArray(Charsets.UTF_8)
-                        )
-                    }
-                    if (file.length() > 8L * 1024 * 1024) {
-                        File(d, "play-debug.log.1").delete()
-                        file.renameTo(File(d, "play-debug.log.1"))
-                    }
-                    val now = android.os.SystemClock.elapsedRealtime()
-                    if (now - lastTrim >= 30000) {
-                        trim()
-                        lastTrim = now
-                    }
-                } catch (error: Exception) {
-                    dropped.incrementAndGet()
-                    Log.w("落弦律日志", "日志文件写入失败", error)
+            val detail =
+                if (error == null) message else "$message\n${Log.getStackTraceString(error)}"
+            Log.println(priority, tag, detail)
+            // 同一队列任务完成系统日志和文件写入，flush 屏障才能覆盖完整记录。
+            if (d != null) append(d, at, "[$level][$tag] $detail")
+        }
+    }
+
+    /** 仅由诊断队列调用，不再次入队，以免导出屏障越过文件写入。 */
+    private fun append(d: File, at: Date, message: String) {
+        synchronized(lock) {
+            try {
+                val file = File(d, "play-debug.log")
+                FileOutputStream(file, true).use {
+                    it.write(
+                        (stamp.format(at) +
+                                " " +
+                                message +
+                                "\n" +
+                                dropped
+                                    .getAndSet(0)
+                                    .takeIf { count -> count > 0 }
+                                    ?.let { count ->
+                                        "${stamp.format(at)} [警告][日志] 因队列繁忙或写入失败，丢弃 $count 条诊断任务\n"
+                                    }
+                                    .orEmpty())
+                            .toByteArray(Charsets.UTF_8)
+                    )
                 }
+                if (file.length() > 8L * 1024 * 1024) {
+                    File(d, "play-debug.log.1").delete()
+                    file.renameTo(File(d, "play-debug.log.1"))
+                }
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastTrim >= 30000) {
+                    trim()
+                    lastTrim = now
+                }
+            } catch (error: Exception) {
+                dropped.incrementAndGet()
+                Log.w("落弦律日志", "日志文件写入失败", error)
             }
         }
     }
