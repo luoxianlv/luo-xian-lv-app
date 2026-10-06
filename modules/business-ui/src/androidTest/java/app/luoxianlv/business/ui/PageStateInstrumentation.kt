@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Parcelable
 import android.util.SparseArray
 import android.view.AbsSavedState
+import androidx.compose.foundation.lazy.layout.getDefaultLazyLayoutKey
 import androidx.compose.runtime.*
 
 /** 在 Android 实际 Bundle/Compose 上验证类型、边界和状态重建，不依赖 JVM 空壳。 */
@@ -21,7 +22,10 @@ class PageStateInstrumentation : Instrumentation() {
         try {
             primitiveArrays()
             composeState()
+            uuidState()
+            lazyKeys()
             viewState()
+            LazyPageStateChecks.run(this)
             DialogVisibilityChecks.run(this)
             rejects {
                 PageSavedState.encode(Bundle().apply { putString("large", "中".repeat(30001)) })
@@ -35,12 +39,13 @@ class PageStateInstrumentation : Instrumentation() {
             rejects { PageSavedState.decode("[2,[\"bundle\",[]]]") }
             rejects { PageSavedState.decode("[".repeat(4000) + "]".repeat(4000)) }
             rejects { PageSavedState.decode("[1,[\"bundle\",[[\"a\",[\"float\",\"NaN\"]]]]]") }
+            rejects { PageSavedState.decode("[1,[\"bundle\",[[\"a\",[\"uuid\",\"1-1-1-1-1\"]]]]]") }
             rejects {
                 PageSavedState.decode("[1,[\"bundle\",[[\"a\",[\"int\",1]],[\"a\",[\"int\",2]]]]]")
             }
             report.putString(
                 "stream",
-                "页面状态通过：基础数组类型、空值与中文、Compose 与原生控件基础状态、深度/数量/体积限制、非法对象与版本拒绝；候选预热与后台分页不显示弹窗，未完成输入仍阻止替换。\n",
+                "页面状态通过：基础值、默认列表键与实际列表输入恢复、Compose及原生控件状态、深度/体积限制和未知对象拒绝；候选预热及后台分页不显示弹窗。\n",
             )
             finish(-1, report)
         } catch (error: Throwable) {
@@ -78,6 +83,17 @@ class PageStateInstrumentation : Instrumentation() {
         )
         check((restored.getParcelableArray("bundles")!![0] as Bundle).getString("a") == "值")
         check(restored.getParcelableArray("uris")!![1] == null)
+    }
+
+    private fun uuidState() {
+        val id = java.util.UUID.fromString("5be8f746-8d84-4691-a2d3-af5f95ecc3e2")
+        val source = Bundle().apply {
+            putSerializable("navigation-id", id)
+            putSerializable("nested", arrayListOf(id, linkedMapOf(id to "页面")))
+        }
+        val restored = PageSavedState.decode(PageSavedState.encode(source))
+        check(restored.getSerializable("navigation-id") == id)
+        check(restored.getSerializable("nested") == source.getSerializable("nested"))
     }
 
     private fun composeState() {
@@ -142,6 +158,32 @@ class PageStateInstrumentation : Instrumentation() {
         rejects {
             PageSavedState.decode("""[1,["bundle",[["a",["sparse",[[2147483648,["null"]]]]]]]]""")
         }
+    }
+
+    private fun lazyKeys() {
+        val generated = getDefaultLazyLayoutKey(7)
+        val original =
+            Bundle().apply {
+                putParcelable("direct", generated as Parcelable)
+                putSerializable(
+                    "nested",
+                    arrayListOf(linkedMapOf(generated to "列表输入", 7 to "显式整数键")),
+                )
+            }
+        val encoded = PageSavedState.encode(original)
+        check(!encoded.contains("DefaultLazyKey")) { "默认列表键泄露了实现类" }
+        val restored = PageSavedState.decode(encoded)
+        check(restored.get("direct") == getDefaultLazyLayoutKey(7))
+        val map = (restored.get("nested") as List<*>)[0] as Map<*, *>
+        check(map[getDefaultLazyLayoutKey(7)] == "列表输入" && map[7] == "显式整数键")
+        rejects {
+            PageSavedState.encode(
+                Bundle().apply { putParcelable("bad", getDefaultLazyLayoutKey(-1) as Parcelable) }
+            )
+        }
+        rejects { PageSavedState.decode("""[1,["bundle",[["a",["lazy-key",-1]]]]]""") }
+        rejects { PageSavedState.decode("""[1,["bundle",[["a",["lazy-key",2147483648]]]]]""") }
+        rejects { PageSavedState.encode(Bundle().apply { putParcelable("foreign", Intent()) }) }
     }
 
     private fun rejects(block: () -> Unit) {

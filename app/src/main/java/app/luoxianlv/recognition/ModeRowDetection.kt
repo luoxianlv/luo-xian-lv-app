@@ -2,7 +2,6 @@ package app.luoxianlv.recognition
 
 import app.luoxianlv.recognition.GlyphDetection.coherent
 import app.luoxianlv.recognition.GlyphDetection.glyphs
-import app.luoxianlv.recognition.GlyphDetection.localMean
 import app.luoxianlv.recognition.GlyphDetection.modeLabels
 import kotlin.math.abs
 import kotlin.math.max
@@ -18,39 +17,47 @@ internal fun locateModeText(
     spacing: Float,
     noteH: Float,
     noteY: Float,
+    integral: LuminanceIntegral,
+    stack: IntArray,
 ): List<Label>? {
     val top = max(0, (y - .45f * spacing).toInt())
     val bottom = min(h - 1, (y + .45f * spacing).toInt())
-    val fineMean = localMean(luma, w, h, 3)
+    val left = max(0, (xs.first() - .4f * spacing).toInt())
+    val right = min(w - 1, (xs.last() + .4f * spacing).toInt())
+    if (left > right || top > bottom) return null
+    val fineMean by lazy { integral.mean(3, left, right + 1, top, bottom + 1) }
+    val mask = BooleanArray(luma.size)
     val evidence = mutableListOf<Label>()
     for (threshold in listOf(200f, 175f, 145f, 115f, 12f, 20f, 30f)) {
-        val mask = BooleanArray(luma.size)
         for (yy in top..bottom) {
-            for (xx in
-                max(0, (xs.first() - .4f * spacing).toInt())..min(
-                        w - 1,
-                        (xs.last() + .4f * spacing).toInt(),
-                    )) {
+            for (xx in left..right) {
                 val i = yy * w + xx
                 mask[i] =
                     if (threshold < 100f) luma[i] > 100f && luma[i] - fineMean[i] > threshold
                     else luma[i] > threshold
             }
-            var start = 0
-            while (start < w) {
+            var start = left
+            while (start <= right) {
                 if (!mask[yy * w + start]) {
                     start++
                     continue
                 }
                 var end = start + 1
-                while (end < w && mask[yy * w + end]) end++
+                while (end <= right && mask[yy * w + end]) end++
                 if (end - start > noteH * 2.5f) {
                     for (xx in start until end) mask[yy * w + xx] = false
                 }
                 start = end
             }
         }
-        val candidates = modeLabels(glyphs(mask, w, h), noteY, noteH, y, spacing)
+        val candidates =
+            modeLabels(
+                glyphs(mask, w, h, left, right + 1, top, bottom + 1, stack),
+                noteY,
+                noteH,
+                y,
+                spacing,
+            )
         evidence.addAll(candidates)
         for (seed in evidence) {
             val row = xs.map { x ->

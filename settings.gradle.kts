@@ -23,7 +23,7 @@ dependencyResolutionManagement {
 rootProject.name = "LuoXianLv"
 include(":app")
 // 项目 ID 保持稳定，物理目录按正式模块与测试应用归组。
-listOf("app-host", "app-runtime", "app-business", "hot-core", "hot-contract", "business-ui", "update-core")
+listOf("app-host", "app-runtime", "app-business", "hot-core", "hot-contract", "business-ui", "update-core", "input-core")
     .forEach { name ->
         include(":$name")
         project(":$name").projectDir = file("modules/$name")

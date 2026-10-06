@@ -76,3 +76,5 @@ python tools/format_kotlin.py --check
 ## 许可证与使用条款
 
 源码采用 [GNU AGPL-3.0](LICENSE)。使用声明与相关条款见[免责声明与使用条款](docs/use-terms.md)。
+
+输入模式使用的第三方依赖、许可及本地修改见[开源声明](modules/input-core/third_party/NOTICE.md)。

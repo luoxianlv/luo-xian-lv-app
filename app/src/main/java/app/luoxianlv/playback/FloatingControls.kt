@@ -87,7 +87,8 @@ class FloatingControls(private val service: PlaybackSession) {
                 panelPrewarm != null
 
     val released
-        get() = destroyed && scope.coroutineContext[Job]?.isCompleted == true
+        get() =
+            destroyed && scope.coroutineContext[Job]?.isCompleted == true && touchMarker.released
 
     // 选歌窗打开时面板先退出，关闭后恢复（两者不共存）。
     private var panelHiddenForPicker = false
@@ -163,6 +164,7 @@ class FloatingControls(private val service: PlaybackSession) {
         displayRequested = false
         dockAnimator?.cancel()
         dockAnimator = null
+        touchMarker.close()
         // removeView 可能抛（视图已被系统移除）。这里必须吞掉异常并把字段清干净：
         // 一旦抛出去，root 会停在非空值上，之后 show() 会因为 root != null 永远直接返回，
         // 悬浮窗就再也打不开了。
@@ -187,6 +189,7 @@ class FloatingControls(private val service: PlaybackSession) {
         val geometry = service.floatingGeometry()
         if (geometry == displayedGeometry || geometry == pendingGeometry) return
         revision++
+        touchMarker.close()
         cancelPanelPrewarm()
         pendingGeometry = geometry
         handler.removeCallbacks(applyGeometry)
@@ -652,5 +655,7 @@ class FloatingControls(private val service: PlaybackSession) {
         }
     }
 
-    fun mark(x: Float, y: Float) = touchMarker.show(x, y)
+    fun mark(x: Float, y: Float) {
+        if (!destroyed && displayRequested) touchMarker.show(x, y)
+    }
 }

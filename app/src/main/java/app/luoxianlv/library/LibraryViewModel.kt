@@ -6,6 +6,8 @@ import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.luoxianlv.app.BusinessJobs
+import app.luoxianlv.app.PermissionSettings
+import app.luoxianlv.hot.contract.SharedInput
 import app.luoxianlv.playback.PlaybackConnection
 import app.luoxianlv.playback.syncSelectionToService
 import app.luoxianlv.update.MidiCoreFixer
@@ -55,6 +57,9 @@ data class ServiceStatus(
     val floatingVisible: Boolean = false,
     val error: String? = null,
     val activeSongId: String = "",
+    val overlayGranted: Boolean = false,
+    val inputMode: String = SharedInput.ACCESSIBILITY,
+    val inputReady: Boolean = false,
 )
 
 data class LibraryUiState(
@@ -67,6 +72,9 @@ data class LibraryUiState(
     val floatingEnabled: Boolean = true,
     val service: ServiceStatus = ServiceStatus(),
     val showAccessibilityPrompt: Boolean = false,
+    val showOverlayPrompt: Boolean = false,
+    val showInputModePrompt: Boolean = false,
+    val startingFloating: Boolean = false,
     val error: String? = null,
     /** 一次性提示（删除 / 另存为结果），消费后置空 */
     val notice: String? = null,
@@ -111,6 +119,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     private val _local = MutableStateFlow(LibraryUiState())
     private var refreshJob: Job? = null
     private val libraryMutex = Mutex()
+    private var floatingStartJob: Job? = null
+    private var floatingStartGeneration = 0L
 
     /**
      * 无障碍服务状态轮询。
@@ -143,14 +153,25 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun readServiceStatus(): ServiceStatus {
         val service = PlaybackConnection.instance
+        val input = runCatching { SharedInput.current()?.state() }.getOrNull()
+        val mode = input?.getString("mode", SharedInput.ACCESSIBILITY) ?: SharedInput.ACCESSIBILITY
+        val (overlay, accessibility) =
+            BusinessJobs.io {
+                PermissionSettings.overlayGranted(getApplication()) to accessibilityIsEnabled()
+            }
         return ServiceStatus(
             connected = service != null,
-            // 服务已经在跑就必然已开启，省掉一次系统查询
-            accessibilityEnabled = service != null || BusinessJobs.io { accessibilityIsEnabled() },
+            // 播放宿主独立于无障碍，连接在线不能冒充无障碍已经授权。
+            accessibilityEnabled = accessibility,
             floatingVisible = service?.floatingVisible == true,
             error = service?.error,
             // 连接在业务初始化后发布；这里只取曲目 ID，不传递或解析谱面对象。
             activeSongId = runCatching { service?.songId.orEmpty() }.getOrDefault(""),
+            overlayGranted = overlay,
+            inputMode = mode,
+            inputReady =
+                if (mode == SharedInput.ACCESSIBILITY) accessibility
+                else input?.getBoolean("connected") == true && input.getBoolean("touchReady"),
         )
     }
 
@@ -204,25 +225,123 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
      * 老实现是单向的 startFloating()：窗口已经跑着时再点只会重复 show()， 同一个按钮没有任何办法把它关掉。
      */
     fun toggleFloating() {
+        if (_local.value.startingFloating) {
+            setFloatingEnabled(false)
+            return
+        }
         setFloatingEnabled(PlaybackConnection.instance?.floatingVisible != true)
     }
 
     /**
      * 打开 / 关闭悬浮窗，并记住用户意图。
      *
-     * 打开时服务不在线（无障碍没开，或系统还没把服务绑起来）也照样把偏好置为开启： 用户去设置里打开后，onServiceConnected 会按这个偏好自动显示；回到前台时
-     * MainActivity.onResume 也会再对齐一次。 但**必须弹引导**：否则这种情况下点「启动」会完全没有反应， 用户只能看着「无障碍未开启」的文字反复点同一个按钮。
+     * 先检查悬浮窗权限与所选输入模式，再等待独立播放宿主就绪；初始化尚未完成不等同于无障碍未授权。
      */
     fun setFloatingEnabled(enabled: Boolean) {
-        repository.floatingEnabled = enabled
-        val service = PlaybackConnection.instance
-        service?.showFloating(enabled)
-        _local.update {
-            it.copy(
-                floatingEnabled = enabled,
-                showAccessibilityPrompt = enabled && service == null,
-            )
+        val generation = ++floatingStartGeneration
+        floatingStartJob?.cancel()
+        if (!enabled) {
+            repository.floatingEnabled = false
+            PlaybackConnection.instance?.apply {
+                stop()
+                showFloating(false)
+            }
+            _local.update { it.copy(floatingEnabled = false, startingFloating = false) }
+            return
         }
+        _local.update { it.copy(startingFloating = true) }
+        floatingStartJob = viewModelScope.launch {
+            try {
+                val status = readServiceStatus()
+                if (!status.overlayGranted || !status.inputReady) {
+                    repository.floatingEnabled = false
+                    _local.update {
+                        it.copy(
+                            floatingEnabled = false,
+                            showOverlayPrompt = !status.overlayGranted,
+                            showAccessibilityPrompt = false,
+                            showInputModePrompt = status.overlayGranted && !status.inputReady,
+                        )
+                    }
+                    return@launch
+                }
+                if (!awaitOverlaySnapshot(status.overlayGranted)) {
+                    repository.floatingEnabled = false
+                    _local.update {
+                        it.copy(floatingEnabled = false, notice = "权限检查尚未完成，请稍后重试")
+                    }
+                    return@launch
+                }
+                if (generation != floatingStartGeneration) return@launch
+                val latest = runCatching { SharedInput.current()?.state() }.getOrNull()
+                val sameMode =
+                    latest?.getString("mode", SharedInput.ACCESSIBILITY) == status.inputMode
+                val ready =
+                    latest != null &&
+                        if (status.inputMode == SharedInput.ACCESSIBILITY)
+                            latest.getBoolean("accessibilityEnabled")
+                        else latest.getBoolean("connected") && latest.getBoolean("touchReady")
+                if (!sameMode || !ready || latest?.getBoolean("overlayGranted", false) != true) {
+                    repository.floatingEnabled = false
+                    _local.update {
+                        it.copy(
+                            floatingEnabled = false,
+                            showOverlayPrompt =
+                                latest != null && !latest.getBoolean("overlayGranted", false),
+                            showInputModePrompt =
+                                latest?.getBoolean("overlayGranted", false) == true &&
+                                    sameMode &&
+                                    !ready,
+                            notice = if (!sameMode) "输入模式已变化，请重新点击启动" else null,
+                        )
+                    }
+                    return@launch
+                }
+                repository.floatingEnabled = true
+                _local.update {
+                    it.copy(
+                        floatingEnabled = true,
+                        showOverlayPrompt = false,
+                        showAccessibilityPrompt = false,
+                        showInputModePrompt = false,
+                    )
+                }
+                PlaybackConnection.startFloating(getApplication())
+                // 授权和后台初始化是两回事；等真实桥接建立，不误弹无障碍引导。
+                val until = android.os.SystemClock.elapsedRealtime() + 10000
+                while (PlaybackConnection.instance?.floatingVisible != true) {
+                    if (android.os.SystemClock.elapsedRealtime() >= until) {
+                        _local.update { it.copy(notice = "启动暂未完成，请稍后重试") }
+                        break
+                    }
+                    delay(100)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                repository.floatingEnabled = false
+                _local.update {
+                    it.copy(
+                        floatingEnabled = false,
+                        error = "启动失败，请检查输入连接后重试",
+                    )
+                }
+                app.luoxianlv.diagnostics.AppLog.w("播放", "启动播放窗口失败", failure)
+            } finally {
+                if (generation == floatingStartGeneration)
+                    _local.update { it.copy(startingFloating = false) }
+            }
+        }
+    }
+
+    /** 正式启动前等待宿主发布授权快照，避免刚授权回来时服务读取旧状态后立即停止。 */
+    private suspend fun awaitOverlaySnapshot(granted: Boolean): Boolean {
+        val bridge = runCatching { SharedInput.current() }.getOrNull() ?: return false
+        bridge.command("refresh", android.os.Bundle())
+        return kotlinx.coroutines.withTimeoutOrNull(5_000) {
+            while (bridge.state().getBoolean("overlayGranted", false) != granted) delay(50)
+            true
+        } == true
     }
 
     fun removeSong(song: Song) = changeLibrary {
@@ -311,6 +430,10 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun dismissAccessibilityPrompt() = _local.update { it.copy(showAccessibilityPrompt = false) }
+
+    fun dismissOverlayPrompt() = _local.update { it.copy(showOverlayPrompt = false) }
+
+    fun dismissInputModePrompt() = _local.update { it.copy(showInputModePrompt = false) }
 
     fun dismissError() = _local.update { it.copy(error = null) }
 

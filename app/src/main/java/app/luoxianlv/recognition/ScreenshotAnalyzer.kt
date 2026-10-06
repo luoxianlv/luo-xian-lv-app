@@ -8,8 +8,13 @@ import app.luoxianlv.playback.PlaybackSession
 
 internal object ScreenshotAnalyzer {
     /** 图像转换和识别仅在工作线程执行，不操作播放状态或视图。 */
-    fun recognize(screenshot: AccessibilityBinding.Frame): ScreenRecognizer.Result? {
+    fun recognize(
+        screenshot: AccessibilityBinding.Frame,
+        previous: ScreenRecognizer.Result? = null,
+    ): ScreenRecognizer.Result? {
         val started = SystemClock.uptimeMillis()
+        var conversionMs = 0L
+        var analysisMs = 0L
         val result = runCatching {
             val hardware =
                 try {
@@ -24,11 +29,16 @@ internal object ScreenshotAnalyzer {
                     hardware?.recycle()
                 }
             try {
-                bitmap?.let(AppLog::saveScreenshot)
+                conversionMs = SystemClock.uptimeMillis() - started
                 AppLog.log("开始分析截图：尺寸=${bitmap?.width}x${bitmap?.height}")
-                bitmap?.let(ScreenRecognizer::fromBitmap)
+                val analysisStarted = SystemClock.uptimeMillis()
+                bitmap
+                    ?.let { ScreenRecognizer.fromBitmap(it, previous) }
+                    .also {
+                        analysisMs = SystemClock.uptimeMillis() - analysisStarted
+                    }
             } finally {
-                bitmap?.recycle()
+                bitmap?.let { if (!AppLog.saveScreenshotOwned(it)) it.recycle() }
             }
         }
             .onFailure {
@@ -36,6 +46,9 @@ internal object ScreenshotAnalyzer {
             }
             .getOrNull()
         AppLog.log("识别耗时毫秒=${SystemClock.uptimeMillis() - started}")
+        AppLog.log(
+            "识别分段：转换=$conversionMs 毫秒 分析=$analysisMs 毫秒 验证已有布局=${result?.reusedGeometry == true}"
+        )
         AppLog.log(
             result?.let { r ->
                 "识别结果：音符横坐标=" +

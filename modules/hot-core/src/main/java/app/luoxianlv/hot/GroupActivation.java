@@ -16,7 +16,7 @@ public final class GroupActivation implements GroupHandover.Listener {
 
     List<GroupHandover.Page> pages();
 
-    NativeAccessibilityService playback();
+    NativePlaybackHost playback();
 
     boolean inUse();
 
@@ -113,8 +113,9 @@ public final class GroupActivation implements GroupHandover.Listener {
               ticket,
               () -> {
                 List<GroupHandover.Page> pages = environment.pages();
-                NativeAccessibilityService playback = environment.playback();
-                if (!environment.workSafe()
+                NativePlaybackHost playback = environment.playback();
+                if (NativePlaybackHost.anyRetiring()
+                    || !environment.workSafe()
                     || (pages.isEmpty() && playback == null)
                     || pages.stream().anyMatch(page -> !page.host().canStage())
                     || (playback != null
@@ -204,7 +205,7 @@ public final class GroupActivation implements GroupHandover.Listener {
     usageChanged();
   }
 
-  public void playbackOpened(NativeAccessibilityService service) {
+  public void playbackOpened(NativePlaybackHost service) {
     requireMain();
     if (group != null)
       group.playbackOpened(service, environment.recoverySource(), environment.recoveryFactory());

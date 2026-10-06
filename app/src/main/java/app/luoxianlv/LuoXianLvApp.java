@@ -13,6 +13,9 @@ public final class LuoXianLvApp extends Application {
   public void onCreate() {
     super.onCreate();
     if (app.luoxianlv.update.DeltaWorkerService.isPatchProcess(this)) return;
+    if (app.luoxianlv.input.InputController.isHelperProcess(this)) return;
+    app.luoxianlv.input.InputController.install(this).setWirelessBackend(
+        new app.luoxianlv.input.WirelessAdbBackend(this));
     CrashLog.install(this);
     app.luoxianlv.hot.ApkUpdateBridge.install(
         this,

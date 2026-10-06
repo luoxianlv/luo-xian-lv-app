@@ -91,6 +91,7 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+    packaging { jniLibs.useLegacyPackaging = true }
     sourceSets.getByName("androidTest").assets.srcDir(rootProject.project(":hot-core").file("src/test/resources"))
 }
 
@@ -117,6 +118,7 @@ androidComponents {
 dependencies {
     implementation(libs.kotlin.stdlib)
     implementation(project(":hot-core"))
+    implementation(project(":input-core"))
     implementation(project(":business-ui"))
     implementation(libs.material)
 

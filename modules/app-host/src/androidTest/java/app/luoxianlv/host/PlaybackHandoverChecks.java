@@ -16,7 +16,7 @@ import java.util.function.Supplier;
 /** 使用完整业务 APK 的两个真实加载器，不把同加载器新对象当作跨版本交接证据。 */
 final class PlaybackHandoverChecks {
   private final Instrumentation runner;
-  private final NativeAccessibilityService service;
+  private final NativePlaybackHost service;
   private final NativeLoader.Prepared next;
   private final BusinessFactory factory;
 
@@ -26,7 +26,7 @@ final class PlaybackHandoverChecks {
     this.next = next;
     var field = PlaybackBridge.current().getClass().getDeclaredField("this$0");
     field.setAccessible(true);
-    service = (NativeAccessibilityService) field.get(PlaybackBridge.current());
+    service = (NativePlaybackHost) field.get(PlaybackBridge.current());
     Object[] values = new Object[1];
     main(
         () -> {
@@ -299,10 +299,10 @@ final class PlaybackHandoverChecks {
           caller.start();
           try {
             check(posted.await(2, java.util.concurrent.TimeUnit.SECONDS), "无法排队测试命令");
-            var disable = NativeAccessibilityService.class.getDeclaredMethod("disablePlayback");
+            var disable = NativePlaybackHost.class.getDeclaredMethod("disablePlayback");
             disable.setAccessible(true);
             var publish =
-                NativeAccessibilityService.class.getDeclaredMethod("publish", port.getClass());
+                NativePlaybackHost.class.getDeclaredMethod("publish", port.getClass());
             publish.setAccessible(true);
             disable.invoke(service);
             publish.invoke(service, port);

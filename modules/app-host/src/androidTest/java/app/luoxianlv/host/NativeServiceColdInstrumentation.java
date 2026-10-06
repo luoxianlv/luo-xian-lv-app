@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.Application;
 import android.app.Instrumentation;
 import android.app.UiAutomation;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.os.Bundle;
@@ -13,6 +14,7 @@ import app.luoxianlv.hot.ActivationJournal;
 import app.luoxianlv.hot.HealthWindow;
 import app.luoxianlv.hot.HostUpdateConfig;
 import app.luoxianlv.hot.HotManifest;
+import app.luoxianlv.hot.NativePlaybackHost;
 import app.luoxianlv.hot.NativeAccessibilityService;
 import app.luoxianlv.hot.NativeLoader;
 import app.luoxianlv.hot.contract.AccessibilityBinding;
@@ -30,6 +32,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 仅观察真实 Application 与服务入口，不打开 Activity，也不调用激活或健康确认。
  * 主代理先 force-stop，再通过显式 instrumentation 组件运行；本仪器不负责构建、签包或渠道准备。
  * consumer=accessibility|foreground，expectedSnapshot/expectedStable=apk|SHA256，
+ * accessibility 先建立系统适配器，再显式启动普通播放宿主；开启无障碍本身不会创建播放器。
  * expectedPending=none|SHA256，expectedPhase=STABLE|TRIAL，observeMillis 缺省 3000。
  * TRIAL 模式证明服务连接和空闲不计时，不声称完成真实播放的 60 秒健康观察。
  */
@@ -77,8 +80,8 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       case "本次前台启动出现业务不可用事件" -> "FOREGROUND_BUSINESS_UNAVAILABLE";
       case "本次前台启动出现主动停止请求" -> "FOREGROUND_EXPLICIT_STOP";
       case "固定tag前台日志超限" -> "FOREGROUND_LOG_LIMIT";
-      case "无障碍会话尚未建立" -> "PLAYBACK_SESSION_MISSING";
-      case "无障碍会话未使用已选择业务加载器" -> "PLAYBACK_LOADER_MISMATCH";
+      case "普通播放会话尚未建立" -> "PLAYBACK_SESSION_MISSING";
+      case "普通播放会话未使用已选择业务加载器" -> "PLAYBACK_LOADER_MISMATCH";
       case "原稳定指针与预期不符" -> "STABLE_MISMATCH";
       case "待重启缓存选择与预期不符" -> "PENDING_MISMATCH";
       case "未选择预期运行时" -> "RUNTIME_MISMATCH";
@@ -231,8 +234,8 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
         Object playback = read(Bootstrap.class, null, "playback");
         value.playbackServicePresent = playback != null;
         if (playback != null) {
-          value.playbackServiceConnected = (Boolean) read(NativeAccessibilityService.class, playback, "connected");
-          Object binding = read(NativeAccessibilityService.class, playback, "binding");
+          value.playbackServiceConnected = (Boolean) read(NativePlaybackHost.class, playback, "connected");
+          Object binding = read(NativePlaybackHost.class, playback, "binding");
           value.playbackBindingPresent = binding != null;
           if (binding != null) value.playbackSession = read(binding.getClass(), binding, "session");
           if (value.playbackSession != null) {
@@ -266,6 +269,35 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       catch (IllegalStateException waiting) { /* 仅等待正常后台准备，不把未就绪当 SDK 故障。 */ }
     });
     return ready.get();
+  }
+
+  private Object songRepository() {
+    try {
+      var source = Bootstrap.source();
+      var type = Class.forName("app.luoxianlv.library.SongRepository", true,
+          source.prepared.classLoader());
+      return type.getConstructor(Context.class).newInstance(source.prepared.context(getTargetContext()));
+    } catch (ReflectiveOperationException failure) {
+      throw new IllegalStateException("真实业务曲库设置不可用", failure);
+    }
+  }
+
+  private boolean floatingPreference() {
+    Object repository = songRepository();
+    try {
+      return (Boolean) repository.getClass().getMethod("getFloatingEnabled").invoke(repository);
+    } catch (ReflectiveOperationException failure) {
+      throw new IllegalStateException("读取悬浮窗偏好失败", failure);
+    }
+  }
+
+  private void floatingPreference(boolean enabled) {
+    Object repository = songRepository();
+    try {
+      repository.getClass().getMethod("setFloatingEnabled", boolean.class).invoke(repository, enabled);
+    } catch (ReflectiveOperationException failure) {
+      throw new IllegalStateException("恢复悬浮窗偏好失败", failure);
+    }
   }
 
   private void noActivity(Observation value) {
@@ -348,6 +380,7 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
     org.json.JSONObject report = new org.json.JSONObject();
     Application application = (Application) getTargetContext().getApplicationContext();
     String previousServices = null, previousEnabled = null;
+    Boolean previousFloating = null;
     boolean settingsChanged = false, success = false;
     NativeForegroundLogEvents.Cursor foregroundCursor = null;
     try {
@@ -405,6 +438,19 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
         settingsChanged = true;
         restoreSetting("enabled_accessibility_services", enabled);
         shell("settings put secure accessibility_enabled 1");
+        long readyDeadline = SystemClock.elapsedRealtime() + 90000;
+        while (!sourceReady() || !NativeAccessibilityService.isConnected()) {
+          require(SystemClock.elapsedRealtime() < readyDeadline, "业务来源始终未准备完成");
+          SystemClock.sleep(20);
+        }
+        Boolean[] savedFloating = {null};
+        onMain(() -> savedFloating[0] = floatingPreference());
+        previousFloating = savedFloating[0];
+        onMain(() -> {
+          require(android.provider.Settings.canDrawOverlays(getTargetContext()), "缺少悬浮窗授权");
+          floatingPreference(true);
+          PlaybackForegroundService.start(getTargetContext());
+        });
       } else {
         foregroundCursor = new NativeForegroundLogEvents.Cursor(android.os.Process.myPid(), foregroundLog());
         var cursor = foregroundCursor;
@@ -441,8 +487,8 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
       require(consumer.equals("accessibility") ? selected.playbackConnected
           : foregroundStarted && foregroundPolicyCreated, "未观察到真实服务业务连接或前台策略");
       if (consumer.equals("accessibility")) {
-        require(selected.playbackSession != null, "无障碍会话尚未建立");
-        require(selected.playbackLoaderMatches, "无障碍会话未使用已选择业务加载器");
+        require(selected.playbackSession != null, "普通播放会话尚未建立");
+        require(selected.playbackLoaderMatches, "普通播放会话未使用已选择业务加载器");
       }
       require(expectedStable.equals(selected.stable), "原稳定指针与预期不符");
       require(expectedPending.equals(selected.pending), "待重启缓存选择与预期不符");
@@ -531,6 +577,25 @@ public final class NativeServiceColdInstrumentation extends Instrumentation {
           + "；异常类型：" + error.getClass().getSimpleName() + "\n");
     } finally {
       application.unregisterActivityLifecycleCallbacks(activities);
+      if (previousFloating != null) {
+        boolean restoreFloating = previousFloating;
+        try {
+          onMain(() -> {
+            floatingPreference(restoreFloating);
+            var port = PlaybackBridge.current();
+            if (port != null) {
+              Bundle restore = new Bundle();
+              restore.putBoolean("enabled", restoreFloating);
+              port.command("showFloating", restore);
+            }
+            if (!restoreFloating) PlaybackForegroundService.stop();
+            else if (port == null) PlaybackForegroundService.start(getTargetContext());
+          });
+        } catch (Throwable error) {
+          success = false;
+          result.putString("cleanup", "悬浮窗偏好恢复失败：" + error.getClass().getSimpleName());
+        }
+      }
       if (settingsChanged) {
         try {
           restoreSetting("enabled_accessibility_services", previousServices);

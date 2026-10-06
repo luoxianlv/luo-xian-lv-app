@@ -18,9 +18,9 @@ public final class PlaybackHandover {
     default void closed(PlaybackHandover change) {}
   }
 
-  private final NativeAccessibilityService owner;
-  private final NativeAccessibilityService.Binding previous;
-  private NativeAccessibilityService.Binding next;
+  private final NativePlaybackHost owner;
+  private final NativePlaybackHost.Binding previous;
+  private NativePlaybackHost.Binding next;
   private final long revision;
   private final Listener listener;
   private boolean ready, committed, restoring, ended, reported;
@@ -30,7 +30,7 @@ public final class PlaybackHandover {
   private Context recoveryContext;
   private Supplier<NativePlaybackSession> recoveryFactory;
 
-  PlaybackHandover(NativeAccessibilityService owner, Listener listener) {
+  PlaybackHandover(NativePlaybackHost owner, Listener listener) {
     this.owner = owner;
     this.previous = owner.binding;
     this.revision = previous.session.revision();
@@ -38,7 +38,7 @@ public final class PlaybackHandover {
   }
 
   PlaybackHandover(
-      NativeAccessibilityService owner,
+      NativePlaybackHost owner,
       Context recoveryContext,
       Supplier<NativePlaybackSession> recoveryFactory,
       Listener listener) {
@@ -277,7 +277,7 @@ public final class PlaybackHandover {
     listener.closed(this);
   }
 
-  boolean failed(NativeAccessibilityService.Binding binding, Throwable failure) {
+  boolean failed(NativePlaybackHost.Binding binding, Throwable failure) {
     if (!current() || (binding != next && binding != previous)) return false;
     if (binding == previous) {
       if (!committed) {

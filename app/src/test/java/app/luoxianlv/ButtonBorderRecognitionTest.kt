@@ -39,6 +39,22 @@ class ButtonBorderRecognitionTest {
     }
 
     @Test
+    fun disjointGradientSearchesDoNotLeaveAnUncomputedGap() {
+        val f = reference()
+        val result = ScreenRecognizer.analyze(f.pixels, f.w, f.h)!!
+        val spacing = (result.layout.noteX[1] - result.layout.noteX[0]) * f.w
+        val cached = ButtonBorderDetector(f.pixels, f.w, f.h)
+        for (i in listOf(7, 0, 4, 2, 6, 1, 5, 3)) {
+            val x = result.layout.noteX[i] * f.w
+            val y = result.layout.noteY * f.h
+            val expected =
+                ButtonBorderDetector(f.pixels, f.w, f.h)
+                    .locate(x, y, spacing, spacing * .14f, spacing * .16f)
+            assertEquals(expected, cached.locate(x, y, spacing, spacing * .14f, spacing * .16f))
+        }
+    }
+
+    @Test
     fun threeDigitsPlusBordersRecoverTheWholeKeyboard() {
         for (resource in
             listOf(

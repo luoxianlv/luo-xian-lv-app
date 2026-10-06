@@ -9,6 +9,7 @@ import android.view.Display
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.app.BusinessJobs
 import app.luoxianlv.hot.contract.SharedFiles
+import app.luoxianlv.hot.contract.SharedInput
 import app.luoxianlv.playback.PlaybackConnection
 import app.luoxianlv.recognition.ConfigStore
 import app.luoxianlv.shared.AppStorage
@@ -71,7 +72,7 @@ object DebugExport {
             zip.putNextEntry(ZipEntry("说明.txt"))
             zip.write(
                 ("落弦律诊断包（UTF-8）\n" +
-                        "日志：logs；截图：shots；设备原始字段：device.json；播放与识别状态：diagnostics.json。\n" +
+                        "日志：logs；截图：shots；设备原始字段：device.json；播放与识别状态：diagnostics.json；输入连接与失败阶段：input.json。\n" +
                         "闪退堆栈：logs/play-debug-crash.log（最近两次）；系统退出原因：process-exits.json（Android 11 起）。\n" +
                         "文件目录：${AppStorage.root(context).absolutePath}\n" +
                         "技术字段及异常原文保持原样，便于定位问题。\n")
@@ -86,6 +87,9 @@ object DebugExport {
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("process-exits.json"))
             zip.write(processExits(context).toString(2).toByteArray(Charsets.UTF_8))
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("input.json"))
+            zip.write(inputState().toString(2).toByteArray(Charsets.UTF_8))
             zip.closeEntry()
             dir?.listFiles { f -> f.isFile && f.name.startsWith("play-debug") }
                 ?.forEach { log ->
@@ -127,6 +131,78 @@ object DebugExport {
             .put("densityDpi", metrics.densityDpi)
             .put("appMetrics", "${metrics.widthPixels}x${metrics.heightPixels}")
     }
+
+    /** 仅导出定位连接和触控故障所需的状态；不包含配对身份、候选地址或令牌。 */
+    private fun inputState(): JSONObject = runCatching {
+        val state = SharedInput.current()?.state()
+        JSONObject().apply {
+            put("bridgeAvailable", state != null)
+            listOf(
+                    "supported",
+                    "mode",
+                    "installed",
+                    "binderAlive",
+                    "binderReady",
+                    "permissionGranted",
+                    "permissionState",
+                    "permissionCheckError",
+                    "connected",
+                    "touchReady",
+                    "active",
+                    "waitingForFingers",
+                    "activationWaitMs",
+                    "trackedSlots",
+                    "touchSupported",
+                    "touchPressed",
+                    "touchState",
+                    "contactReadErrno",
+                    "staleContactIgnored",
+                    "contactDecision",
+                    "busy",
+                    "uid",
+                    "wirelessSupported",
+                    "wifiConnected",
+                    "wirelessEnabled",
+                    "notificationGranted",
+                    "localNetworkGranted",
+                    "paired",
+                    "message",
+                    "wirelessMessage",
+                    "errorStage",
+                    "errorType",
+                    "failureStage",
+                    "errorClass",
+                    "diagnosticStage",
+                    "diagnosticType",
+                    "diagnosticMessage",
+                    "inputCandidateCount",
+                    "deviceId",
+                    "vendorId",
+                    "productId",
+                    "physicalSlots",
+                    "deviceMatchMethod",
+                    "deviceMapReadMs",
+                    "deviceMapReadError",
+                    "hostUid",
+                    "ownerUid",
+                    "helperUid",
+                    "callerUid",
+                    "helperArchitecture",
+                    "serviceRevision",
+                    "installedVersionCode",
+                    "installedUpdateTime",
+                    "details",
+                    "nativeStatus",
+                    "physicalSlots",
+                    "maxPointers",
+                    "width",
+                    "height",
+                    "rotation",
+                )
+                .forEach { key -> if (state?.containsKey(key) == true) put(key, state.get(key)) }
+        }
+    }
+        .getOrElse { JSONObject().put("errorType", it.javaClass.simpleName) }
 
     /** Android 11 起可区分 Java 崩溃、原生崩溃、ANR、低内存回收与主动退出。 */
     private fun processExits(context: Context): JSONObject {

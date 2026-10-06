@@ -60,7 +60,9 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     private val remoteFixJobs = AtomicInteger()
     private val handler = Handler(Looper.getMainLooper())
+    private val gestureWait = AccessibilityGestureWait(handler)
     private val screenCapture = PlaybackScreenCapture(handler) { closed }
+    private var screenshotPermissionMissing = false
     private lateinit var repository: SongRepository
     private lateinit var keys: KeyLayout
     private lateinit var floating: FloatingControls
@@ -115,12 +117,15 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     /** 当前选中曲目是否已经尝试过播放前自动修复（每次选中重置，避免内部 resume 反复重试）。 */
     private var fixAttemptedForSong = false
     private var playbackDisplay: DisplayState? = null
+    private var practiceToken = 0L
     // 自动模式使用截图像素空间；固定模式使用无障碍手势所在的完整显示空间。
     private var coordinateFrame: PlaybackCoordinates.Frame? = null
     private var fixedKeys = false
     private val interruptionGuard = PlaybackInterruptionGuard()
+    private val input = PlaybackInput()
 
-    internal fun canStartPlayback() = interruptionGuard.canStart(SystemClock.uptimeMillis())
+    internal fun canStartPlayback() =
+        input.merged || interruptionGuard.canStart(SystemClock.uptimeMillis())
 
     private var recoveringDisplay = false
     private var recoveryAttempts = 0
@@ -174,6 +179,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         preparing = true
         busy = false
         generation++
+        gestureWait.cancel()
+        input.release()
         handler.removeCallbacks(next)
         recoveringDisplay = true
         recoveryAttempts = 0
@@ -255,7 +262,12 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     val positionMs
         get() =
-            (baseMs + if (playing) ((SystemClock.uptimeMillis() - anchor) * speed).toLong() else 0)
+            (baseMs +
+                    if (playing)
+                        ((SystemClock.uptimeMillis() - anchor - input.activationDelayMs)
+                                .coerceAtLeast(0) * speed)
+                            .toLong()
+                    else 0)
                 .coerceIn(0, durationMs)
 
     val modeLabel
@@ -279,6 +291,13 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         check(!closed && !::repository.isInitialized)
         attachBaseContext(context)
         this.binding = binding
+        input.initialize {
+            if (current && (playing || preparing)) {
+                pauseNow()
+                error = "输入模式已切换，请重新点击播放"
+                floating.refresh()
+            }
+        }
         AppLog.init(this)
         AppLog.log(
             "无障碍服务已连接：${Build.MANUFACTURER}/${Build.MODEL} 系统 API=${Build.VERSION.SDK_INT} ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE}) 显示=${displayState()}"
@@ -423,6 +442,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         stopMonitoring()
         playing = false
         generation++
+        gestureWait.close()
+        input.close()
         handler.removeCallbacksAndMessages(null)
         screenCapture.close()
         recoveringDisplay = false
@@ -437,12 +458,16 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             !loadingSong &&
             !waitingToPlay &&
             screenCapture.idle &&
+            gestureWait.idle &&
+            input.idle &&
             remoteFixJobs.get() == 0 &&
             (!::floating.isInitialized || !floating.interacting)
 
     override fun released() =
         closed &&
             screenCapture.released &&
+            gestureWait.released &&
+            input.idle &&
             remoteFixJobs.get() == 0 &&
             scoreScope.coroutineContext[Job]?.isCompleted == true &&
             (!::floating.isInitialized || floating.released)
@@ -482,6 +507,10 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             "select" -> select(PlaybackWire.song(arguments))
             "play" -> play()
             "pause" -> pause()
+            "pausePractice" -> {
+                val expected = arguments.getLong("practiceToken")
+                if (PracticePlaybackGate.matchesPlayback(expected, practiceToken)) pause()
+            }
             "stop" -> stop()
             "toggle" -> toggle()
             "seek" -> seek(arguments.getLong("position"))
@@ -557,22 +586,18 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             return
         }
         if (songLoad.requestPlay()) {
+            practiceToken = PracticePlaybackGate.readyToken
             floating.refresh()
             return
         }
         val useFixedKeys = ExperimentalOptions.fixedHarmonicaKeys(this)
-        if (
-            app.luoxianlv.practice.PracticePlaybackGate.active &&
-                (!app.luoxianlv.practice.PracticePlaybackGate.ready ||
-                    (Build.VERSION.SDK_INT < 30 && !useFixedKeys))
-        ) {
-            error =
-                if (Build.VERSION.SDK_INT < 30 && !useFixedKeys) "演练场自动定位需要 Android 11 或更高版本"
-                else "请等待演练场开场完成"
+        if (PracticePlaybackGate.active && !PracticePlaybackGate.ready) {
+            error = "请等待演练场开场完成"
             floating.refresh()
             return
         }
         if (playing || preparing || recoveringDisplay || timeline.events.isEmpty()) return
+        practiceToken = PracticePlaybackGate.readyToken
         if (fixedKeys != useFixedKeys) {
             fixedKeys = useFixedKeys
             keys = ConfigStore.load(this)
@@ -619,7 +644,9 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                     return@syncWithScreen
                 }
                 if (!recognized) {
-                    error = "未能确认琴键位置，请保持游戏琴键界面可见后重试"
+                    error =
+                        if (screenshotPermissionMissing) "自动识别需要无障碍截图权限，请开启无障碍；也可在实验性设置中使用固定按键"
+                        else "未能确认琴键位置，请保持游戏琴键界面可见后重试"
                     AppLog.log("识别失败，阻止播放：显示=" + displayState())
                     floating.refresh()
                     return@syncWithScreen
@@ -672,6 +699,18 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     private fun startPlaying() {
         if (playing || timeline.events.isEmpty()) return
+        if (input.merged && !input.idle) {
+            preparing = true
+            val token = ++generation
+            input.waitUntilIdle { available ->
+                if (!current || token != generation || !preparing) return@waitUntilIdle
+                preparing = false
+                if (available) startPlaying() else error = "上次触控会话尚未退出，请检查输入连接后重试"
+                floating.refresh()
+            }
+            floating.refresh()
+            return
+        }
         Analytics.logEvent(this, "play_start") // 埋点：开始演奏（识别/准备完成后真正起播）
         playing = true
         generation++
@@ -681,6 +720,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     private fun syncFixedLayout() {
+        if (syncPracticeLayout(generation)) return
         val display = checkNotNull(playbackDisplay)
         coordinateFrame = PlaybackCoordinates.Frame(display.width, display.height)
         keys = PracticeGeometry.keyLayout(display.width, display.height)
@@ -705,11 +745,53 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         floating.refresh()
     }
 
+    /** 演练场使用实际画布坐标，固定模式与自动模式共用，避免小窗偏移。 */
+    private fun syncPracticeLayout(token: Int): Boolean {
+        val stageToken = PracticePlaybackGate.readyToken
+        val stageGeometry =
+            if (stageToken != 0L && stageToken == practiceToken) PracticePlaybackGate.geometry()
+            else null
+        val display = playbackDisplay
+        if (
+            stageGeometry != null &&
+                display != null &&
+                token == generation &&
+                display == displayState()
+        ) {
+            val width = stageGeometry.getInt("width")
+            val height = stageGeometry.getInt("height")
+            val screen = PlaybackCoordinates.Frame(display.width, display.height)
+            val layout =
+                PlaybackCoordinates.windowLayout(
+                    PracticeGeometry.keyLayout(width, height),
+                    PlaybackCoordinates.Frame(width, height),
+                    screen,
+                    stageGeometry.getInt("screenX"),
+                    stageGeometry.getInt("screenY"),
+                )
+            if (layout != null && stageToken == PracticePlaybackGate.readyToken) {
+                coordinateFrame = screen
+                keys = layout
+                PracticePlaybackGate.pitchState()?.let { (mode, half) ->
+                    pitchMode = mode
+                    halfToneOn = half
+                }
+                AppLog.log("演练场使用真实画布布局，不请求截图：画布=${width}x$height 显示=$display")
+                return true
+            }
+        }
+        return false
+    }
+
     /** 截图识别后保存布局并同步音区；回调在主线程执行。 */
     private fun syncWithScreen(
         token: Int,
         done: (Boolean) -> Unit,
     ) {
+        if (syncPracticeLayout(token)) {
+            done(true)
+            return
+        }
         if (fixedKeys) {
             if (token != generation || playbackDisplay != displayState()) done(false)
             else {
@@ -722,6 +804,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             done(false)
             return
         }
+        screenshotPermissionMissing = false
         screenCapture.recognize(
             binding = binding,
             accept = { screenshot ->
@@ -758,7 +841,10 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                     done(valid)
                 }
             },
-            failed = { done(false) },
+            failed = { code ->
+                if (token == generation) screenshotPermissionMissing = code == -1001
+                done(false)
+            },
         )
     }
 
@@ -769,6 +855,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     private fun pauseNow() {
         changeRevision++
+        gestureWait.cancel()
+        input.release()
         songLoad.pause()
         AppLog.log("暂停播放：播放中=$playing 准备中=$preparing")
         if (recoveringDisplay) {
@@ -1037,8 +1125,58 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                 done(value)
             }
         }
+        // 继续使用无障碍识别得到的像素；显示尺寸只用于校验，不二次缩放已确认的按键。
+        if (
+            input.merged &&
+                !PlaybackCoordinates.fitsDisplay(
+                    px,
+                    py,
+                    currentDisplay.width,
+                    currentDisplay.height,
+                )
+        ) {
+            gestureFailure = "识别坐标超出实际屏幕，请重新识别"
+            AppLog.w(
+                TAG,
+                "合流坐标越界：像素=$px,$py 截图=${frame.width}x${frame.height} 实际显示=$currentDisplay",
+            )
+            finish(false)
+            return
+        }
+        if (
+            input.press(
+                px,
+                py,
+                duration.coerceIn(1, 60_000).toInt(),
+                currentDisplay.width,
+                currentDisplay.height,
+                currentDisplay.rotation,
+            ) { success, message, activationWaitMs ->
+                if (token != generation || closed) return@press
+                if (playing) anchor += activationWaitMs
+                if (success) {
+                    AppLog.log("合流触摸完成：坐标=${px.toInt()},${py.toInt()} 实际显示=$currentDisplay")
+                    floating.mark(px, py)
+                } else {
+                    gestureFailure = message.ifBlank { "触控共存未完成，请检查连接" }
+                    AppLog.w(TAG, "合流按键未完成：坐标=$px,$py 实际显示=$currentDisplay 原因=$gestureFailure")
+                }
+                finish(success)
+            }
+        )
+            return
         // 每个音符发送一条完整静态手势；将长音拆成多次 dispatchGesture 在部分系统上会被取消。
         val length = duration.coerceIn(1, GestureDescription.getMaxGestureDuration())
+        val originPosition = positionMs
+        val wait =
+            gestureWait.start(length) {
+                if (closed || token != generation || completed) return@start
+                gestureFailure = "无障碍响应超时，请重新点击播放"
+                // 系统结果未确认，不把等待时间计入已演奏进度，也不自动补发按键。
+                baseMs = originPosition
+                anchor = SystemClock.uptimeMillis()
+                finish(false)
+            }
         try {
             val stroke = GestureDescription.StrokeDescription(path, 0, length, false)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
@@ -1046,7 +1184,14 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                 binding.gesture(
                     gesture,
                     AccessibilityBinding.GestureCallback { success ->
-                        if (token != generation) return@GestureCallback
+                        AppLog.log(
+                            "系统手势回调：请求=${wait.id} 完成=$success " +
+                                "等待=${SystemClock.uptimeMillis() - wait.startedAt}毫秒 " +
+                                "当前请求=${token == generation && !closed}"
+                        )
+                        if (closed || token != generation || !wait.arrived(success))
+                            return@GestureCallback
+                        if (!wait.complete()) return@GestureCallback
                         if (success) {
                             AppLog.log("手势完成：坐标=${px.toInt()},${py.toInt()}")
                             floating.mark(px, py)
@@ -1060,14 +1205,29 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                         }
                     },
                 )
+            wait.returned(accepted)
+            AppLog.log(
+                "系统手势派发返回：请求=${wait.id} 接受=$accepted " +
+                    "耗时=${SystemClock.uptimeMillis() - wait.startedAt}毫秒"
+            )
             if (!accepted) {
+                if (!wait.complete()) return
                 AppLog.log("系统拒绝手势：坐标=${px.toInt()},${py.toInt()}")
                 gestureFailure =
                     "系统拒绝手势 (${px.toInt()},${py.toInt()} / ${bounds.width()}x${bounds.height()})"
                 finish(false)
+            } else if (wait.expired()) {
+                // 同步系统调用可能占住主线程；返回后仍按原截止时间处理。
+                wait.complete()
             }
         } catch (failure: Exception) {
             AppLog.w(TAG, "无法发送播放手势", failure)
+            if (closed || token != generation || completed) return
+            if (wait.expired()) {
+                wait.complete()
+                return
+            }
+            wait.cancel()
             gestureFailure = "无法发送播放手势，请重新开启无障碍后重试"
             finish(false)
         }

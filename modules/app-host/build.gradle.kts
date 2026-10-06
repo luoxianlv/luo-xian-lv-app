@@ -61,13 +61,18 @@ android {
     }
     // 恢复模块通过流解包；外层无损压缩不会改变其 APK 字节或校验摘要。
     androidResources.additionalParameters += listOf("--package-id", "0x80")
+    // shell 助手通过实际安装目录加载输入库。
+    packaging { jniLibs.useLegacyPackaging = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
-dependencies { implementation(project(":hot-core")) }
+dependencies {
+    implementation(project(":hot-core"))
+    implementation(project(":input-core"))
+}
 
 if (providers.gradleProperty("nativeReleaseProbe").orNull == "true") apply(from = rootProject.file("gradle/native-release-probe.gradle.kts"))
 

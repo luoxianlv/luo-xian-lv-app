@@ -100,7 +100,9 @@ internal object DialogVisibilityChecks {
             return (0 until node.childCount).any { contains(node.getChild(it)) }
         }
         fun shown(): Boolean {
-            automation.clearCache()
+            // 旧系统没有 clearCache；普通无障碍事件仍会使其缓存失效。
+            val clearCache = runCatching { android.app.UiAutomation::class.java.getMethod("clearCache") }.getOrNull()
+            clearCache?.invoke(automation)
             return automation.windows.any { contains(it.root) } ||
                 contains(automation.rootInActiveWindow)
         }

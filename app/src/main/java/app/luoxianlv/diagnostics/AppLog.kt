@@ -24,7 +24,16 @@ object AppLog {
             java.util.concurrent.TimeUnit.MILLISECONDS,
             java.util.concurrent.ArrayBlockingQueue<Runnable>(256),
             java.util.concurrent.ThreadFactory { task ->
-                Thread(task, "playback-diagnostics").apply { isDaemon = true }
+                Thread(
+                        {
+                            android.os.Process.setThreadPriority(
+                                android.os.Process.THREAD_PRIORITY_BACKGROUND
+                            )
+                            task.run()
+                        },
+                        "playback-diagnostics",
+                    )
+                    .apply { isDaemon = true }
             },
             java.util.concurrent.ThreadPoolExecutor.AbortPolicy(),
         )
@@ -145,15 +154,10 @@ object AppLog {
         }
     }
 
-    /** 保存识别用的截图（ARGB 软件副本），只保留最近 15 张。 */
-    fun saveScreenshot(bitmap: Bitmap) {
-        val d = dir ?: return
-        if (!pendingShot.compareAndSet(false, true)) return
-        val copy = runCatching { bitmap.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
-        if (copy == null) {
-            pendingShot.set(false)
-            return
-        }
+    /** 接收识别完成后的软件图；成功入队后由日志线程回收，失败时仍由调用方持有。 */
+    fun saveScreenshotOwned(bitmap: Bitmap): Boolean {
+        val d = dir ?: return false
+        if (!pendingShot.compareAndSet(false, true)) return false
         val at = Date()
         if (
             !enqueue {
@@ -163,10 +167,10 @@ object AppLog {
                         val file =
                             File(
                                 shots,
-                                "shot_${fileStamp.format(at)}_${copy.width}x${copy.height}.jpg",
+                                "shot_${fileStamp.format(at)}_${bitmap.width}x${bitmap.height}.jpg",
                             )
                         FileOutputStream(file).use {
-                            copy.compress(Bitmap.CompressFormat.JPEG, 85, it)
+                            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it)
                         }
                         shots
                             .listFiles()
@@ -176,14 +180,15 @@ object AppLog {
                         trim()
                     }
                 } finally {
-                    copy.recycle()
+                    bitmap.recycle()
                     pendingShot.set(false)
                 }
             }
         ) {
-            copy.recycle()
             pendingShot.set(false)
+            return false
         }
+        return true
     }
 
     internal fun trim() {

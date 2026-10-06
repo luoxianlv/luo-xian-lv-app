@@ -1,0 +1,230 @@
+{
+  "libadb": {
+    "tag": "3.1.1",
+    "commit": "c849886ebc6d48e7b46d967e78a6bb65c90c3b74"
+  },
+  "spake2": {
+    "tag": "2.2.1",
+    "commit": "7615ddd680b990e14513ebb66eac4cb0dbf82464",
+    "implementation": "android JNI"
+  },
+  "files": [
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AbsAdbConnectionManager.java",
+      "upstreamSha256": "52e8d6294d312204303622deaa50aeedcaf0d56f38ab45497004ef7cc59446d6",
+      "sha256": "f0c8c79ebe1f20d9486bf206f4db9f98e49b38e1092b020a5687418b6a9071af"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AdbAuthenticationFailedException.java",
+      "upstreamSha256": "aa244adb58f2428c7f356f1db76567d30da542d5d0002cef486a084f63c9d681",
+      "sha256": "a78fa66cafa8a76806973b9740dae12d2e5657d36dd15989813bb5dbb6536c5b"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AdbConnection.java",
+      "upstreamSha256": "cc57adb1c898de63a742bb78ef5350ea693ce4632dac5333180ea2aa7ee01d75",
+      "sha256": "b46ad14a44ebc37b4b19b0f16161d86c74bf2e2121eba6d56731bc1f64062f31"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AdbInputStream.java",
+      "upstreamSha256": "b3a97f4d57f9fabc5962601bdc7446a43bbc70bff978a6d7448a7da995128cdd",
+      "sha256": "319c4519ef758ad9d774d3d52e30f343c250543fef2d98a1b165f027309af5b9"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AdbOutputStream.java",
+      "upstreamSha256": "cd6670cd2a01078ce0501a22ec813cfa62b761e024d2c1629d01f27cc07c1ced",
+      "sha256": "b593961ee48d13ea35e9fa2b8f854381fe0c4f139b5ce5c6d15cf58e180fdb75"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AdbPairingRequiredException.java",
+      "upstreamSha256": "3dc6899f31035ccd1684fa9f556ed460530d76f1df83dac6c12f247b351a5214",
+      "sha256": "ed5412b1782ebaab9acf36be60b5a7e0c1c4fb4f6dbe6ea21776a1696f5914a5"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AdbProtocol.java",
+      "upstreamSha256": "7225c6d93b76611f5e176d5486df7cc16c2a0a798e653f383a27065f666f35af",
+      "sha256": "80ca45b44c4bce807f7ef22bd08a5d10a618e9054d7267e37319b7bd151d782b"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AdbStream.java",
+      "upstreamSha256": "a0b2ffa7ab6e5410f54829646a5fad58aa91ec39593a9f2b3f0e1d46448c694f",
+      "sha256": "6ff69ee5445339de23ac389d09821df3712441722aee2c45e8b7f8206ca6b4c5"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/AndroidPubkey.java",
+      "upstreamSha256": "6c5a12f4426a4851f875f581ab0b41cb2417a49b3097e958c83d4b6a12815273",
+      "sha256": "0b85216bda4516efe52da20b1f27bc16133d6dec077c0ff1a26bb8dfa63d82ff"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/ByteArrayNoThrowOutputStream.java",
+      "upstreamSha256": "c2b30219104b4ef5bbe8acf204c78b7e575b338578c82c39f2bbb06219e238b4",
+      "sha256": "60ec26142f0675140f2f4d1a3d12395b7ac734d8d9176dcfab30e94692ddd85b"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/KeyPair.java",
+      "upstreamSha256": "30f25e3d6ee3f40bb1fb996fb3949e7d4fb325da195b2ad27192d23edd70b3a3",
+      "sha256": "9c721834e8ca7186422653f0713239b400955e820ff780c004dacee5d93d539a"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/LocalServices.java",
+      "upstreamSha256": "e713b7c8eb15259a1a9c224ebb84f8872e1e4784038808a7e9d72095691bb47a",
+      "sha256": "9937c31afa15f191f15394299655a8a20cfe69cd92f2324f698a6f1f4890bb49"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/PairingAuthCtx.java",
+      "upstreamSha256": "27c2a8a1a7dc282fa6b48cb45c412ff078ac0dda9ea4c34a546e5578b764587c",
+      "sha256": "762813942dd3afd1b3ae5b676d42416e607564730547623efdbd7e2efc6272b4"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/PairingConnectionCtx.java",
+      "upstreamSha256": "c6283ce4131d4df8e25e79b8aa0084d41e5bc390d432a9e15d7b58e29ac28cc2",
+      "sha256": "bdc4e052b79d32c6a07111f45d5265afecf83c377f038651d412f6b76e8e58e0"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/PRNGFixes.java",
+      "upstreamSha256": "02969329ebe043de137dd3f1600b89a466d017505d707c894fe01c5984b86983",
+      "sha256": "f8f17b6d350a358f0f6ce0faee3755317552c6d8df42328a96c7f434b879e696"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/SslUtils.java",
+      "upstreamSha256": "fae57e217de752aae1d8b926d08c23e43b8d24a4d296d74d988c547c238afd55",
+      "sha256": "6123b205a1b1a57a2bf93817edb931b0252f03bcb43e8f9760b650e1021a63f0"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/StringCompat.java",
+      "upstreamSha256": "ff8ea6e788817601ddd5fa7a449633fd4093f9d5a3c71eb367fec4017347f7c8",
+      "sha256": "6c282874083a318ea2fb993beb9d61eabb827be23be252ff621643d7d4010090"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/android/AdbMdns.java",
+      "upstreamSha256": "26abcaa2d087b186e3c4e9d9af4212c3bf6dddb50175788f4f44b3b4f8009206",
+      "sha256": "ebc10f7dd7cc167c1129bd2f20343794e734288193bd4931c183a558e274f5c4"
+    },
+    {
+      "source": "libadb",
+      "path": "java/io/github/muntashirakon/adb/android/AndroidUtils.java",
+      "upstreamSha256": "52cfec5c84fed0b3110d70170ca1a3a0d89138549b5384e77d825c4c23a6513b",
+      "sha256": "565081e51525595c34b226bbf86644f0f514bdaa9bd542775c7e3c7a75df27dd"
+    },
+    {
+      "source": "spake2",
+      "path": "java/io/github/muntashirakon/crypto/spake2/Spake2Context.java",
+      "upstreamSha256": "7fcf9ef177491168b59536013568ab762f8a546b366d52deab86b755f67a2428",
+      "sha256": "ae86221613346a049d1084870d1d8e6494a6f68c4cf046397b1aea44c82fd8f3"
+    },
+    {
+      "source": "spake2",
+      "path": "java/io/github/muntashirakon/crypto/spake2/Spake2Role.java",
+      "upstreamSha256": "66284c0379b1f5bd6eafffdd21dcc2f7f2ea898030d68e538a925dcfc15c5e2b",
+      "sha256": "1c2dc54edb3504fd96a88cc2c6faae5cf0b3f12458eff490ef6257de8156209b"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2_jni.cpp",
+      "upstreamSha256": "865b330f0b2494bdc85dabbd93e58050de0db0b281fa392facdb7f17c61dbc9d",
+      "sha256": "e00d05f7402dfbf515c7dcfb9feaad40d58889bc3a9227aad859a763cbcd6e1e"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/.gitignore",
+      "upstreamSha256": "636d1092b40e26969100b2aa653a193afeca268992d9bb7eb391f28c27ef26c0",
+      "sha256": "caafcb75ca9f0a55b67ad98232bb8ea46418875f1bf1deeff341587a9d28933d"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/curve25519_32.h",
+      "upstreamSha256": "aab012a97c5425fb88c80bffe8c477e84174e384c434d5c52527084d969b94dd",
+      "sha256": "538b3e1c8537b0d67ba4d3ea19fd98e0bc318b3534623b228f676c24682da9ed"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/ed25519.h",
+      "upstreamSha256": "d1db94fbafbe2fc25c912b1d7d516d559bc0620529d2427edd1e1510c9d15316",
+      "sha256": "025b9839b932d510521442b543917c7dadb718903dc2811df08ded9b38d94316"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/LICENSE",
+      "upstreamSha256": "f831e7eed577481687a9bc0b48024e5e40b6f655fcde073ede964b50be5d55d9",
+      "sha256": "a5681bf9b05db14d86776930017c647ad9e6e56ff6bbcfdf21e5848288dfaf1b"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/Makefile",
+      "upstreamSha256": "c96015fec3594dad81d6fc4365bc6d0b26dc97c29c1024932aed08ad5bb5e6c0",
+      "sha256": "e7102e65a573650741ffd6a1f8093c70b38947bc0875df6491abc89696277aad"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/README.md",
+      "upstreamSha256": "5e947d9e7d6ce65eaf4b5b56f5ed93c606451e40fbbb839f1d2a43f06c6e691d",
+      "sha256": "cb2c9cd9e85214cbe8f9e82246162d9bd903b4eeaf0477db4dc19a0eebc07c8e"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/sha512.c",
+      "upstreamSha256": "49a19a70faea2ed4c7d0099da43da7d43a887749243e4e474512abe982437637",
+      "sha256": "09bf1952f890a956fa4a72ad82a5ce23fcdfcc2f0501baedb6b110829c7a5836"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/spake2.c",
+      "upstreamSha256": "acce0f6d6f596de6e328367232d7baf6d8dc6377d3ad5260e165ddb65a03c4dd",
+      "sha256": "641c38eb7f69a30fbd78a8e52c144dd7f71ee11e34050f44f5700d956e478924"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/test.c",
+      "upstreamSha256": "7a1d42223623e608b204b8e0178a688780e684d9c08df123dfbebda18f95269f",
+      "sha256": "a4a050a87f7d099b430d70f41c295ba80042610198b1f7ab1d7a3ef9b10d8a76"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/include/spake2/sha512.h",
+      "upstreamSha256": "356863fe1cfaff9295e9316aa4679bbd3233b11d6f606c3cb977f42ca22cb986",
+      "sha256": "1114fe4917162832f449fc9a6a5a4d0ee922c51ae3398ba770b8d05803bbfb18"
+    },
+    {
+      "source": "spake2Native",
+      "path": "native/spake2-c/include/spake2/spake2.h",
+      "upstreamSha256": "1a7edc0b8e842355d6bf8d635c7d1ba4b02ab43b2fe2a976d705e5b7e688d004",
+      "sha256": "d9279ed896c56b8a2f36e9670e2c5f3179ff7255b2bdbcff63cf14c88307fb07"
+    },
+    {
+      "source": "shizukuManager",
+      "path": "java/moe/shizuku/manager/adb/AdbMdns.java",
+      "upstreamPath": "manager/src/main/java/moe/shizuku/manager/adb/AdbMdns.kt",
+      "upstreamSha256": "a413f791c632b5a68ababe1729686f3fff6b6c0b363dc955806eb733c9be92df",
+      "sha256": "cec9505224582cad345385b01e94ff449518735cc7f20a07596f0b6c5319528c"
+    }
+  ],
+  "spake2C": {
+    "commit": "0d15933e5ba3e662cb01245a7ac0dc9fca3eac31",
+    "repository": "https://github.com/MuntashirAkon/spake2-c"
+  },
+  "shizukuManager": {
+    "repository": "https://github.com/RikkaApps/Shizuku",
+    "tag": "v13.6.0",
+    "commit": "2650830c5b099ae0dd34fedf614d4f592ca05d65",
+    "license": "Apache-2.0",
+    "implementation": "Kotlin to Java"
+  },
+  "localHashLineEndings": "LF"
+}

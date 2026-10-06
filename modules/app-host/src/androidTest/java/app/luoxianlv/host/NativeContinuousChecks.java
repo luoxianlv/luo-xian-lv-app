@@ -2,6 +2,7 @@ package app.luoxianlv.host;
 
 import android.app.Activity;
 import android.app.Instrumentation;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
@@ -10,6 +11,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import app.luoxianlv.hot.*;
 import app.luoxianlv.hot.contract.*;
+import app.luoxianlv.service.PlaybackForegroundService;
 import java.io.File;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
@@ -115,6 +117,7 @@ final class NativeContinuousChecks {
 
   private void run(String previousServices) throws Exception {
     Bundle[] originalPlayback = new Bundle[1];
+    Boolean[] originalFloating = {null};
     boolean completed = false;
     Throwable failure = null;
     var report =
@@ -134,6 +137,8 @@ final class NativeContinuousChecks {
       check(
           previousServices != null && previousServices.matches("null|[A-Za-z0-9_.$/:]*"),
           "无障碍设置格式不支持安全还原");
+      main(test, () -> originalFloating[0] = floatingPreference());
+      main(test, () -> floatingPreference(true));
       String component = "app.luoxianlv.debug/app.luoxianlv.service.MusicAccessibilityService";
       String services =
           previousServices.equals("null") || previousServices.isEmpty()
@@ -149,14 +154,14 @@ final class NativeContinuousChecks {
       check(shell("settings get secure accessibility_enabled").trim().equals("1"),
           "连续验收无障碍启用标志未精确写入");
       observationPhase = "playback-connect";
-      await("连续验收播放会话未连接", 20000, () -> PlaybackBridge.current() != null);
+      main(test, () -> PlaybackForegroundService.start(test.getTargetContext()));
+      await("连续验收播放会话未连接", 20000, () -> PlaybackBridge.current() != null
+          && PlaybackBridge.current().query("state").containsKey("floatingEnabled"));
       main(
           test,
           () -> {
             originalPlayback[0] = PlaybackBridge.current().query("state");
-            Bundle hidden = new Bundle();
-            hidden.putBoolean("enabled", false);
-            PlaybackBridge.current().command("showFloating", hidden);
+            // 普通前台服务拥有会话；关闭悬浮窗会同时退役播放器，交接期间保持它运行。
           });
       observationPhase = "handover-safe-point";
       await("连续验收没有交接安全点", 30000, () -> onMain(() -> Bootstrap.canAutoActivate() && idle()));
@@ -194,9 +199,17 @@ final class NativeContinuousChecks {
               Bundle position = new Bundle();
               position.putLong("position", originalPlayback[0].getLong("positionMs"));
               PlaybackBridge.current().command("seek", position);
-              Bundle floating = new Bundle();
-              floating.putBoolean("enabled", originalPlayback[0].getBoolean("floatingEnabled"));
-              PlaybackBridge.current().command("showFloating", floating);
+            }
+            if (originalFloating[0] != null) {
+              floatingPreference(originalFloating[0]);
+              if (PlaybackBridge.current() != null) {
+                Bundle floating = new Bundle();
+                floating.putBoolean("enabled", originalFloating[0]);
+                PlaybackBridge.current().command("showFloating", floating);
+              }
+              if (!originalFloating[0]) PlaybackForegroundService.stop();
+              else if (PlaybackBridge.current() == null)
+                PlaybackForegroundService.start(test.getTargetContext());
             }
             // 失败后不清除真实故障门禁；外部driver停止测试进程并恢复原系统设置。
             if (finished && idle()) {
@@ -451,7 +464,7 @@ final class NativeContinuousChecks {
             check(
                 field(page.host(), "previous") == null && field(page.host(), "candidate") == null,
                 "结束阶段仍保留旧页面或候选页面");
-          var service = (NativeAccessibilityService) field(Bootstrap.class, "playback");
+          var service = (NativePlaybackHost) field(Bootstrap.class, "playback");
           check(
               ((Collection<?>) field(service, "retired")).isEmpty()
                   && field(service, "handover") == null,
@@ -613,6 +626,35 @@ final class NativeContinuousChecks {
             test.getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
                 .executeShellCommand(command))) {
       return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+    }
+  }
+
+  private Object songRepository() {
+    try {
+      var source = Bootstrap.source();
+      var type = Class.forName("app.luoxianlv.library.SongRepository", true,
+          source.prepared.classLoader());
+      return type.getConstructor(Context.class).newInstance(source.prepared.context(home));
+    } catch (ReflectiveOperationException failure) {
+      throw new CheckFailure("真实业务曲库设置不可用", failure);
+    }
+  }
+
+  private boolean floatingPreference() {
+    Object repository = songRepository();
+    try {
+      return (Boolean) repository.getClass().getMethod("getFloatingEnabled").invoke(repository);
+    } catch (ReflectiveOperationException failure) {
+      throw new CheckFailure("读取悬浮窗偏好失败", failure);
+    }
+  }
+
+  private void floatingPreference(boolean enabled) {
+    Object repository = songRepository();
+    try {
+      repository.getClass().getMethod("setFloatingEnabled", boolean.class).invoke(repository, enabled);
+    } catch (ReflectiveOperationException failure) {
+      throw new CheckFailure("恢复悬浮窗偏好失败", failure);
     }
   }
 

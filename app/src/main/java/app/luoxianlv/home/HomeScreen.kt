@@ -1,7 +1,6 @@
 package app.luoxianlv.home
 
-import android.content.Intent
-import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -14,10 +13,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,11 +25,18 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.app.AccessibilityPromptDialog
+import app.luoxianlv.app.InputModePromptDialog
+import app.luoxianlv.app.OverlayPermissionPromptDialog
+import app.luoxianlv.app.PermissionSettings
+import app.luoxianlv.business.ui.rememberPageLauncher
 import app.luoxianlv.library.LibraryViewModel
 import app.luoxianlv.settings.AppearanceStore
 import app.luoxianlv.shared.ErrorDialogHost
 import app.luoxianlv.shared.SnackbarNotice
 import app.luoxianlv.ui.theme.LocalBackdropPalette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 问候语下方的一言。 */
 private const val HOME_QUOTE = "天空你是否知晓一切？"
@@ -49,12 +55,30 @@ fun HomeScreen(
     onDiscover: () -> Unit,
     onPractice: (Boolean) -> Unit,
     onSettings: () -> Unit,
+    onInputMode: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: LibraryViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val appearance by AppearanceStore.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val overlaySettings =
+        rememberPageLauncher(
+            "home_overlay_settings",
+            ActivityResultContracts.StartActivityForResult(),
+        ) {
+            scope.launch {
+                val granted =
+                    withContext(Dispatchers.IO) { PermissionSettings.overlayGranted(context) }
+                if (granted) onInputMode() else vm.setFloatingEnabled(true)
+            }
+        }
+    val accessibilitySettings =
+        rememberPageLauncher(
+            "home_accessibility_settings",
+            ActivityResultContracts.StartActivityForResult(),
+        ) {}
     val time = rememberHomeTime()
     // 一言：用户自定义优先，未设置或清空时用内置文案
     val headline = appearance.homeQuote.ifBlank { HOME_QUOTE }
@@ -136,6 +160,7 @@ fun HomeScreen(
                         // 窗口真的在跑才算运行中（[LibraryUiState.floatingRunning]），
                         // 界面不再靠持久化偏好猜状态。
                         running = state.floatingRunning,
+                        starting = state.startingFloating,
                         // 「启动 / 关闭」：同一个按钮按真实状态开或关。
                         onToggleFloating = vm::toggleFloating,
                         // 启动按钮左侧的「首页设置」：编辑一言 + 侧边栏开关
@@ -168,10 +193,28 @@ fun HomeScreen(
             // 已开启却弹引导，说明服务被系统回收没跑起来：处理方式不一样，要说清楚
             alreadyEnabled = state.service.accessibilityEnabled,
             onOpenSettings = {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                accessibilitySettings.launch(PermissionSettings.accessibility(context))
                 vm.dismissAccessibilityPrompt()
             },
             onDismiss = vm::dismissAccessibilityPrompt,
+        )
+    }
+    if (state.showOverlayPrompt) {
+        OverlayPermissionPromptDialog(
+            onOpenSettings = {
+                vm.dismissOverlayPrompt()
+                overlaySettings.launch(PermissionSettings.overlay(context))
+            },
+            onDismiss = vm::dismissOverlayPrompt,
+        )
+    }
+    if (state.showInputModePrompt) {
+        InputModePromptDialog(
+            onConfigure = {
+                vm.dismissInputModePrompt()
+                onInputMode()
+            },
+            onDismiss = vm::dismissInputModePrompt,
         )
     }
     ErrorDialogHost(state.error, vm::dismissError)

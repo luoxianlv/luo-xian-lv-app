@@ -3,7 +3,6 @@ package app.luoxianlv.app
 import android.content.Intent
 import android.os.Bundle
 import android.os.PowerManager
-import android.provider.Settings
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -72,7 +71,8 @@ class MainPage : ComposePage() {
         showOnboarding =
             !BuildConfig.INTERNAL_BUILD &&
                 isFirstLaunch() &&
-                !PlaybackConnection.isEnabled(pageContext)
+                (!PermissionSettings.overlayGranted(pageContext) ||
+                    !PlaybackConnection.inputReady(pageContext))
     }
 
     @Composable
@@ -107,9 +107,9 @@ class MainPage : ComposePage() {
                         OnboardingDialog(
                             onEnable = {
                                 markOnboardingDone()
-                                activity.startActivity(
-                                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                                )
+                                repository.floatingEnabled = false
+                                navigation.startFloatingAfterSetup = true
+                                navigation.subPage.value = Routes.INPUT_MODE
                             },
                             onLater = ::markOnboardingDone,
                         )
@@ -206,7 +206,7 @@ class MainPage : ComposePage() {
                 android.os.Build.VERSION.SDK_INT >= 33 &&
                 repository.floatingEnabled &&
                 appPrefs.getBoolean("auto_start_asked", false) &&
-                PlaybackConnection.isEnabled(pageContext) &&
+                PlaybackConnection.inputReady(pageContext) &&
                 pageContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
                     android.content.pm.PackageManager.PERMISSION_GRANTED &&
                 !appPrefs.getBoolean("notification_permission_asked", false)
@@ -217,8 +217,13 @@ class MainPage : ComposePage() {
                 arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
             )
         }
-        // 无障碍服务可能在本应用暂停期间被启用；回到前台时按持久化偏好重新对齐悬浮窗
-        PlaybackConnection.instance?.showFloating(repository.floatingEnabled)
+        // 授权引导尚未结束不抢先显示窗口；已有用户按所选模式恢复独立播放宿主。
+        if (!showOnboarding && !navigation.startFloatingAfterSetup) {
+            runCatching {
+                PlaybackConnection.restoreFloating(pageContext, repository.floatingEnabled)
+            }
+                .onFailure { app.luoxianlv.diagnostics.AppLog.w("播放", "恢复播放窗口失败", it) }
+        }
         if (!BuildConfig.INTERNAL_BUILD && disclaimerAccepted) {
             if (!updateCheckOnOpenDone) {
                 checkUpdatesAfterDisclaimer()
@@ -247,10 +252,11 @@ class MainPage : ComposePage() {
                 !disclaimerAccepted ||
                 showOnboarding ||
                 showBatteryPrompt ||
-                showAutoStartPrompt
+                showAutoStartPrompt ||
+                navigation.subPage.value == Routes.INPUT_MODE
         )
             return
-        if (!PlaybackConnection.isEnabled(pageContext)) return
+        if (!repository.floatingEnabled || !PlaybackConnection.inputReady(pageContext)) return
         val pm = pageContext.getSystemService(PowerManager::class.java) ?: return
         if (
             !pm.isIgnoringBatteryOptimizations(pageContext.packageName) &&

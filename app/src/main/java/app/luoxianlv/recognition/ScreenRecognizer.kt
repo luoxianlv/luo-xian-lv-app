@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import app.luoxianlv.library.PlayMode
 import app.luoxianlv.recognition.GlyphDetection.coherent
 import app.luoxianlv.recognition.GlyphDetection.glyphs
-import app.luoxianlv.recognition.GlyphDetection.localMean
 import app.luoxianlv.recognition.GlyphDetection.modeLabels
 import app.luoxianlv.recognition.KeyboardReference.MODE_GAPS
 import app.luoxianlv.recognition.KeyboardReference.MODE_SEMI_OFFSET
@@ -29,6 +28,12 @@ object ScreenRecognizer {
         val observedModes: Int,
         val noteBorders: Int,
         val modeBorders: Int,
+        /** 本帧已重新验证全部圆框，仅省略重复的字形搜索。 */
+        val reusedGeometry: Boolean = false,
+        internal val analysisWidth: Int = 0,
+        internal val analysisHeight: Int = 0,
+        internal val noteRadius: Float = 0f,
+        internal val modeRadius: Float = 0f,
     )
 
     private const val TARGET_WIDTH = 1024
@@ -37,7 +42,7 @@ object ScreenRecognizer {
     private val MODE_ORDER =
         listOf(PlayMode.SEMITONE, PlayMode.RAISE, PlayMode.NATURAL, PlayMode.LOWER)
 
-    fun fromBitmap(bitmap: Bitmap): Result? {
+    fun fromBitmap(bitmap: Bitmap, previous: Result? = null): Result? {
         val scaled =
             if (bitmap.width > TARGET_WIDTH) {
                 val height =
@@ -56,34 +61,41 @@ object ScreenRecognizer {
                 val c = px[i]
                 0.299f * (c shr 16 and 0xff) + 0.587f * (c shr 8 and 0xff) + 0.114f * (c and 0xff)
             }
-        return analyze(luma, w, h)
+        return analyze(luma, w, h, previous)
     }
 
     fun analyze(
         luma: FloatArray,
         width: Int,
         height: Int,
+        previous: Result? = null,
     ): Result? {
         require(width > 0 && height > 0 && luma.size.toLong() == width.toLong() * height)
+        validatePrevious(luma, width, height, previous)?.let {
+            return it
+        }
         // 顶帽阈值提取明显亮于邻域的像素，即使天空比数字更亮也能保留字形。
-        val local = localMean(luma, width, height, 18)
+        val integral = LuminanceIntegral(luma, width, height)
+        val local = integral.mean(18)
+        val stack = IntArray(luma.size)
+        val mask = BooleanArray(luma.size)
         val borders by lazy { ButtonBorderDetector(luma, width, height) }
         val candidates = mutableListOf<List<Glyph>>()
         for (threshold in listOf(45f, 30f, 20f, 10f)) {
-            val strict =
-                BooleanArray(luma.size) { luma[it] - local[it] > threshold && luma[it] > 120f }
-            val glyphs = glyphs(strict, width, height)
+            for (i in luma.indices) mask[i] = luma[i] - local[i] > threshold && luma[i] > 120f
+            val glyphs = glyphs(mask, width, height, stack = stack)
             candidates.add(glyphs)
             val notes = findNoteRows(glyphs, width).firstOrNull() ?: continue
-            resolveLayout(luma, local, width, height, notes, borders)?.let {
+            resolveLayout(luma, local, integral, stack, width, height, notes, borders)?.let {
                 return it
             }
         }
         for (threshold in listOf(200f, 175f, 150f)) {
-            val glyphs = glyphs(BooleanArray(luma.size) { luma[it] > threshold }, width, height)
+            for (i in luma.indices) mask[i] = luma[i] > threshold
+            val glyphs = glyphs(mask, width, height, stack = stack)
             candidates.add(glyphs)
             val notes = findNoteRows(glyphs, width).firstOrNull() ?: continue
-            resolveLayout(luma, local, width, height, notes, borders)?.let {
+            resolveLayout(luma, local, integral, stack, width, height, notes, borders)?.let {
                 return it
             }
         }
@@ -103,7 +115,17 @@ object ScreenRecognizer {
         var best: Result? = null
         for (notes in sparse) {
             val result =
-                resolveLayout(luma, local, width, height, notes, borders, sparse = true) ?: continue
+                resolveLayout(
+                    luma,
+                    local,
+                    integral,
+                    stack,
+                    width,
+                    height,
+                    notes,
+                    borders,
+                    sparse = true,
+                ) ?: continue
             if (result.noteBorders == 8 && result.modeBorders == 4) return result
             if (
                 result.noteBorders + result.modeBorders >
@@ -117,6 +139,8 @@ object ScreenRecognizer {
     private fun resolveLayout(
         luma: FloatArray,
         local: FloatArray,
+        integral: LuminanceIntegral,
+        stack: IntArray,
         width: Int,
         height: Int,
         notes: List<Glyph>,
@@ -157,7 +181,23 @@ object ScreenRecognizer {
             val i = y * width + x
             loose[i] = luma[i] - local[i] > 22f && luma[i] > 85f
         }
-        val labels = modeLabels(glyphs(loose, width, height), noteY, noteH, predictedY, spacing)
+        val labels =
+            modeLabels(
+                glyphs(
+                    loose,
+                    width,
+                    height,
+                    modeLeft,
+                    modeRight + 1,
+                    modeTop,
+                    modeBottom + 1,
+                    stack,
+                ),
+                noteY,
+                noteH,
+                predictedY,
+                spacing,
+            )
         // 仅横向匹配可能误选按钮上下的场景特征。
         val matched = predictedX.map { px ->
             labels
@@ -170,7 +210,18 @@ object ScreenRecognizer {
             if (matched.all { it != null } && coherent(matched.filterNotNull(), spacing)) {
                 matched.filterNotNull()
             } else
-                locateModeText(luma, width, height, predictedX, predictedY, spacing, noteH, noteY)
+                locateModeText(
+                    luma,
+                    width,
+                    height,
+                    predictedX,
+                    predictedY,
+                    spacing,
+                    noteH,
+                    noteY,
+                    integral,
+                    stack,
+                )
         val modeCircles =
             MODE_ORDER.indices.map { i ->
                 val label = textRow?.get(i)
@@ -196,9 +247,133 @@ object ScreenRecognizer {
                 (textRow?.get(it)?.h ?: 0f) > 0f || modeFit?.observed?.get(it) == true
             }
 
-        val r = modeFit?.radius ?: (0.31f * spacing)
+        return resultFromRows(
+            luma,
+            width,
+            height,
+            noteXs,
+            noteY,
+            noteFit?.radius ?: 0f,
+            modeX,
+            modeY,
+            modeFit?.radius ?: (0.31f * spacing),
+            directlySeen,
+            notes.count { it.pixels > 0 },
+            textRow?.count { it.h > 0f } ?: 0,
+            noteFit?.count ?: 0,
+            modeFit?.count ?: 0,
+        )
+    }
+
+    /** 旧结果仅限定搜索范围；位置、比例和十二个圆框须得到当前画面重新确认。 */
+    private fun validatePrevious(
+        luma: FloatArray,
+        width: Int,
+        height: Int,
+        previous: Result?,
+    ): Result? {
+        if (
+            previous == null ||
+                previous.analysisWidth != width ||
+                previous.analysisHeight != height ||
+                previous.noteBorders != 8 ||
+                previous.modeBorders != 4 ||
+                previous.noteRadius <= 0f ||
+                previous.modeRadius <= 0f
+        )
+            return null
+        val xs = previous.layout.noteX
+        if (
+            xs.size != 8 ||
+                xs.any { !it.isFinite() || it !in 0f..1f } ||
+                !previous.layout.noteY.isFinite()
+        )
+            return null
+        val noteXs = FloatArray(8) { xs[it] * width }
+        val noteY = previous.layout.noteY * height
+        val spacing = (noteXs.last() - noteXs.first()) / 7f
+        if (spacing <= 0f) return null
+        val modeXs = FloatArray(4)
+        var modeY = 0f
+        for (i in MODE_ORDER.indices) {
+            val point = previous.layout.modes[MODE_ORDER[i]] ?: return null
+            if (point.size != 2 || point.any { !it.isFinite() || it !in 0f..1f }) return null
+            modeXs[i] = point[0] * width
+            if (i == 0) modeY = point[1] * height
+            else if (abs(point[1] * height - modeY) > .01f) return null
+        }
+        if (modeY <= 0f || modeY >= noteY) return null
+        val borders = ButtonBorderDetector(luma, width, height)
+        fun verifyRow(points: FloatArray, y: Float, radius: Float, units: FloatArray): BorderRow? {
+            val circles = points.map { x ->
+                borders.locate(
+                    x,
+                    y,
+                    spacing,
+                    1f,
+                    1f,
+                    minRadius = max(.1f, (radius - 2f) / spacing),
+                    maxRadius = (radius + 2f) / spacing,
+                )
+            }
+            if (circles.any { it == null }) return null
+            // 移动超过两个分析像素即回到完整搜索，避免沿用旧位置。
+            if (
+                circles.indices.any { i ->
+                    val circle = circles[i]!!
+                    abs(circle.x - points[i]) > 2f ||
+                        abs(circle.y - y) > 2f ||
+                        abs(circle.radius - radius) > 2f
+                }
+            )
+                return null
+            return fitBorderRow(circles, units, spacing)?.takeIf { it.count == points.size }
+        }
+        val notes =
+            verifyRow(noteXs, noteY, previous.noteRadius, FloatArray(8) { it.toFloat() })
+                ?: return null
+        val modes = verifyRow(modeXs, modeY, previous.modeRadius, MODE_GAPS) ?: return null
+        if (abs((notes.xs.last() - notes.xs.first()) / 7f - spacing) > 1f) return null
+        return resultFromRows(
+            luma,
+            width,
+            height,
+            notes.xs,
+            notes.y,
+            notes.radius,
+            modes.xs,
+            modes.y,
+            modes.radius,
+            BooleanArray(4) { true },
+            0,
+            0,
+            8,
+            4,
+            reusedGeometry = true,
+        )
+    }
+
+    private fun resultFromRows(
+        luma: FloatArray,
+        width: Int,
+        height: Int,
+        noteXs: FloatArray,
+        noteY: Float,
+        noteRadius: Float,
+        modeX: FloatArray,
+        modeY: Float,
+        modeRadius: Float,
+        directlySeen: BooleanArray,
+        observedNotes: Int,
+        observedModes: Int,
+        noteBorders: Int,
+        modeBorders: Int,
+        reusedGeometry: Boolean = false,
+    ): Result {
         val contrast =
-            FloatArray(4) { ButtonStateReader.contrast(luma, width, height, modeX[it], modeY, r) }
+            FloatArray(4) {
+                ButtonStateReader.contrast(luma, width, height, modeX[it], modeY, modeRadius)
+            }
         val best = (1..3).maxBy { contrast[it] }
         val second = (1..3).filter { it != best }.maxOf { contrast[it] }
         val mode =
@@ -220,10 +395,15 @@ object ScreenRecognizer {
             KeyLayout(FloatArray(8) { noteXs[it] / width }, noteY / height, modes),
             mode,
             halfTone,
-            notes.count { it.pixels > 0 },
-            textRow?.count { it.h > 0f } ?: 0,
-            noteFit?.count ?: 0,
-            modeFit?.count ?: 0,
+            observedNotes,
+            observedModes,
+            noteBorders,
+            modeBorders,
+            reusedGeometry,
+            width,
+            height,
+            noteRadius,
+            modeRadius,
         )
     }
 }

@@ -7,58 +7,31 @@ import kotlin.math.sqrt
 
 /** 负责阈值分割、连通域和字形分组，不依赖键盘布局。 */
 internal object GlyphDetection {
-    /** 利用积分图计算邻域均值。 */
-    fun localMean(
-        luma: FloatArray,
-        w: Int,
-        h: Int,
-        r: Int,
-    ): FloatArray {
-        val integral = DoubleArray((w + 1) * (h + 1))
-        for (y in 0 until h) {
-            var row = 0.0
-            val src = y * w
-            val dst = (y + 1) * (w + 1)
-            for (x in 0 until w) {
-                row += luma[src + x]
-                integral[dst + x + 1] = integral[dst - (w + 1) + x + 1] + row
-            }
-        }
-        return FloatArray(w * h) { i ->
-            val x = i % w
-            val y = i / w
-            val x0 = max(0, x - r)
-            val x1 = min(w, x + r + 1)
-            val y0 = max(0, y - r)
-            val y1 = min(h, y + r + 1)
-            val sum =
-                integral[y1 * (w + 1) + x1] -
-                    integral[y0 * (w + 1) + x1] -
-                    integral[y1 * (w + 1) + x0] + integral[y0 * (w + 1) + x0]
-            (sum / ((x1 - x0) * (y1 - y0))).toFloat()
-        }
-    }
-
     /** 提取 [mask] 中字形大小的连通域，并合并上下分离的同一字符，例如带点的 i。 */
     fun glyphs(
         mask: BooleanArray,
         w: Int,
         h: Int,
+        left: Int = 0,
+        right: Int = w,
+        top: Int = 0,
+        bottom: Int = h,
+        stack: IntArray = IntArray((right - left) * (bottom - top)),
     ): List<Glyph> {
-        val stack = IntArray(mask.size)
         val raw = mutableListOf<Glyph>()
-        for (start in mask.indices) {
+        for (sy in top until bottom) for (sx in left until right) {
+            val start = sy * w + sx
             if (!mask[start]) continue
-            var top = 0
-            stack[top++] = start
+            var pending = 0
+            stack[pending++] = start
             mask[start] = false
             var x0 = Int.MAX_VALUE
             var x1 = Int.MIN_VALUE
             var y0 = Int.MAX_VALUE
             var y1 = Int.MIN_VALUE
             var count = 0
-            while (top > 0) {
-                val p = stack[--top]
+            while (pending > 0) {
+                val p = stack[--pending]
                 count++
                 val x = p % w
                 val y = p / w
@@ -71,11 +44,11 @@ internal object GlyphDetection {
                         if (dx == 0 && dy == 0) continue
                         val nx = x + dx
                         val ny = y + dy
-                        if (nx !in 0 until w || ny !in 0 until h) continue
+                        if (nx !in left until right || ny !in top until bottom) continue
                         val q = ny * w + nx
                         if (mask[q]) {
                             mask[q] = false
-                            stack[top++] = q
+                            stack[pending++] = q
                         }
                     }
                 }

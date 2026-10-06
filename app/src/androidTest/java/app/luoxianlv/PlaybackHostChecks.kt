@@ -6,7 +6,7 @@ import android.graphics.Path
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.Display
-import app.luoxianlv.hot.NativeAccessibilityService
+import app.luoxianlv.hot.NativePlaybackHost
 import app.luoxianlv.hot.contract.AccessibilityBinding
 import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.hot.contract.PlaybackValues
@@ -28,9 +28,9 @@ internal fun Instrumentation.checkPlaybackBoundary() {
     val old = checkNotNull(PlaybackBridge.current())
     val outer =
         old.javaClass.getDeclaredField("this\$0").apply { isAccessible = true }.get(old)
-            as NativeAccessibilityService
+            as NativePlaybackHost
     val reconnect =
-        NativeAccessibilityService::class.java.getDeclaredMethod("onServiceConnected").apply {
+        NativePlaybackHost::class.java.getDeclaredMethod("reconnect").apply {
             isAccessible = true
         }
     val callbacks = AtomicInteger()

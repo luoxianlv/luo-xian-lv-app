@@ -11,9 +11,12 @@ public final class LuoXianLvApp extends Application {
     super.onCreate();
     if (app.luoxianlv.update.DeltaWorkerService.isPatchProcess(this)) return;
     if (app.luoxianlv.host.RecoveryActivity.isRecoveryProcess(this)) return;
+    if (app.luoxianlv.input.InputController.isHelperProcess(this)) return;
     CrashLog.install(this, Bootstrap::recordCrash);
     app.luoxianlv.hot.ApkUpdateBridge.install(
         this, Bootstrap::usageChanged, Bootstrap::ordinaryUpdateIdle);
+    app.luoxianlv.input.InputController.install(this).setWirelessBackend(
+        new app.luoxianlv.input.WirelessAdbBackend(this));
     Bootstrap.start(this);
   }
 

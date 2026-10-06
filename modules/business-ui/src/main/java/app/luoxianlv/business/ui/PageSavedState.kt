@@ -2,12 +2,15 @@ package app.luoxianlv.business.ui
 
 import android.net.Uri
 import android.os.Bundle
+import android.os.Parcel
 import android.os.Parcelable
 import android.util.SparseArray
 import android.view.AbsSavedState
+import androidx.compose.foundation.lazy.layout.getDefaultLazyLayoutKey
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotMutableState
 import org.json.JSONArray
+import java.util.UUID
 
 /** 仅导出版本化基础值；新代际用自己的 Compose 类型重建状态，不接收旧类的序列化数据。 */
 internal object PageSavedState {
@@ -88,6 +91,7 @@ internal object PageSavedState {
                     node("double", value.toString())
                 }
                 is Uri -> node("uri", text(value.toString()))
+                is UUID -> node("uuid", text(value.toString()))
                 is MutableIntState -> node("int-state", value.intValue)
                 is MutableLongState -> node("long-state", value.longValue.toString())
                 is MutableFloatState -> {
@@ -174,6 +178,7 @@ internal object PageSavedState {
                         }
                     collection(kind, value.asIterable())
                 }
+                is Parcelable -> node("lazy-key", LazyKeys.index(value))
                 else -> error("页面状态需要基础值 Saver：${value.javaClass.name}")
             }
         }
@@ -221,6 +226,8 @@ internal object PageSavedState {
                 "float" -> float()
                 "double" -> double()
                 "uri" -> Uri.parse(string())
+                "uuid" -> string().let { value -> UUID.fromString(value).also { require(it.toString() == value) } }
+                "lazy-key" -> getDefaultLazyLayoutKey(integer(0))
                 "int-state" -> mutableIntStateOf(integer())
                 "long-state" -> mutableLongStateOf(string().toLong())
                 "float-state" -> mutableFloatStateOf(float())
@@ -304,7 +311,12 @@ internal object PageSavedState {
             is Double -> bundle.putDouble(key, value)
             is Bundle -> bundle.putBundle(key, value)
             is Uri -> bundle.putParcelable(key, value)
+            is UUID -> bundle.putSerializable(key, value)
             is AbsSavedState -> bundle.putParcelable(key, value)
+            is Parcelable -> {
+                require(LazyKeys.matches(value)) { "保存状态顶层不是基础值" }
+                bundle.putParcelable(key, value)
+            }
             is SparseArray<*> -> {
                 require(
                     (0 until value.size()).all {
@@ -339,6 +351,28 @@ internal object PageSavedState {
                     else -> bundle.putSerializable(key, value)
                 }
             else -> error("保存状态顶层不是基础值")
+        }
+    }
+
+    private object LazyKeys {
+        private val type = getDefaultLazyLayoutKey(0).javaClass
+
+        fun matches(value: Parcelable) = value.javaClass === type
+
+        fun index(value: Parcelable): Int {
+            require(matches(value)) { "页面状态需要基础值 Saver：${value.javaClass.name}" }
+            // AndroidX 默认列表键的公开工厂按 index 构造；只在当前代际读取单个 Int。
+            val parcel = Parcel.obtain()
+            return try {
+                value.writeToParcel(parcel, 0)
+                require(parcel.dataSize() == 4) { "默认列表键格式不兼容" }
+                parcel.setDataPosition(0)
+                parcel.readInt().also {
+                    require(it >= 0 && getDefaultLazyLayoutKey(it) == value) { "默认列表键索引无效" }
+                }
+            } finally {
+                parcel.recycle()
+            }
         }
     }
 }

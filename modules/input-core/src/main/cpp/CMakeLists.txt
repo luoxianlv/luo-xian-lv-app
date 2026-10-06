@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(luoxianlv_input LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if(ANDROID)
+    add_library(luoxianlv_input SHARED touch_engine.cpp)
+    target_compile_options(luoxianlv_input PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)
+    target_link_options(luoxianlv_input PRIVATE -Wl,-z,max-page-size=16384)
+    target_link_libraries(luoxianlv_input PRIVATE log)
+
+    # 无线调试配对使用公开 SPAKE2 实现，独立动态库不参与触点状态机。
+    enable_language(C)
+    set(SPAKE2_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../third_party/native")
+    add_library(spake2 SHARED
+        "${SPAKE2_SOURCE_DIR}/spake2_jni.cpp"
+        "${SPAKE2_SOURCE_DIR}/spake2-c/spake2.c"
+        "${SPAKE2_SOURCE_DIR}/spake2-c/sha512.c")
+    target_include_directories(spake2 PRIVATE "${SPAKE2_SOURCE_DIR}/spake2-c/include")
+    target_link_options(spake2 PRIVATE -Wl,-z,max-page-size=16384)
+else()
+    enable_testing()
+    add_executable(touch_model_test tests/touch_model_test.cpp)
+    if(MSVC)
+        target_compile_options(touch_model_test PRIVATE /W4 /WX /utf-8)
+    else()
+        target_compile_options(touch_model_test PRIVATE -Wall -Wextra -Werror)
+    endif()
+    add_test(NAME touch_model COMMAND touch_model_test)
+endif()

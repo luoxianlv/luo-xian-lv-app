@@ -23,7 +23,7 @@ final class GroupHandoverChecks {
   private NativeLoader.Prepared next;
   private BusinessFactory factory;
   private final Bootstrap.Source baseline;
-  private final NativeAccessibilityService service;
+  private final NativePlaybackHost service;
   private Probe current;
 
   private GroupHandoverChecks(
@@ -34,7 +34,7 @@ final class GroupHandoverChecks {
     this.click = click;
     this.next = next;
     baseline = Bootstrap.source();
-    service = (NativeAccessibilityService) field(PlaybackBridge.current(), "this$0");
+    service = (NativePlaybackHost) field(PlaybackBridge.current(), "this$0");
     BusinessFactory[] value = new BusinessFactory[1];
     main(
         () -> {
@@ -67,9 +67,7 @@ final class GroupHandoverChecks {
     main(
         () -> {
           originalState[0] = session(original).snapshot();
-          Bundle hidden = new Bundle();
-          hidden.putBoolean("enabled", false);
-          original.command("showFloating", hidden);
+          // 普通前台服务拥有会话；关闭浮窗会退役本次交接要验证的播放器。
         });
     idle();
     try {
@@ -336,7 +334,8 @@ final class GroupHandoverChecks {
   }
 
   private void idle() {
-    await(
+    try {
+      await(
         "组件持续忙碌",
         () ->
             onMain(
@@ -346,6 +345,18 @@ final class GroupHandoverChecks {
                         && Bootstrap.canAutoActivate()
                         && !Bootstrap.pages().isEmpty()
                         && Bootstrap.pages().stream().allMatch(page -> page.host().canStage())));
+    } catch (AssertionError failure) {
+      AtomicReference<String> status = new AtomicReference<>("主线程状态未采集");
+      main(() -> status.set("当前宿主匹配=" + (NativePlaybackHost.current() == service)
+          + "，播放桥存在=" + (PlaybackBridge.current() != null)
+          + "，当前可替换=" + service.playbackCanReplace()
+          + "，本宿主退役=" + service.playbackRetiring()
+          + "，全局退役=" + NativePlaybackHost.anyRetiring()
+          + "，进程可激活=" + Bootstrap.canAutoActivate()
+          + "，页面数=" + Bootstrap.pages().size()
+          + "，页面可准备=" + Bootstrap.pages().stream().allMatch(page -> page.host().canStage())));
+      throw new AssertionError("组件持续忙碌：" + status.get(), failure);
+    }
   }
 
   private void assertGeneration(ClassLoader expected) {

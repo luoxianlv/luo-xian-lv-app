@@ -12,6 +12,9 @@ import android.util.Log;
 import app.luoxianlv.MainActivity;
 import app.luoxianlv.host.Bootstrap;
 import app.luoxianlv.host.R;
+import app.luoxianlv.hot.NativePlaybackHost;
+import app.luoxianlv.hot.ForegroundStopper;
+import app.luoxianlv.hot.contract.NativePlaybackSession;
 import app.luoxianlv.hot.contract.ForegroundPolicy;
 import app.luoxianlv.hot.contract.HostDiagnostics;
 
@@ -20,12 +23,18 @@ public final class PlaybackForegroundService extends Service {
   public static final String CHANNEL = app.luoxianlv.hot.contract.PlaybackBridge.FOREGROUND_CHANNEL;
   private static final int ID = 1201;
   private static final String STOP = "app.luoxianlv.STOP_FLOATING_PLAYER";
+  private static final String START = "app.luoxianlv.START_FLOATING_PLAYER";
+  private static final String START_AT = "playbackStartAtNanos";
   private static PlaybackForegroundService instance;
   private static boolean startPending;
   private static boolean stopRequested;
+  private static long lastStopAt;
   private boolean foreground;
   private int lastStartId;
   private ForegroundPolicy policy;
+  private ForegroundStopper stopping;
+  private PlaybackHost playback;
+  private boolean closingPlayback;
   private AutoCloseable preparation;
 
   /** 来源由整组事务切换；常驻服务不能一直保留旧业务策略的加载器。 */
@@ -65,12 +74,20 @@ public final class PlaybackForegroundService extends Service {
 
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
+    if (stopping != null) stopping.cancel();
     // 停止命令、重启的绑定实例也先登记，不能只在 onCreate 中调用。
     promoteToForeground();
     foreground = true;
     lastStartId = startId;
     startPending = false;
-    if (intent != null && STOP.equals(intent.getAction())) stopRequested = true;
+    if (intent != null && START.equals(intent.getAction())) {
+      // 请求时间来自同一启动时钟；迟到的旧启动不能覆盖用户随后发出的关闭。
+      stopRequested = intent.getLongExtra(START_AT, 0) <= lastStopAt;
+    }
+    if (intent != null && STOP.equals(intent.getAction())) {
+      stopRequested = true;
+      lastStopAt = android.os.SystemClock.elapsedRealtimeNanos();
+    }
     closePreparation();
     Preparation waiting = new Preparation(intent, startId);
     preparation = waiting;
@@ -126,7 +143,8 @@ public final class PlaybackForegroundService extends Service {
                     stopRequested = true;
                     policy.stopPlayback();
                   }
-                  if (stopRequested || !policy.shouldRun()) stopIfLatest();
+                   if (stopRequested || !policy.shouldRun()) stopIfLatest();
+                   else ensurePlayback();
                 });
         if (!created && current()) main.postDelayed(retry, 16);
         else close();
@@ -174,13 +192,43 @@ public final class PlaybackForegroundService extends Service {
   }
 
   private void stopIfLatest() {
-    // 旧命令不能撤掉较新启动请求所需的通知。
-    if (lastStartId != 0 && stopSelfResult(lastStartId)) {
-      closePreparation();
-      stopForeground(STOP_FOREGROUND_REMOVE);
-      foreground = false;
-      diagnostic("已停止：启动序号=" + lastStartId);
+    if (stopping == null) {
+      stopping = new ForegroundStopper(this, startId -> {
+        if (instance != this || lastStartId != startId) return;
+        closePreparation();
+        closePlayback();
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        foreground = false;
+        diagnostic("已停止：启动序号=" + startId);
+      });
     }
+    stopping.stop(lastStartId);
+  }
+
+  private void ensurePlayback() {
+    if (playback == null) {
+      playback = new PlaybackHost();
+      playback.open();
+    } else {
+      var port = app.luoxianlv.hot.contract.PlaybackBridge.current();
+      if (port != null) {
+        android.os.Bundle arguments = new android.os.Bundle();
+        arguments.putBoolean("enabled", true);
+        port.command("showFloating", arguments);
+      }
+    }
+  }
+
+  private void checkPlaybackDemand() {
+    if (playback != null && !closingPlayback && policy != null && (stopRequested || !policy.shouldRun())) stop();
+  }
+
+  private void closePlayback() {
+    PlaybackHost previous = playback;
+    playback = null;
+    if (previous == null) return;
+    closingPlayback = true;
+    try { previous.close(); } finally { closingPlayback = false; }
   }
 
   private void diagnostic(String message) {
@@ -189,8 +237,10 @@ public final class PlaybackForegroundService extends Service {
 
   @Override
   public void onDestroy() {
+    if (stopping != null) stopping.cancel();
     closePreparation();
     if (instance == this) instance = null;
+    closePlayback();
     foreground = false;
     policy = null;
     super.onDestroy();
@@ -199,10 +249,12 @@ public final class PlaybackForegroundService extends Service {
   /** 与无障碍和 Activity 生命周期一样，仅在主线程调用。 */
   public static void start(Context context) {
     stopRequested = false;
-    if (startPending || (instance != null && instance.foreground)) return;
+    boolean restart = instance != null && instance.stopping != null && instance.stopping.cancel();
+    if (startPending || (instance != null && instance.foreground && !restart)) return;
     startPending = true;
     try {
-      context.startForegroundService(new Intent(context, PlaybackForegroundService.class));
+      context.startForegroundService(new Intent(context, PlaybackForegroundService.class)
+          .setAction(START).putExtra(START_AT, android.os.SystemClock.elapsedRealtimeNanos()));
     } catch (RuntimeException failure) {
       startPending = false;
       HostDiagnostics.log(Log.WARN, "播放服务", "系统拒绝启动播放前台服务", failure);
@@ -211,7 +263,41 @@ public final class PlaybackForegroundService extends Service {
 
   public static void stop() {
     stopRequested = true;
+    lastStopAt = android.os.SystemClock.elapsedRealtimeNanos();
     // 不用 stopService 抢在 onStartCommand 前销毁，先登记前台再兑现关闭。
     if (!startPending && instance != null) instance.stopIfLatest();
+  }
+
+  /** 业务来源和热更租约集中在普通服务；系统无障碍连接不持有业务实例。 */
+  private final class PlaybackHost extends NativePlaybackHost {
+    private Bootstrap.Source source;
+
+    PlaybackHost() { super(PlaybackForegroundService.this); }
+
+    @Override protected AutoCloseable whenPlaybackReady(Runnable ready) { return Bootstrap.ready(ready); }
+    @Override protected boolean initialCreation(Runnable create) { return Bootstrap.initialCreation(create); }
+    @Override protected NativePlaybackSession createPlaybackSession() {
+      source = Bootstrap.source();
+      return source.factory.playback();
+    }
+    @Override protected Context playbackContext() {
+      Context value = source.prepared.context(PlaybackForegroundService.this);
+      source = null;
+      return value;
+    }
+    @Override protected void playbackOpened() {
+      Bootstrap.playbackOpened(this);
+      checkPlaybackDemand();
+    }
+    @Override protected void playbackClosed() { Bootstrap.playbackClosed(this); }
+    @Override protected void playbackFailed(Throwable failure) { Bootstrap.componentFailed(failure); }
+    @Override protected void playbackUsageChanged() {
+      Bootstrap.usageChanged();
+      checkPlaybackDemand();
+    }
+    @Override protected void foregroundRequested(boolean enabled) {
+      if (enabled) start(PlaybackForegroundService.this);
+      else if (!closingPlayback) stop();
+    }
   }
 }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SnackbarHostState
@@ -82,10 +83,12 @@ fun SettingsScreen(
     onDiagnostics: () -> Unit,
     onAnalyticsDebug: () -> Unit,
     onExperimental: () -> Unit,
+    onInputMode: () -> Unit,
     snackbarHostState: SnackbarHostState,
     vm: SettingsViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val inputMode = rememberInputModeState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var showThemePicker by remember { mutableStateOf(false) }
@@ -183,6 +186,22 @@ fun SettingsScreen(
                                 )
                         )
                     }
+                }
+            }
+        }
+
+        item {
+            Column {
+                PreferenceGroupCaption("演奏")
+                Spacer(modifier = Modifier.height(6.dp))
+                SettingsCard {
+                    PreferenceItem(
+                        title = "输入模式",
+                        summary = inputMode.label,
+                        icon = Icons.Filled.TouchApp,
+                        iconTint = IconBlue,
+                        onClick = onInputMode,
+                    )
                 }
             }
         }

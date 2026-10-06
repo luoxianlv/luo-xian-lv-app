@@ -1,6 +1,7 @@
 package app.luoxianlv.playback
 
 import android.os.Handler
+import android.os.SystemClock
 import android.view.Display
 import app.luoxianlv.diagnostics.AppLog
 import app.luoxianlv.hot.contract.AccessibilityBinding
@@ -17,6 +18,8 @@ internal class PlaybackScreenCapture(
 ) {
     private val jobs = AtomicInteger()
     private val executor = Executors.newSingleThreadExecutor()
+    private var previous: ScreenRecognizer.Result? = null
+    private var previousFrame: PlaybackCoordinates.Frame? = null
 
     val idle
         get() = jobs.get() == 0
@@ -32,8 +35,9 @@ internal class PlaybackScreenCapture(
         binding: AccessibilityBinding,
         accept: (AccessibilityBinding.Frame) -> Boolean,
         done: (PlaybackCoordinates.Frame, ScreenRecognizer.Result?) -> Unit,
-        failed: () -> Unit,
+        failed: (Int) -> Unit,
     ) {
+        val requestedAt = SystemClock.uptimeMillis()
         try {
             binding.screenshot(
                 Display.DEFAULT_DISPLAY,
@@ -41,7 +45,7 @@ internal class PlaybackScreenCapture(
                     override fun success(screenshot: AccessibilityBinding.Frame) {
                         if (!accept(screenshot)) {
                             screenshot.close()
-                            failed()
+                            failed(-1)
                             return
                         }
                         val frame =
@@ -50,11 +54,24 @@ internal class PlaybackScreenCapture(
                                 screenshot.buffer.height,
                             )
                         jobs.incrementAndGet()
+                        val receivedAt = SystemClock.uptimeMillis()
                         try {
                             executor.execute {
+                                AppLog.log(
+                                    "截图分段：请求=${receivedAt - requestedAt} 毫秒 排队=${SystemClock.uptimeMillis() - receivedAt} 毫秒"
+                                )
                                 val result =
                                     try {
-                                        ScreenshotAnalyzer.recognize(screenshot)
+                                        val result =
+                                            ScreenshotAnalyzer.recognize(
+                                                screenshot,
+                                                previous.takeIf { frame == previousFrame },
+                                            )
+                                        previous = result?.takeIf {
+                                            it.noteBorders == 8 && it.modeBorders == 4
+                                        }
+                                        previousFrame = frame
+                                        result
                                     } finally {
                                         jobs.decrementAndGet()
                                     }
@@ -66,19 +83,19 @@ internal class PlaybackScreenCapture(
                         } catch (failure: RejectedExecutionException) {
                             jobs.decrementAndGet()
                             screenshot.close()
-                            if (!closed()) failed()
+                            if (!closed()) failed(-1)
                         }
                     }
 
                     override fun failure(errorCode: Int) {
                         AppLog.w(PlaybackSession.TAG, "截图失败：错误码=$errorCode")
-                        failed()
+                        failed(errorCode)
                     }
                 },
             )
         } catch (failure: Exception) {
             AppLog.w(PlaybackSession.TAG, "无法请求截图", failure)
-            failed()
+            failed(-1)
         }
     }
 }

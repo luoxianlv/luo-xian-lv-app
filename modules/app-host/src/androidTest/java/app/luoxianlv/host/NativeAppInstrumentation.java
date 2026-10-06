@@ -14,6 +14,7 @@ import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
 import app.luoxianlv.hot.contract.PlaybackBridge;
 import app.luoxianlv.hot.contract.PracticeBridge;
+import app.luoxianlv.service.PlaybackForegroundService;
 import java.nio.charset.StandardCharsets;
 import java.util.function.BooleanSupplier;
 
@@ -112,6 +113,35 @@ public final class NativeAppInstrumentation extends Instrumentation {
 
   private void require(boolean condition, String message) {
     if (!condition) throw new AssertionError(message);
+  }
+
+  private Object songRepository() {
+    try {
+      var source = Bootstrap.source();
+      var type = Class.forName("app.luoxianlv.library.SongRepository", true,
+          source.prepared.classLoader());
+      return type.getConstructor(Context.class).newInstance(source.prepared.context(getTargetContext()));
+    } catch (ReflectiveOperationException failure) {
+      throw new IllegalStateException("无法读取真实业务曲库设置", failure);
+    }
+  }
+
+  private boolean floatingPreference() {
+    Object repository = songRepository();
+    try {
+      return (Boolean) repository.getClass().getMethod("getFloatingEnabled").invoke(repository);
+    } catch (ReflectiveOperationException failure) {
+      throw new IllegalStateException("无法读取悬浮窗偏好", failure);
+    }
+  }
+
+  private void floatingPreference(boolean enabled) {
+    Object repository = songRepository();
+    try {
+      repository.getClass().getMethod("setFloatingEnabled", boolean.class).invoke(repository, enabled);
+    } catch (ReflectiveOperationException failure) {
+      throw new IllegalStateException("无法恢复悬浮窗偏好", failure);
+    }
   }
 
   private void await(String message, BooleanSupplier condition) {
@@ -636,6 +666,10 @@ public final class NativeAppInstrumentation extends Instrumentation {
         await("动态曲库没有显示", () -> find("导入谱子") != null);
         step("通过：首页、设置和曲库");
 
+        Boolean[] savedFloating = {null};
+        onMain(() -> savedFloating[0] = floatingPreference());
+        previousFloating = savedFloating[0];
+        onMain(() -> floatingPreference(true));
         String component =
             getTargetContext().getPackageName()
                 + "/app.luoxianlv.service.MusicAccessibilityService";
@@ -647,8 +681,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
                     : previousServices + ":" + component;
         shell("settings put secure enabled_accessibility_services " + enabled);
         shell("settings put secure accessibility_enabled 1");
+        onMain(() -> PlaybackForegroundService.start(getTargetContext()));
         await("独立业务播放服务未连接", () -> PlaybackBridge.current() != null);
-        previousFloating = PlaybackBridge.current().query("state").getBoolean("floatingEnabled");
         onMain(
             () -> {
               Bundle value = new Bundle();
@@ -662,7 +696,7 @@ public final class NativeAppInstrumentation extends Instrumentation {
         await("独立选歌窗口没有显示", () -> find("选择谱子") != null);
         click("关闭");
         await("选歌关闭后未恢复浮窗面板", () -> find("选歌") != null);
-        step("通过：无障碍服务与真实 Material 浮窗面板");
+        step("通过：普通播放服务与真实 Material 浮窗面板");
         if (online != null) {
           NativeFullOnlineChecks.run(this, main, online, onlineRollback, onlinePersist);
         } else if (groupChecks) {
@@ -682,6 +716,8 @@ public final class NativeAppInstrumentation extends Instrumentation {
         getTargetContext().startActivity(
             new Intent().setClassName(getTargetContext(), "app.luoxianlv.MainActivity")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        // 系统通知栏可以覆盖已恢复的 Activity；演练场入口验收先还原正常前台。
+        shell("cmd statusbar collapse");
         Activity entryHome = main;
         await("入口回归前首页窗口未恢复焦点", entryHome::hasWindowFocus);
         // 设置页也有同名分区标题，不能据此误以为已经位于首页。
@@ -726,8 +762,23 @@ public final class NativeAppInstrumentation extends Instrumentation {
                           .getIdentifier("AppTheme", "style", "app.luoxianlv.business")
                       == 0,
                   "模块资源污染演奏宿主");
-              playing.onBackPressed();
             });
+        long practiceToken = PracticeBridge.readyToken();
+        require(practiceToken != 0, "前台演练场没有独立路由标识");
+        var canvas = PracticeBridge.geometry();
+        require(canvas != null && canvas.getInt("width") > 0 && canvas.getInt("height") > 0,
+            "前台演练场未提供实际画布坐标");
+        onMain(() -> playing.startActivity(
+            new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)));
+        await("后台演练场仍接管播放路由", () -> !PracticeBridge.active() && !PracticeBridge.ready()
+            && PracticeBridge.readyToken() == 0 && PracticeBridge.pitch() == null && PracticeBridge.geometry() == null);
+        require(!playing.isDestroyed(), "演练场进入后台时被错误销毁");
+        getTargetContext().startActivity(
+            new Intent().setClassName(getTargetContext(), "app.luoxianlv.ui.practice.PracticeActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+        await("返回演练场未恢复已就绪路由", () -> playing.hasWindowFocus() && PracticeBridge.ready());
+        require(PracticeBridge.readyToken() == practiceToken, "后台返回丢失了原演练场页面");
+        onMain(playing::onBackPressed);
         await("演练场退出未释放入口", () -> !PracticeBridge.active() && playing.isDestroyed());
         report.putString(
             "stream",
@@ -840,13 +891,18 @@ public final class NativeAppInstrumentation extends Instrumentation {
     } finally {
       workRelease.countDown();
       try {
-        if (previousFloating != null && PlaybackBridge.current() != null) {
+        if (previousFloating != null) {
+          boolean restoreFloating = previousFloating;
           Bundle restore = new Bundle();
-          restore.putBoolean("enabled", previousFloating);
+          restore.putBoolean("enabled", restoreFloating);
           onMain(
               () -> {
+                floatingPreference(restoreFloating);
                 if (PlaybackBridge.current() != null)
                   PlaybackBridge.current().command("showFloating", restore);
+                if (!restoreFloating) PlaybackForegroundService.stop();
+                else if (PlaybackBridge.current() == null)
+                  PlaybackForegroundService.start(getTargetContext());
               });
         }
         if (previousServices != null)

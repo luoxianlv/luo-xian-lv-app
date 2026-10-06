@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -31,6 +32,11 @@ class PracticePage : ViewPage() {
     private var gravityLens: StageGravityLens? = null
     private var started = false
     private var resumed = false
+    private var routeActive = false
+    @Volatile private var foregroundSnapshot = false
+    @Volatile private var canvasSnapshot: Canvas? = null
+    private var focusTree: ViewTreeObserver? = null
+    private val focusChanged = ViewTreeObserver.OnWindowFocusChangeListener { updateForeground() }
     private var activated = false
     private var closing = false
     private var curtain: StageCurtain? = null
@@ -46,6 +52,11 @@ class PracticePage : ViewPage() {
     private val ending
         get() = closed || closing || activity.isFinishing
 
+    private val foreground
+        get() = foregroundSnapshot
+
+    private data class Canvas(val width: Int, val height: Int, val x: Int, val y: Int)
+
     private val resources
         get() = pageContext.resources
 
@@ -57,6 +68,23 @@ class PracticePage : ViewPage() {
                 ?: PracticeSession.Mode.NATURAL
         val half = state.getBoolean("half", false)
         val root = FrameLayout(pageContext).apply { setBackgroundColor(Color.rgb(6, 8, 7)) }
+        root.addOnAttachStateChangeListener(
+            object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(view: View) {
+                    focusTree =
+                        view.viewTreeObserver.also {
+                            it.addOnWindowFocusChangeListener(focusChanged)
+                        }
+                    updateForeground()
+                }
+
+                override fun onViewDetachedFromWindow(view: View) {
+                    removeFocusListener()
+                    deactivateRoute()
+                }
+            }
+        )
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateCanvasSnapshot() }
         // 同窗口候选自行准备无声画面，不从仍在使用的旧页夺走渲染器。
         backdrop =
             (if (host.isCurrent()) PreparedWallpaper.take(activity, pageContext)
@@ -141,7 +169,9 @@ class PracticePage : ViewPage() {
                         session.select(mode)
                         if (half) session.toggleHalf()
                         onNoteOn = { midi ->
-                            if (ownsSession && resumed) sampler?.noteOn(midi) ?: false else false
+                            if (ownsSession && this@PracticePage.foreground)
+                                sampler?.noteOn(midi) ?: false
+                            else false
                         }
                         onNoteOff = { sampler?.noteOff() }
                         onExit = ::exitStage
@@ -177,7 +207,11 @@ class PracticePage : ViewPage() {
                     }
                 keyboard = keys
                 PracticePlaybackGate.bindSession(this@PracticePage, keys.session)
+                keys.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    updateCanvasSnapshot()
+                }
                 root.addView(keys, root.indexOfChild(veil), FrameLayout.LayoutParams(-1, -1))
+                updateCanvasSnapshot()
                 ViewCompat.requestApplyInsets(root)
                 if (restored) {
                     // 重建或即时替换保持当前演奏界面，不重播入场、也不恢复旧的按住状态。
@@ -242,25 +276,9 @@ class PracticePage : ViewPage() {
         if (resumed && !ending) {
             activated = true
             configureWindow()
-            if (!ownsSession) {
-                PracticePlaybackGate.enter(this)
-                PlaybackConnection.instance?.pause()
-                keyboard?.let { PracticePlaybackGate.bindSession(this, it.session) }
-            }
-            backdrop?.resumeRendering()
-            if (openingFinished && keyboardReady) keyboard?.open(0)
-            keyboard?.wallpaperSoundEnabled = WallpaperProjectStore.soundEnabled(pageContext)
-            backdrop?.setSoundEnabled(
-                openingFinished && !exiting && WallpaperProjectStore.soundEnabled(pageContext)
-            )
-            curtain?.setAmbientActive(true)
-            restoreAudio()
-            publishReady()
+            updateForeground()
         } else {
-            if (wasResumed && ownsSession) {
-                PracticePlaybackGate.setReady(this, false)
-                PlaybackConnection.instance?.pause()
-            }
+            if (wasResumed || foregroundSnapshot) deactivateRoute()
             keyboard?.silence()
             sampler?.close()
             sampler = null
@@ -271,6 +289,84 @@ class PracticePage : ViewPage() {
         }
     }
 
+    private fun updateForeground() {
+        // 宿主和窗口只能在主线程读取；共享桥接接口在任意线程读取此快照。
+        foregroundSnapshot =
+            resumed && !ending && !exiting && host.isCurrent() && activity.hasWindowFocus()
+        if (!foreground) {
+            canvasSnapshot = null
+            if (routeActive) deactivateRoute()
+            return
+        }
+        if (!ownsSession) {
+            PracticePlaybackGate.enter(this, { foreground }, ::keyboardGeometry)
+            keyboard?.let { PracticePlaybackGate.bindSession(this, it.session) }
+        }
+        if (!routeActive) {
+            routeActive = true
+            PlaybackConnection.instance?.pause()
+        }
+        backdrop?.resumeRendering()
+        if (openingFinished && keyboardReady) keyboard?.open(0)
+        keyboard?.wallpaperSoundEnabled = WallpaperProjectStore.soundEnabled(pageContext)
+        backdrop?.setSoundEnabled(
+            openingFinished && WallpaperProjectStore.soundEnabled(pageContext)
+        )
+        curtain?.setAmbientActive(true)
+        updateCanvasSnapshot()
+        restoreAudio()
+        publishReady()
+    }
+
+    private fun deactivateRoute() {
+        foregroundSnapshot = false
+        canvasSnapshot = null
+        val token = PracticePlaybackGate.token(this)
+        routeActive = false
+        if (ownsSession) PracticePlaybackGate.setReady(this, false)
+        PlaybackConnection.instance?.pausePractice(token)
+        keyboard?.silence()
+        sampler?.close()
+        sampler = null
+        backdrop?.setSoundEnabled(false)
+        if (activated) backdrop?.suspendRendering()
+        curtain?.setAmbientActive(false)
+    }
+
+    private fun updateCanvasSnapshot() {
+        val keys = keyboard
+        if (
+            !foreground ||
+                keys == null ||
+                !keys.isAttachedToWindow ||
+                !keys.isShown ||
+                keys.width <= 0 ||
+                keys.height <= 0
+        ) {
+            canvasSnapshot = null
+            return
+        }
+        val origin = IntArray(2)
+        keys.getLocationOnScreen(origin)
+        canvasSnapshot = Canvas(keys.width, keys.height, origin[0], origin[1])
+    }
+
+    private fun keyboardGeometry(): Bundle? {
+        if (!foreground) return null
+        val canvas = canvasSnapshot ?: return null
+        return Bundle().apply {
+            putInt("width", canvas.width)
+            putInt("height", canvas.height)
+            putInt("screenX", canvas.x)
+            putInt("screenY", canvas.y)
+        }
+    }
+
+    private fun removeFocusListener() {
+        focusTree?.let { if (it.isAlive) it.removeOnWindowFocusChangeListener(focusChanged) }
+        focusTree = null
+    }
+
     override fun back(): Boolean {
         exitStage()
         return true
@@ -279,9 +375,11 @@ class PracticePage : ViewPage() {
     private fun exitStage() {
         if (exiting || ending || !host.isCurrent()) return
         exiting = true
+        foregroundSnapshot = false
+        canvasSnapshot = null
         backdrop?.setSoundEnabled(false)
         PracticePlaybackGate.setReady(this, false)
-        PlaybackConnection.instance?.pause()
+        PlaybackConnection.instance?.pausePractice(PracticePlaybackGate.token(this))
         keyboard?.close()
         sampler?.close()
         sampler = null
@@ -313,22 +411,25 @@ class PracticePage : ViewPage() {
 
     private fun publishReady() {
         if (!keyboardReady || !openingFinished || exiting || ending) return
+        updateCanvasSnapshot()
         if (!reportedReady) {
             reportedReady = true
             pageReady?.ready()
         }
-        if (!resumed || !ownsSession || PracticePlaybackGate.ready) return
+        if (!foreground || !ownsSession || PracticePlaybackGate.ready) return
         PracticePlaybackGate.setReady(this, true)
         backdrop?.setSoundEnabled(WallpaperProjectStore.soundEnabled(pageContext))
         AppLog.log("演练场已就绪：尺寸=${keyboard?.width}x${keyboard?.height}")
     }
 
     private fun stopSession() {
+        foregroundSnapshot = false
+        canvasSnapshot = null
         if (Build.VERSION.SDK_INT >= 33) gravityLens?.clear()
         curtain?.close()
         if (ownsSession) {
             PracticePlaybackGate.setReady(this, false)
-            PlaybackConnection.instance?.pause()
+            PlaybackConnection.instance?.pausePractice(PracticePlaybackGate.token(this))
         }
         backdrop?.close()
         keyboard?.close()
@@ -354,7 +455,7 @@ class PracticePage : ViewPage() {
 
     private fun restoreAudio() {
         val samples = loadedSamples ?: return
-        if (sampler != null || !resumed || !ownsSession || exiting || ending) return
+        if (sampler != null || !foreground || !ownsSession) return
         sampler =
             HarmonicaSampler(
                 samples,
@@ -362,7 +463,7 @@ class PracticePage : ViewPage() {
             ) {
                 if (ownsSession) {
                     keyboard?.silence()
-                    PlaybackConnection.instance?.pause()
+                    PlaybackConnection.instance?.pausePractice(PracticePlaybackGate.token(this))
                 }
             }
     }
@@ -386,6 +487,7 @@ class PracticePage : ViewPage() {
     }
 
     override fun dispose() {
+        removeFocusListener()
         stopSession()
         backdrop = null
         keyboard = null

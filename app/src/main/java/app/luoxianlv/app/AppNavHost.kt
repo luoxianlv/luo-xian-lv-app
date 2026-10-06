@@ -44,6 +44,7 @@ import app.luoxianlv.platform.PlatformClient
 import app.luoxianlv.practice.StagePrewarmEffect
 import app.luoxianlv.settings.AboutScreen
 import app.luoxianlv.settings.ExperimentalSettingsScreen
+import app.luoxianlv.settings.InputModeScreen
 import app.luoxianlv.settings.SettingsScreen
 import app.luoxianlv.shared.NoticeSnackbarHost
 import app.luoxianlv.ui.theme.GradientBackdrop
@@ -110,7 +111,10 @@ fun AppNavHost(
     }
 
     // 子页面打开时拦截返回键：先退回主页面
-    androidx.activity.compose.BackHandler(enabled = subPage != null) { subPage = null }
+    androidx.activity.compose.BackHandler(enabled = subPage != null) {
+        navigation.startFloatingAfterSetup = false
+        subPage = null
+    }
 
     // 仅窗口宽度变化后修正停在半页的位置；普通切页交给 Pager，避免额外动画争抢滚动。
     androidx.compose.runtime.LaunchedEffect(pagerState) {
@@ -227,6 +231,10 @@ fun AppNavHost(
                                         )
                                     },
                                     onSettings = { goTab(Routes.SETTINGS) },
+                                    onInputMode = {
+                                        navigation.startFloatingAfterSetup = true
+                                        subPage = Routes.INPUT_MODE
+                                    },
                                     snackbarHostState = snackbarHostState,
                                 )
                             }
@@ -252,6 +260,10 @@ fun AppNavHost(
                                     onDiagnostics = { subPage = Routes.DIAGNOSTICS },
                                     onAnalyticsDebug = { subPage = Routes.ANALYTICS_DEBUG },
                                     onExperimental = { subPage = Routes.EXPERIMENTAL },
+                                    onInputMode = {
+                                        navigation.startFloatingAfterSetup = false
+                                        subPage = Routes.INPUT_MODE
+                                    },
                                     snackbarHostState = snackbarHostState,
                                 )
                             }
@@ -348,6 +360,16 @@ fun AppNavHost(
 
                                     Routes.EXPERIMENTAL -> {
                                         ExperimentalSettingsScreen(onBack = { subPage = null })
+                                    }
+
+                                    Routes.INPUT_MODE -> {
+                                        InputModeScreen(
+                                            startAfterSetup = navigation.startFloatingAfterSetup,
+                                            onBack = {
+                                                navigation.startFloatingAfterSetup = false
+                                                subPage = null
+                                            },
+                                        )
                                     }
 
                                     Routes.ANALYTICS_DEBUG -> {

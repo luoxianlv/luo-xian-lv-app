@@ -5,7 +5,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import app.luoxianlv.business.ui.PageAlertDialog as AlertDialog
 
-/** 首次启动引导：确保用户开启无障碍服务（悬浮窗控制器依附于它）。 */
+/** 首次启动说明；具体授权按悬浮窗权限、输入模式的顺序进行。 */
 @Composable
 fun OnboardingDialog(
     onEnable: () -> Unit,
@@ -15,19 +15,14 @@ fun OnboardingDialog(
         onDismissRequest = onLater,
         title = { Text("欢迎使用落弦律") },
         text = {
-            Text("自动演奏需要「无障碍服务」来模拟点击游戏琴键，" + "悬浮窗控制器也会通过它显示在游戏上方。请先在系统设置中开启。")
+            Text("先允许悬浮窗显示在其他应用上方，再选择演奏使用的输入模式。按指引设置后即可使用。")
         },
-        confirmButton = { TextButton(onClick = onEnable) { Text("去开启") } },
+        confirmButton = { TextButton(onClick = onEnable) { Text("开始设置") } },
         dismissButton = { TextButton(onClick = onLater) { Text("以后再说") } },
     )
 }
 
-/**
- * 无障碍引导：开启悬浮窗但服务不在线时展示。
- *
- * [alreadyEnabled] 用来区分两种“服务不在线”的原因，因为处理方式完全不同： 没开过去系统设置打开；开过但服务没跑起来（ROM 省电策略回收无障碍服务后很常见）
- * 需要关掉再重新开启才会重新绑定。
- */
+/** 无障碍开关与实际连接分别检查，不能凭开关推断服务已运行。 */
 @Composable
 fun AccessibilityPromptDialog(
     alreadyEnabled: Boolean,
@@ -40,13 +35,35 @@ fun AccessibilityPromptDialog(
         text = {
             Text(
                 if (alreadyEnabled) {
-                    "系统设置里无障碍已开启，但服务没有运行起来（省电策略常会把它回收掉）。" + "请在系统设置里把「落弦律」关掉再重新开启，然后回到这里重新点「启动」。"
+                    "无障碍已开启，但连接尚未就绪。请在系统设置中检查落弦律，返回后再试。"
                 } else {
-                    "在系统设置中开启口琴自动播放器，悬浮窗会显示在游戏上方。"
+                    "在系统设置中开启落弦律的无障碍服务，用于自动识别和演奏。"
                 }
             )
         },
         confirmButton = { TextButton(onClick = onOpenSettings) { Text("打开设置") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+fun OverlayPermissionPromptDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("允许显示悬浮窗") },
+        text = { Text("打开后下滑，找到「悬浮窗／显示在其他应用上层」并允许，返回后继续选择输入模式。") },
+        confirmButton = { TextButton(onClick = onOpenSettings) { Text("去授权") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+fun InputModePromptDialog(onConfigure: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("设置输入模式") },
+        text = { Text("当前输入模式尚未连接。完成设置后即可启动悬浮窗。") },
+        confirmButton = { TextButton(onClick = onConfigure) { Text("去设置") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

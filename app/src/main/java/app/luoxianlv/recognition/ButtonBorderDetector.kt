@@ -10,7 +10,7 @@ import kotlin.math.sin
 
 /** 在局部梯度上拟合圆；文字只限定搜索区域。多个角区须具有一致的边缘极性，避免把穿过按钮的墙边当作圆框。 */
 internal class ButtonBorderDetector(
-    luma: FloatArray,
+    private val luma: FloatArray,
     private val width: Int,
     private val height: Int,
 ) {
@@ -18,9 +18,28 @@ internal class ButtonBorderDetector(
 
     private val gx = FloatArray(luma.size)
     private val gy = FloatArray(luma.size)
+    private val gradientLeft = IntArray(height) { width }
+    private val gradientRight = IntArray(height)
 
-    init {
-        for (y in 1 until height - 1) for (x in 1 until width - 1) {
+    /** 只计算圆框搜索会读取的区域；相邻按钮重叠的梯度在同次识别中共用。 */
+    private fun prepareGradients(left: Int, right: Int, top: Int, bottom: Int) {
+        val x0 = max(1, left)
+        val x1 = min(width - 1, right)
+        if (x0 >= x1) return
+        for (y in max(1, top) until min(height - 1, bottom)) {
+            if (gradientLeft[y] == width) {
+                gradientRow(y, x0, x1)
+            } else {
+                gradientRow(y, x0, gradientLeft[y])
+                gradientRow(y, gradientRight[y], x1)
+            }
+            gradientLeft[y] = min(gradientLeft[y], x0)
+            gradientRight[y] = max(gradientRight[y], x1)
+        }
+    }
+
+    private fun gradientRow(y: Int, left: Int, right: Int) {
+        for (x in left until right) {
             val p = y * width + x
             gx[p] =
                 (luma[p - width + 1] + 2 * luma[p + 1] + luma[p + width + 1] -
@@ -47,6 +66,14 @@ internal class ButtonBorderDetector(
         val step = max(2, (spacing * .055f).roundToInt())
         val r0 = max(5, (spacing * minRadius).roundToInt())
         val r1 = max(r0, (spacing * maxRadius).roundToInt())
+        // 精搜会越过粗搜中心一步，采样还包含半径两侧的一个像素。
+        val margin = r1 + step + 3
+        prepareGradients(
+            (x - searchX).roundToInt() - margin,
+            (x + searchX).roundToInt() + margin,
+            (y - searchY).roundToInt() - margin,
+            (y + searchY).roundToInt() + margin,
+        )
         var best: Circle? = null
         fun search(
             left: Int,
@@ -63,7 +90,7 @@ internal class ButtonBorderDetector(
                 val ring = offsets(r)
                 for (cy in max(r + 2, top)..min(height - r - 3, bottom) step stride) {
                     for (cx in max(r + 2, left)..min(width - r - 3, right) step stride) {
-                        val score = score(cx, cy, ring, relaxed)
+                        val score = score(cx, cy, ring, relaxed, best?.score ?: 0f)
                         if (score > (best?.score ?: 0f))
                             best = Circle(cx.toFloat(), cy.toFloat(), r.toFloat(), score)
                     }
@@ -102,15 +129,21 @@ internal class ButtonBorderDetector(
 
     private fun offsets(radius: Int): IntArray =
         rings.getOrPut(radius) {
-            IntArray(SAMPLES * 3 * 2) { index ->
-                val sample = index / 6
-                val delta = index / 2 % 3 - 1
-                val direction = if (index % 2 == 0) COS[sample] else SIN[sample]
-                ((radius + delta) * direction).roundToInt()
+            IntArray(SAMPLES * 3) { index ->
+                val sample = index / 3
+                val delta = index % 3 - 1
+                ((radius + delta) * SIN[sample]).roundToInt() * width +
+                    ((radius + delta) * COS[sample]).roundToInt()
             }
         }
 
-    private fun score(cx: Int, cy: Int, ring: IntArray, relaxed: Boolean): Float {
+    private fun score(
+        cx: Int,
+        cy: Int,
+        ring: IntArray,
+        relaxed: Boolean,
+        minimumScore: Float,
+    ): Float {
         var positive = 0f
         var negative = 0f
         var positiveCount = 0
@@ -119,14 +152,20 @@ internal class ButtonBorderDetector(
         var negativeSectors = 0
         var pSector = 0
         var nSector = 0
+        val minCount = if (relaxed) 12 else 26
+        val minSectors = if (relaxed) 3 else 6
+        val center = cy * width + cx
         for (i in 0 until SAMPLES) {
             var p = 0f
             var n = 0f
+            val cos = COS[i]
+            val sin = SIN[i]
             for (delta in 0..2) {
-                val offset = i * 6 + delta * 2
-                val index = (cy + ring[offset + 1]) * width + cx + ring[offset]
-                val radial = gx[index] * COS[i] + gy[index] * SIN[i]
-                val tangent = -gx[index] * SIN[i] + gy[index] * COS[i]
+                val index = center + ring[i * 3 + delta]
+                val dx = gx[index]
+                val dy = gy[index]
+                val radial = dx * cos + dy * sin
+                val tangent = -dx * sin + dy * cos
                 if (abs(tangent) > abs(radial) * .8f) continue
                 p = max(p, radial)
                 n = max(n, -radial)
@@ -146,10 +185,29 @@ internal class ButtonBorderDetector(
                 if (nSector >= 3) negativeSectors++
                 pSector = 0
                 nSector = 0
+                // 剩余角区即使全部命中也无法通过或胜过当前最优时，提前结束。
+                val remaining = SAMPLES - i - 1
+                val sectors = remaining / 6
+                val pBound =
+                    if (
+                        positiveCount + remaining >= minCount &&
+                            positiveSectors + sectors >= minSectors
+                    ) {
+                        val coverage = (positiveCount + remaining).toFloat() / SAMPLES
+                        (positive + remaining * 16f) / SAMPLES * coverage * coverage
+                    } else 0f
+                val nBound =
+                    if (
+                        negativeCount + remaining >= minCount &&
+                            negativeSectors + sectors >= minSectors
+                    ) {
+                        val coverage = (negativeCount + remaining).toFloat() / SAMPLES
+                        (negative + remaining * 16f) / SAMPLES * coverage * coverage
+                    } else 0f
+                val bound = max(pBound, nBound)
+                if (bound == 0f || bound + .0001f <= minimumScore) return 0f
             }
         }
-        val minCount = if (relaxed) 12 else 26
-        val minSectors = if (relaxed) 3 else 6
         // 按角度覆盖度评分，避免少数高亮场景边缘压过较暗但连续的按钮圆环。
         val p =
             if (positiveCount >= minCount && positiveSectors >= minSectors)

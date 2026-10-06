@@ -11,8 +11,75 @@
         android:handleProfiling="false"
         android:functionalTest="true" />
     <instrumentation
+        android:name="app.luoxianlv.host.PlaybackHostInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
         android:name="app.luoxianlv.host.ApkUpdateInstrumentation"
         android:targetPackage="app.luoxianlv.debug"
         android:handleProfiling="false"
         android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.input.InputModeInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.input.InputGuideInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.input.PermissionEntryInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.PlaybackGestureInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.FloatingMarkerInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.RecognitionInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.WirelessPairingInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <instrumentation
+        android:name="app.luoxianlv.host.input.PairingNotificationInstrumentation"
+        android:targetPackage="app.luoxianlv.debug"
+        android:handleProfiling="false"
+        android:functionalTest="true" />
+    <application>
+        <!-- 冷进程验证仅在测试包运行，不向正式宿主添加系统组件。 -->
+        <activity
+            android:name="app.luoxianlv.host.input.PairingNotificationRelayActivity"
+            android:exported="true"
+            android:process=":pairing_notification_relay"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <service
+            android:name="app.luoxianlv.host.input.PairingNotificationListenerService"
+            android:exported="true"
+            android:process=":pairing_notification_probe"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <receiver
+            android:name="app.luoxianlv.host.input.ColdPairingReplyReceiver"
+            android:exported="true"
+            android:process=":pairing_notification_probe"
+            android:permission="android.permission.DUMP" />
+    </application>
 </manifest>

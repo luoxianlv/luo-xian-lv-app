@@ -1,8 +1,10 @@
 package app.luoxianlv.practice
 
+import android.os.Bundle
 import app.luoxianlv.hot.contract.PracticeBridge
+import java.util.function.BooleanSupplier
 
-/** 控制演练场就绪状态；固定布局模式可读取真实音区，点击仍由无障碍注入。 */
+/** 控制演练场就绪状态；固定布局模式可读取真实音区。 */
 object PracticePlaybackGate {
     private var owner: Any? = null
     private var session: PracticeSession? = null
@@ -27,11 +29,25 @@ object PracticePlaybackGate {
 
     fun owns(value: Any) = PracticeBridge.owns(value)
 
-    fun enter(value: Any) {
+    val readyToken
+        get() = PracticeBridge.readyToken()
+
+    fun geometry() = PracticeBridge.geometry()
+
+    fun token(value: Any) = PracticeBridge.token(value)
+
+    fun matchesPlayback(expected: Long, current: Long) = expected != 0L && expected == current
+
+    fun enter(value: Any, foreground: () -> Boolean = { true }, geometry: (() -> Bundle?)? = null) {
         if (owns(value)) return
         owner = value
         session = null
-        PracticeBridge.enter(value) { session?.let { PracticeBridge.Pitch(it.mode.name, it.half) } }
+        PracticeBridge.enter(
+            value,
+            { session?.let { PracticeBridge.Pitch(it.mode.name, it.half) } },
+            BooleanSupplier { foreground() },
+            geometry?.let { provider -> java.util.function.Supplier { provider() } },
+        )
     }
 
     fun setReady(owner: Any, value: Boolean) {

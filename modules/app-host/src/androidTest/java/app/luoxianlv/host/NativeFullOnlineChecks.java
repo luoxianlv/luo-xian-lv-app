@@ -239,7 +239,7 @@ final class NativeFullOnlineChecks {
               15000,
               () ->
                   onMain(() -> Bootstrap.pages().stream().noneMatch(page -> page.host().inUse())));
-          NativeAccessibilityService reconnected = reconnectPlayback();
+          NativePlaybackHost reconnected = reconnectPlayback();
           main(
               () -> {
                 check(
@@ -406,28 +406,15 @@ final class NativeFullOnlineChecks {
     }
   }
 
-  private NativeAccessibilityService reconnectPlayback() throws Exception {
-    String enabled = shell("settings get secure enabled_accessibility_services");
-    check(enabled.matches("[A-Za-z0-9_.$/:]+"), "无障碍设置格式不支持安全还原");
-    String component = "app.luoxianlv.debug/app.luoxianlv.service.MusicAccessibilityService";
-    String remaining =
-        java.util.Arrays.stream(enabled.split(":"))
-            .filter(value -> !value.equals(component))
-            .collect(java.util.stream.Collectors.joining(":"));
-    try {
-      shell(
-          remaining.isEmpty()
-              ? "settings delete secure enabled_accessibility_services"
-              : "settings put secure enabled_accessibility_services " + remaining);
-      await("旧播放连接未关闭", 15000, () -> PlaybackBridge.current() == null);
-    } finally {
-      shell("settings put secure enabled_accessibility_services " + enabled);
-    }
+  private NativePlaybackHost reconnectPlayback() throws Exception {
+    var previous = PlaybackBridge.current();
+    // 播放会话归普通宿主所有，重新绑定无障碍不再销毁或重建播放器。
+    main(() -> playbackOwner().reconnect());
     await(
-        "候选播放服务未重新连接",
+        "候选播放会话未重新连接",
         20000,
-        () ->
-            PlaybackBridge.current() != null && onMain(() -> playbackOwner().playbackCanReplace()));
+        () -> PlaybackBridge.current() != null && PlaybackBridge.current() != previous
+            && onMain(() -> playbackOwner().playbackCanReplace()));
     return playbackOwner();
   }
 
@@ -451,8 +438,8 @@ final class NativeFullOnlineChecks {
     }
   }
 
-  private static NativeAccessibilityService playbackOwner() {
-    return (NativeAccessibilityService) playbackField("this$0");
+  private static NativePlaybackHost playbackOwner() {
+    return (NativePlaybackHost) playbackField("this$0");
   }
 
   private static NativePlaybackSession playbackSession() {

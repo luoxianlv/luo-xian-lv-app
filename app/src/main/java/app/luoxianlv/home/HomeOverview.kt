@@ -53,6 +53,7 @@ internal fun HomeOverview(
     headline: String,
     minimumHeight: Dp,
     running: Boolean,
+    starting: Boolean = false,
     onToggleFloating: () -> Unit,
     onPractice: (Boolean) -> Unit,
     settingsButton: @Composable () -> Unit,
@@ -98,9 +99,9 @@ internal fun HomeOverview(
             settingsButton()
             Spacer(modifier = Modifier.width(10.dp))
             ActionPill(
-                label = if (running) "关闭" else "启动",
+                label = if (starting) "取消启动" else if (running) "关闭" else "启动",
                 onClick = onToggleFloating,
-                icon = if (running) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                icon = if (starting || running) Icons.Filled.Stop else Icons.Filled.PlayArrow,
                 modifier = Modifier.weight(1f),
             )
         }

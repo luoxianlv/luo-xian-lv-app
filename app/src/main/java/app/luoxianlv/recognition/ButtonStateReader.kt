@@ -19,30 +19,33 @@ internal object ButtonStateReader {
         val inSquared = rIn * rIn
         val midSquared = rMid * rMid
         val outSquared = rOut * rOut
-        val inner = mutableListOf<Float>()
-        val outer = mutableListOf<Float>()
         val x0 = max(0, (cx - rOut).toInt())
         val x1 = min(w - 1, (cx + rOut).toInt() + 1)
         val y0 = max(0, (cy - rOut).toInt())
         val y1 = min(h - 1, (cy + rOut).toInt() + 1)
+        val capacity = max(0, x1 - x0 + 1) * max(0, y1 - y0 + 1)
+        val inner = FloatArray(capacity)
+        val outer = FloatArray(capacity)
+        var innerSize = 0
+        var outerSize = 0
         for (y in y0..y1) {
             for (x in x0..x1) {
                 val dx = x - cx
                 val dy = y - cy
                 val d = dx * dx + dy * dy
                 if (d <= inSquared) {
-                    inner.add(luma[y * w + x])
+                    inner[innerSize++] = luma[y * w + x]
                 } else if (d in midSquared..outSquared) {
-                    outer.add(luma[y * w + x])
+                    outer[outerSize++] = luma[y * w + x]
                 }
             }
         }
-        if (inner.isEmpty() || outer.isEmpty()) return 0f
-        return median(inner) - median(outer)
+        if (innerSize == 0 || outerSize == 0) return 0f
+        return median(inner, innerSize) - median(outer, outerSize)
     }
 
-    private fun median(values: List<Float>): Float {
-        val sorted = values.sorted()
-        return sorted[sorted.size / 2]
+    private fun median(values: FloatArray, size: Int): Float {
+        java.util.Arrays.sort(values, 0, size)
+        return values[size / 2]
     }
 }

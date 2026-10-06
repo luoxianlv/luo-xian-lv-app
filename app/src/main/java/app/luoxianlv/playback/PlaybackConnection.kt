@@ -1,10 +1,13 @@
 package app.luoxianlv.playback
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Rect
 import android.os.Bundle
+import app.luoxianlv.app.PermissionSettings
 import app.luoxianlv.hot.contract.PlaybackBridge
 import app.luoxianlv.hot.contract.PlaybackPort
+import app.luoxianlv.hot.contract.SharedInput
 import app.luoxianlv.library.Song
 
 /** 页面侧适配器仅持有稳定宿主连接；返回的模型始终由本代业务代码构造。 */
@@ -14,6 +17,38 @@ class PlaybackConnection private constructor(private val port: PlaybackPort) {
             get() = PlaybackBridge.current()?.let(::PlaybackConnection)
 
         fun isEnabled(context: Context) = PlaybackBridge.isEnabled(context)
+
+        fun inputReady(context: Context): Boolean {
+            val input = runCatching { SharedInput.current()?.state() }.getOrNull()
+            return if (
+                input?.getString("mode", SharedInput.ACCESSIBILITY) == SharedInput.ACCESSIBILITY ||
+                    input == null
+            ) {
+                isEnabled(context)
+            } else input.getBoolean("connected") && input.getBoolean("touchReady")
+        }
+
+        fun startFloating(context: Context) {
+            instance?.let {
+                it.showFloating(true)
+                return
+            }
+            context.startForegroundService(
+                Intent()
+                    .setClassName(
+                        context.packageName,
+                        "app.luoxianlv.service.PlaybackForegroundService",
+                    )
+                    .setAction("app.luoxianlv.START_FLOATING_PLAYER")
+                    .putExtra("playbackStartAtNanos", android.os.SystemClock.elapsedRealtimeNanos())
+            )
+        }
+
+        fun restoreFloating(context: Context, enabled: Boolean) {
+            if (!enabled) instance?.showFloating(false)
+            else if (PermissionSettings.overlayGranted(context) && inputReady(context))
+                startFloating(context)
+        }
     }
 
     data class Diagnostics(
@@ -74,6 +109,10 @@ class PlaybackConnection private constructor(private val port: PlaybackPort) {
     fun play() = send("play")
 
     fun pause() = send("pause")
+
+    fun pausePractice(token: Long) {
+        if (token != 0L) send("pausePractice", Bundle().apply { putLong("practiceToken", token) })
+    }
 
     fun stop() = send("stop")
 

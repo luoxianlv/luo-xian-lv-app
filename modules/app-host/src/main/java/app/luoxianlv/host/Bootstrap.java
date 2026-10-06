@@ -10,7 +10,7 @@ import app.luoxianlv.hot.ContentQuarantine;
 import app.luoxianlv.hot.ContentStore;
 import app.luoxianlv.hot.GroupActivation;
 import app.luoxianlv.hot.GroupHandover;
-import app.luoxianlv.hot.NativeAccessibilityService;
+import app.luoxianlv.hot.NativePlaybackHost;
 import app.luoxianlv.hot.NativeLoader;
 import app.luoxianlv.hot.PageSwapHost;
 import app.luoxianlv.hot.contract.BusinessFactory;
@@ -41,7 +41,7 @@ public final class Bootstrap {
   private static boolean started, finished;
   private static Application application;
   private static final LinkedHashMap<PageSwapHost, String> PAGES = new LinkedHashMap<>();
-  private static NativeAccessibilityService playback;
+  private static NativePlaybackHost playback;
   private static GroupActivation activation;
   private static boolean updateBlocked;
   private static HostStartup startup;
@@ -81,13 +81,13 @@ public final class Bootstrap {
     usageChanged();
   }
 
-  public static void playbackOpened(NativeAccessibilityService service) {
+  public static void playbackOpened(NativePlaybackHost service) {
     playback = service;
     if (activation != null) activation.playbackOpened(service);
     usageChanged();
   }
 
-  public static void playbackClosed(NativeAccessibilityService service) {
+  public static void playbackClosed(NativePlaybackHost service) {
     if (playback == service) playback = null;
     usageChanged();
   }
@@ -260,7 +260,7 @@ public final class Bootstrap {
     updateBlocked = true;
     failure = error;
     if (updates != null) updates.stopScheduling();
-    NativeAccessibilityService service = playback;
+    NativePlaybackHost service = playback;
     try {
       if (service != null) service.stopBusiness();
     } catch (Throwable closing) {
@@ -303,7 +303,7 @@ public final class Bootstrap {
             new GroupActivation.Environment() {
               @Override
               public boolean workSafe() {
-                return process != null && process.canReplace();
+                return !NativePlaybackHost.anyRetiring() && process != null && process.canReplace();
               }
 
               @Override
@@ -312,7 +312,7 @@ public final class Bootstrap {
               }
 
               @Override
-              public NativeAccessibilityService playback() {
+              public NativePlaybackHost playback() {
                 return playback;
               }
 
@@ -394,7 +394,7 @@ public final class Bootstrap {
     ProcessHooks candidateProcess = factory.process(prepared.context(application));
     return new GroupHandover.Publication() {
       private final Source candidate = new Source(prepared, factory);
-      private final NativeAccessibilityService previousPlayback = playback;
+      private final NativePlaybackHost previousPlayback = playback;
       private boolean oldFrozen;
       private boolean candidateClosed;
 
@@ -406,7 +406,7 @@ public final class Bootstrap {
 
       @Override
       public boolean canCommit() {
-        return !oldFrozen && previousProcess.canReplace();
+        return !oldFrozen && !NativePlaybackHost.anyRetiring() && previousProcess.canReplace();
       }
 
       @Override
@@ -447,6 +447,7 @@ public final class Bootstrap {
       @Override
       public boolean released() {
         if (!previousProcess.released()
+            || NativePlaybackHost.anyRetiring()
             || (previousPlayback != null && previousPlayback.playbackRetiring())) return false;
         previous.prepared.closeCallbacks();
         return true;

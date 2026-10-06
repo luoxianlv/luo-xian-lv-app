@@ -95,12 +95,13 @@ public final class GroupHandover {
       NativeLoader.Prepared source,
       BusinessFactory factory,
       List<Page> pages,
-      NativeAccessibilityService playback,
+      NativePlaybackHost playback,
       Publication publication,
       Listener listener) {
     requireMain();
     if (source.manifest != null && !source.manifest.activation.equals("live")) return null;
-    if ((pages.isEmpty() && playback == null)
+    if (NativePlaybackHost.anyRetiring()
+        || (pages.isEmpty() && playback == null)
         || pages.stream().anyMatch(page -> !page.host().canStage())
         || (playback != null && (!playback.playbackCanReplace() || playback.playbackRetiring())))
       return null;
@@ -228,7 +229,7 @@ public final class GroupHandover {
   }
 
   public void playbackOpened(
-      NativeAccessibilityService service, NativeLoader.Prepared recovery, BusinessFactory factory) {
+      NativePlaybackHost service, NativeLoader.Prepared recovery, BusinessFactory factory) {
     requireMain();
     if (phase == Phase.PREPARING || phase == Phase.READY) {
       topologyChanged();
@@ -338,6 +339,7 @@ public final class GroupHandover {
     requireMain();
     return phase == Phase.READY
         && !failureReported
+        && !NativePlaybackHost.anyRetiring()
         && publication.canCommit()
         && parts.stream().allMatch(Part::valid);
   }
