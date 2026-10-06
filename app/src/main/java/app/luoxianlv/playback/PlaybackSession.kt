@@ -814,12 +814,10 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                 val valid = token == generation && playbackDisplay == currentDisplay
                 if (!valid) {
                     AppLog.log(
-                        "截图请求已过期：令牌有效=${token == generation} 播放显示=$playbackDisplay 当前显示=$currentDisplay 截图尺寸=${screenshot.buffer.width}x${screenshot.buffer.height}"
+                        "截图请求已过期：令牌有效=${token == generation} 播放显示=$playbackDisplay 当前显示=$currentDisplay 截图尺寸=${screenshot.width}x${screenshot.height}"
                     )
                 } else {
-                    AppLog.log(
-                        "无障碍截图尺寸=${screenshot.buffer.width}x${screenshot.buffer.height} 显示=$currentDisplay"
-                    )
+                    AppLog.log("输入截图尺寸=${screenshot.width}x${screenshot.height} 显示=$currentDisplay")
                 }
                 valid
             },

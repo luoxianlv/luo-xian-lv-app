@@ -332,6 +332,7 @@ public final class InputUserService extends IInputService.Stub {
   }
 
   private void publish(Bundle state) {
+    state.putInt("helperPid", Process.myPid());
     if (!state.containsKey("contactDecision") && snapshot.containsKey("contactDecision")) {
       state.putString("contactDecision", snapshot.getString("contactDecision"));
       state.putInt("trackedSlots", snapshot.getInt("trackedSlots", -1));

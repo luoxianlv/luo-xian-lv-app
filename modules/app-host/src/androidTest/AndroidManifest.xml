@@ -60,6 +60,7 @@
         android:targetPackage="app.luoxianlv.debug"
         android:handleProfiling="false"
         android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.ScreenshotPlaybackInstrumentation" android:targetPackage="app.luoxianlv.debug" android:handleProfiling="false" android:functionalTest="true" />
     <application>
         <!-- 冷进程验证仅在测试包运行，不向正式宿主添加系统组件。 -->
         <activity
