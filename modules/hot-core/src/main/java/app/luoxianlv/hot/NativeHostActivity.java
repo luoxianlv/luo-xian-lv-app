@@ -33,6 +33,7 @@ public abstract class NativeHostActivity extends Activity {
   private Object backCallback;
   private int currentLifecycle = NativePage.CREATED;
   private Bundle pendingState;
+  private View startup;
   private NativePage.Retained pendingRetained;
   private AutoCloseable preparation;
   private boolean preparationConsumed;
@@ -86,6 +87,19 @@ public abstract class NativeHostActivity extends Activity {
     return true;
   }
 
+  /** 业务准备期间的启动视图；默认是文字占位。 */
+  protected View createStartupView(Bundle state) {
+    TextView loading = new TextView(this);
+    loading.setGravity(android.view.Gravity.CENTER);
+    loading.setText("正在准备…");
+    return loading;
+  }
+
+  /** 页面已创建：返回 true 时启动视图继续盖在页面之上并由它自行移除；默认直接换成页面。 */
+  protected boolean startupCoversPage(View startup) {
+    return false;
+  }
+
   protected final PageSwapHost pageHost() {
     StrictJson.require(page instanceof PageSession, "原生页面会话尚未就绪");
     return ((PageSession) page).pages();
@@ -113,10 +127,8 @@ public abstract class NativeHostActivity extends Activity {
     try {
       results = new HostResults(this, state == null ? null : state.getBundle("native.results"));
       pendingState = state;
-      TextView loading = new TextView(this);
-      loading.setGravity(android.view.Gravity.CENTER);
-      loading.setText("正在准备…");
-      setContentView(loading);
+      startup = createStartupView(state);
+      setContentView(startup);
       preparation = whenPageReady(this::openPreparedPage);
     } catch (Throwable failure) {
       pageFailed(failure);
@@ -164,6 +176,8 @@ public abstract class NativeHostActivity extends Activity {
       page.attachHost(actions(page));
       if (retained != null) page.restoreRetained(retained);
       Bundle restored = state == null ? null : state.getBundle("native.page");
+      View cover = startup;
+      startup = null;
       setContentView(
           page.create(
               this,
@@ -171,6 +185,13 @@ public abstract class NativeHostActivity extends Activity {
               new Bundle(),
               (event, payload) -> {},
               () -> {}));
+      // 页面保持为内容区的直接子视图，启动视图作为兄弟叠在上层；故障页 setContentView 时一并清掉。
+      if (cover != null && startupCoversPage(cover))
+        addContentView(
+            cover,
+            new android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT));
       page.lifecycle(NativePage.CREATED);
       page.newIntent(getIntent());
       if (currentLifecycle != NativePage.CREATED) page.lifecycle(currentLifecycle);
@@ -435,6 +456,7 @@ public abstract class NativeHostActivity extends Activity {
   private void pageFailed(Throwable failure) {
     if (failing) return;
     failing = true;
+    startup = null;
     pageSessionFailed(failure);
     pageSessionClosed();
     warning("page_initialization_failed", failure);
