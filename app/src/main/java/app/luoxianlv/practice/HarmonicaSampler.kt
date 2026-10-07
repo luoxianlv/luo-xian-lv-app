@@ -9,9 +9,6 @@ import android.os.Looper
 import android.os.Process
 import app.luoxianlv.app.BusinessJobs
 import app.luoxianlv.hot.contract.OfficialAssets
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 
 /** 每个演练场持有一条口琴音频流；构造前先在 IO 线程解码采样。 */
@@ -20,9 +17,7 @@ class HarmonicaSampler(
     private val gain: Float = 1f,
     private val onInterrupted: () -> Unit,
 ) : AutoCloseable {
-    private data class Command(val midi: Int?)
-
-    private val command = AtomicReference<Command?>(null)
+    private val commands = HarmonicaCommands()
     private val voice = HarmonicaVoice(samples)
     private val main = Handler(Looper.getMainLooper())
     private val attributes =
@@ -76,9 +71,7 @@ class HarmonicaSampler(
                             track.play()
                             val buffer = ShortArray(240)
                             while (running) {
-                                command.getAndSet(null)?.let {
-                                    if (it.midi == null) voice.noteOff() else voice.noteOn(it.midi)
-                                }
+                                commands.apply(voice)
                                 voice.render(buffer)
                                 if (gain != 1f)
                                     for (i in buffer.indices) buffer[i] =
@@ -133,12 +126,15 @@ class HarmonicaSampler(
     fun noteOn(midi: Int): Boolean {
         if (!running) return false
         // 口琴是前台交互音效，直接混音；不抢占或压低壁纸持有的媒体焦点。
-        command.set(Command(midi))
+        commands.submit(midi)
+        LockSupport.unpark(worker)
         return true
     }
 
     fun noteOff() {
-        command.set(Command(null))
+        if (!running) return
+        commands.submit(null)
+        LockSupport.unpark(worker)
     }
 
     override fun close() {
@@ -156,7 +152,11 @@ class HarmonicaSampler(
             return index
                 .filter { it.isNotBlank() }
                 .associate { line ->
-                    val (midi, count, start, end, blend) = line.split('\t').map(String::toInt)
+                    val fields = line.split('\t').map(String::toInt)
+                    require(fields.size == 5 || (fields.size == 6 && fields[5] == 1)) {
+                        "口琴音源索引格式无效"
+                    }
+                    val (midi, count, start, end, blend) = fields
                     val bytes =
                         OfficialAssets.read(
                             context,
@@ -165,9 +165,7 @@ class HarmonicaSampler(
                             "harmonica/$midi.pcm",
                             16 * 1024 * 1024,
                         )
-                    require(bytes.size == count * 2) { "损坏的口琴音源 $midi" }
-                    val pcm = ShortArray(count)
-                    ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(pcm)
+                    val pcm = HarmonicaPcm.decode(bytes, count, fields.size == 6)
                     midi to HarmonicaSample(pcm, start, end, blend)
                 }
                 .also { require(it.keys == (48..85).toSet()) { "口琴音源不完整" } }

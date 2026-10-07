@@ -1,6 +1,6 @@
 package app.luoxianlv.practice
 
-/** 独立于 Android 的单声道 PCM 渲染器；循环交叠避开起音渐强段，保持延音连续。 */
+/** 原始采样及延音循环区间；循环交叠避开起音渐强段。 */
 data class HarmonicaSample(
     val pcm: ShortArray,
     val loopStart: Int,
@@ -17,35 +17,60 @@ data class HarmonicaSample(
     }
 }
 
+/** 单音口琴：独立松键保留尾音，下一次起音用短交叠打断前音。 */
 class HarmonicaVoice(private val samples: Map<Int, HarmonicaSample>) {
+    companion object {
+        internal const val SAMPLE_RATE = 48000
+        internal const val ATTACK_FRAMES = 240
+        internal const val RELEASE_FRAMES = SAMPLE_RATE / 2
+    }
+
     private data class Voice(
         val sample: HarmonicaSample,
         var position: Int = 0,
         var gain: Float = 0f,
+        var releaseGain: Float = 0f,
+        var releaseRemaining: Int = -1,
+        var releaseDuration: Int = RELEASE_FRAMES,
     )
 
     private var current: Voice? = null
     private var retiring: Voice? = null
-    private var held = false
 
     fun noteOn(midi: Int) {
         val sample = requireNotNull(samples[midi]) { "Missing harmonica sample $midi" }
-        retiring = current
+        retiring = current?.apply {
+            // 即使前音已经松键，也在新音开始后 5 ms 内结束，消除连按叠音。
+            releaseGain = gain
+            releaseRemaining = ATTACK_FRAMES
+            releaseDuration = ATTACK_FRAMES
+        }
         current = Voice(sample)
-        held = true
     }
 
     fun noteOff() {
-        held = false
+        current?.let(::release)
     }
 
     fun clear() {
         current = null
         retiring = null
-        held = false
+    }
+
+    private fun release(voice: Voice) {
+        // 重复松键不延长尾音；新音的短淡出由 noteOn 单独处理。
+        if (voice.releaseRemaining >= 0) return
+        voice.releaseGain = voice.gain
+        voice.releaseRemaining = RELEASE_FRAMES
     }
 
     private fun next(voice: Voice): Float {
+        if (voice.releaseRemaining < 0) {
+            voice.gain = (voice.gain + 1f / ATTACK_FRAMES).coerceAtMost(1f)
+        } else {
+            voice.releaseRemaining = (voice.releaseRemaining - 1).coerceAtLeast(0)
+            voice.gain = voice.releaseGain * voice.releaseRemaining / voice.releaseDuration
+        }
         val s = voice.sample
         val p = voice.position
         var value = s.pcm[p].toFloat()
@@ -63,16 +88,12 @@ class HarmonicaVoice(private val samples: Map<Int, HarmonicaSample>) {
         for (i in output.indices) {
             var value = 0f
             current?.let { v ->
-                v.gain =
-                    if (held) (v.gain + 1f / 240).coerceAtMost(1f)
-                    else (v.gain - 1f / 576).coerceAtLeast(0f)
                 value += next(v)
-                if (!held && v.gain == 0f) current = null
+                if (v.releaseRemaining == 0) current = null
             }
-            retiring?.let { v ->
-                v.gain = (v.gain - 1f / 240).coerceAtLeast(0f)
-                value += next(v)
-                if (v.gain == 0f) retiring = null
+            retiring?.let {
+                value += next(it)
+                if (it.releaseRemaining == 0) retiring = null
             }
             output[i] = (value * .8f).toInt().coerceIn(-32768, 32767).toShort()
         }

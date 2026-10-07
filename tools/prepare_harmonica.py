@@ -1,11 +1,9 @@
-"""Prepare the game's local WAVs for the practice sampler (NumPy; no network).
-
-Keep the attack, choose a correlated sustain seam between 2 and 4 seconds,
-and retain a 32 ms linear overlap. Output is 48 kHz mono signed little-endian PCM.
-"""
+"""保留游戏口琴的起音及渐强，在成熟吹奏段选循环接缝；48 kHz 单声道，无损压缩。"""
 from pathlib import Path
 import argparse
 import wave
+import struct
+import zlib
 import numpy as np
 
 
@@ -23,18 +21,26 @@ def prepare(source: Path, destination: Path):
         assert len(audible), filename
         pcm = pcm[max(0, int(audible[0]) - 96):]
         blend = 1536
-        start = 96000
+        start = 240000
         target = pcm[start:start + blend].astype(np.float64)
-        # Pick a seam with similar phase and amplitude, rather than looping the tail/silence.
+        # 避开起音和文件末尾的自然淡出，用同相、相近振幅的 32 ms 片段交叠。
         best = None
-        for end in range(144000, min(len(pcm), 192000), 12):
+        for end in range(336000, min(len(pcm), 408000), 12):
             candidate = pcm[end - blend:end].astype(np.float64)
             error = float(np.mean((candidate - target) ** 2))
             if best is None or error < best[0]:
                 best = (error, end)
         error, end = best
-        (destination / f"{midi}.pcm").write_bytes(pcm[:end].tobytes())
-        rows.append(f"{midi}\t{end}\t{start}\t{end}\t{blend}")
+        body = pcm[:end]
+        values = body.astype(np.int64)
+        delta = np.diff(np.diff(values, prepend=0), prepend=0).astype("<i2")
+        # 模 16 位的预测残差可以精确还原；zlib 自带完整性检查。
+        packed = b"LXH1" + struct.pack("<I", end) + zlib.compress(delta.tobytes(), 9)
+        decoded_delta = np.frombuffer(zlib.decompress(packed[8:]), dtype="<i2").astype(np.int64)
+        restored = np.cumsum(np.cumsum(decoded_delta)).astype("<i2")
+        assert np.array_equal(body, restored), filename
+        (destination / f"{midi}.pcm").write_bytes(packed)
+        rows.append(f"{midi}\t{end}\t{start}\t{end}\t{blend}\t1")
         scores.append(error ** .5 / 32768)
     (destination / "index.tsv").write_text("\n".join(rows) + "\n", encoding="utf-8")
     print(f"Prepared {len(rows)} samples; seam RMS error {min(scores):.4f}..{max(scores):.4f}; 48kHz mono")
