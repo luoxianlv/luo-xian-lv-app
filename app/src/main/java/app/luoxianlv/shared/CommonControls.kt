@@ -37,8 +37,8 @@ import app.luoxianlv.ui.theme.PlayerQqBlue
 /**
  * 胶囊操作按钮：本应用统一的主动作样式（「我的」的「启动」定下来的）。
  *
- * `surface` 白底。之所以不用 `FilledTonalButton`： 它的容器色是 `secondaryContainer`（浅蓝 #EAF3FF），压在同为蓝灰的渐变底上
- * 会糊成一片；白色才拉得开对比。
+ * 默认使用 `surface`，强调动作可指定容器与内容色。之所以不用 `FilledTonalButton`： 它的容器色是
+ * `secondaryContainer`（浅蓝 #EAF3FF），压在同为蓝灰的渐变底上 会糊成一片；白色才拉得开对比。
  *
  * [compact] 用于并排的双按钮（曲库的「导入谱子 / 平台下载」）， 矮一档、字号小一档，避免两个按钮各占半屏时显得笨重。
  */
@@ -49,12 +49,15 @@ fun ActionPill(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     compact: Boolean = false,
+    containerColor: Color = MaterialTheme.colorScheme.surface,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
 ) {
     Surface(
         onClick = onClick,
         modifier = modifier.heightIn(min = if (compact) 46.dp else 56.dp),
         shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surface,
+        color = containerColor,
+        contentColor = contentColor,
         // 填充已经半透（见 ON_BACKDROP_SURFACE_ALPHA），
         // 阴影画在填充之下会透上来把胶囊弄脏，所以阴影也不用；
         // 边界靠半透明填充本身与渐变底的明暗差。

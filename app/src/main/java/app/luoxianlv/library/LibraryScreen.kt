@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
@@ -66,24 +67,22 @@ fun LibraryScreen(
     SnackbarNotice(state.notice, snackbarHostState, vm::consumeNotice)
 
     Column(modifier = Modifier.fillMaxSize()) {
-        PageTitle(
-            title = "曲库",
-            trailing = "${visibleSongs.size} 首",
-            modifier = Modifier.padding(start = 20.dp, top = 12.dp, end = 20.dp),
-        )
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 10.dp, end = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth().padding(start = 20.dp, top = 12.dp, end = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 与「我的」的「启动」同一套白色胶囊。
-            // 原来用 FilledTonalButton，它的容器是浅蓝 secondaryContainer，
-            // 压在同为蓝灰的渐变底上会糊成一片，白色才拉得开对比。
+            PageTitle(
+                title = "曲库",
+                modifier = Modifier.weight(1f),
+            )
             ActionPill(
                 label = "导入谱子",
                 onClick = onImport,
                 icon = Icons.Filled.FileUpload,
                 compact = true,
-                modifier = Modifier.fillMaxWidth(),
+                containerColor = LocalBackdropPalette.current.segmentSelected,
+                contentColor = Color.White,
             )
         }
         Spacer(modifier = Modifier.height(12.dp))
