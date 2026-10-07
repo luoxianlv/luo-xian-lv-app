@@ -44,13 +44,8 @@ fun RemoteScoreList(
             last.index >= info.totalItemsCount - 5
         }
     }
-    LaunchedEffect(nearBottom, state.visibleCount, state.loadingMore, state.error) {
-        if (
-            nearBottom &&
-                state.error == null &&
-                (!state.loadingMore || state.visibleCount < state.scores.size)
-        )
-            onLoadMore()
+    LaunchedEffect(nearBottom, state.visibleCount, state.loadingMore, state.loadMoreFailed) {
+        if (nearBottom && state.canAutoLoadMore) onLoadMore()
     }
 
     LazyColumn(
@@ -92,7 +87,7 @@ fun RemoteScoreList(
                 // 不是列表内容。让它参与卡面的话，卡片下边缘会随加载态在中缝和底边之间跳。
                 item(key = "load-more", contentType = "footer") {
                     Text(
-                        if (state.error != null) {
+                        if (state.loadMoreFailed && state.visibleCount >= state.scores.size) {
                             "加载失败，点击重试"
                         } else if (state.loadingMore && state.visibleCount >= state.scores.size) {
                             "正在加载…"

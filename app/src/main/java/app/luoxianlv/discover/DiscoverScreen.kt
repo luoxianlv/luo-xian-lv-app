@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.luoxianlv.app.NavBarClearance
-import app.luoxianlv.shared.ErrorDialogHost
 import app.luoxianlv.shared.PageTitle
 import app.luoxianlv.shared.SnackbarNotice
 import app.luoxianlv.ui.theme.containerElevation
@@ -38,6 +37,7 @@ fun DiscoverScreen(
 
     LaunchedEffect(Unit) { vm.loadScores() }
     SnackbarNotice(state.downloaded?.let { "已加入曲库：$it" }, snackbarHostState, vm::ackDownloaded)
+    SnackbarNotice(state.error, snackbarHostState, vm::dismissError)
 
     // 标题与搜索入口共用一个滚动容器，小窗也能从页头直接滑动整页。
     RemoteScoreList(
@@ -85,6 +85,4 @@ fun DiscoverScreen(
             }
         },
     )
-
-    ErrorDialogHost(state.error, vm::dismissError)
 }

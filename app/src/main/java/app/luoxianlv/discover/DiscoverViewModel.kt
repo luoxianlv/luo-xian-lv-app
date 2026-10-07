@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import app.luoxianlv.core.Analytics
+import app.luoxianlv.diagnostics.AppLog
 import app.luoxianlv.library.AppEvents
 import app.luoxianlv.library.SongRepository
 import app.luoxianlv.platform.PlatformClient
@@ -22,6 +23,8 @@ data class RemoteUiState(
     val visibleCount: Int = 0,
     val nextPage: Int? = null,
     val loadingMore: Boolean = false,
+    /** 分页失败只影响列表重试，不进入下载操作的弹窗状态。 */
+    val loadMoreFailed: Boolean = false,
     val downloading: Set<String> = emptySet(),
     val error: String? = null,
     /** 下载成功只提示，不重载列表或改变导航；曲库通过 AppEvents 单独刷新。 */
@@ -34,6 +37,31 @@ data class RemoteUiState(
     /** 内存里还有没渲染出来的条目 */
     val hasMore: Boolean
         get() = visibleCount < scores.size || nextPage != null
+
+    /** 失败后仍可消费预取缓存，但网络重试必须由用户主动触发。 */
+    val canAutoLoadMore: Boolean
+        get() =
+            !loading && hasMore && (visibleCount < scores.size || (!loadingMore && !loadMoreFailed))
+
+    internal fun withPaginationFailure(): RemoteUiState =
+        copy(loadingMore = false, loadMoreFailed = true)
+
+    internal fun withFeedFailure(
+        cachedScores: List<PlatformScore>?,
+        cachedNextPage: Int?,
+        cachedTotal: Int,
+    ): RemoteUiState {
+        val cached = cachedScores.orEmpty()
+        return copy(
+            loading = false,
+            loadingMore = false,
+            scores = cached,
+            visibleCount = minOf(DiscoverViewModel.PAGE_SIZE, cached.size),
+            nextPage = cachedNextPage,
+            loadMoreFailed = cached.isNotEmpty(),
+            status = if (cached.isEmpty()) "暂时无法加载谱子，请稍后重试" else "共 $cachedTotal 首公开谱子",
+        )
+    }
 }
 
 /** 发现 / 搜索 / 平台三页共用：平台乐谱的加载与下载。PlatformClient 回调在工作线程，StateFlow 线程安全。 */
@@ -79,8 +107,8 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             }
         } else {
             revealOnArrival = true
+            _state.update { it.copy(loadMoreFailed = false) }
         }
-        _state.update { it.copy(error = null) }
         prefetch()
     }
 
@@ -90,7 +118,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             !discoverActive ||
                 s.loading ||
                 s.loadingMore ||
-                s.error != null ||
+                s.loadMoreFailed ||
                 s.scores.size - s.visibleCount >= PAGE_SIZE * 2
         )
             return
@@ -117,14 +145,14 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                                 visibleCount = visible,
                                 nextPage = cachedNextPage,
                                 loadingMore = false,
+                                loadMoreFailed = false,
                             )
                         }
                         prefetch()
                     }
                     .onFailure { e ->
-                        _state.update {
-                            it.copy(loadingMore = false, error = e.message ?: "加载失败，请重试")
-                        }
+                        AppLog.w("发现", "预取公开谱子失败", e)
+                        _state.update { it.withPaginationFailure() }
                     }
             }
         }
@@ -151,6 +179,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                     status = "共 $cachedTotal 首公开谱子",
                     nextPage = cachedNextPage,
                     loadingMore = false,
+                    loadMoreFailed = false,
                     error = null,
                 )
             }
@@ -161,6 +190,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 loading = true,
                 loadingMore = false,
+                loadMoreFailed = false,
                 nextPage = null,
                 error = null,
                 status = "正在加载…",
@@ -189,7 +219,10 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                         prefetch()
                     }
                     .onFailure { e ->
-                        _state.update { it.copy(loading = false, status = e.message ?: "曲库暂时无法连接") }
+                        AppLog.w("发现", "加载公开谱子失败", e)
+                        _state.update {
+                            it.withFeedFailure(discoverFeedCache, cachedNextPage, cachedTotal)
+                        }
                     }
             }
         }
@@ -202,7 +235,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(loading = true, status = "搜索中…", scores = emptyList(), visibleCount = 0)
         }
-        _state.update { it.copy(nextPage = null, loadingMore = false) }
+        _state.update { it.copy(nextPage = null, loadingMore = false, loadMoreFailed = false) }
         updater.fetchPublicScores(query.trim(), token()) { result ->
             main.post {
                 if (generation != requestGeneration) return@post
@@ -219,7 +252,8 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     .onFailure { e ->
-                        _state.update { it.copy(loading = false, status = e.message ?: "搜索失败") }
+                        AppLog.w("发现", "搜索公开谱子失败", e)
+                        _state.update { it.copy(loading = false, status = "暂时无法搜索，请稍后重试") }
                     }
             }
         }
@@ -228,7 +262,7 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
     fun loadPublic(query: String = "") {
         discoverActive = false
         val generation = ++requestGeneration
-        _state.update { it.copy(nextPage = null, loadingMore = false) }
+        _state.update { it.copy(nextPage = null, loadingMore = false, loadMoreFailed = false) }
         _state.update { it.copy(loading = true, status = "正在加载公开谱子…") }
         updater.fetchPublicScores(query, token()) { result ->
             main.post {
@@ -246,8 +280,9 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     .onFailure { e ->
+                        AppLog.w("发现", "加载平台谱库失败", e)
                         _state.update {
-                            it.copy(loading = false, status = "平台暂时无法连接：${e.message ?: "网络错误"}")
+                            it.copy(loading = false, status = "平台暂时无法连接，请稍后重试")
                         }
                     }
             }
@@ -278,9 +313,15 @@ class DiscoverViewModel(app: Application) : AndroidViewModel(app) {
                             _state.update { it.copy(downloaded = song.title) }
                             Analytics.logEvent(getApplication(), "score_download") // 埋点：平台曲谱下载并入库成功
                         }
-                        .onFailure { e -> _state.update { it.copy(error = e.message ?: "未能完成") } }
+                        .onFailure { e ->
+                            AppLog.w("发现", "保存下载谱子失败", e)
+                            _state.update { it.copy(error = "未能保存谱子，请稍后重试") }
+                        }
                 }
-                .onFailure { e -> _state.update { it.copy(error = e.message ?: "未能完成") } }
+                .onFailure { e ->
+                    AppLog.w("发现", "下载公开谱子失败", e)
+                    _state.update { it.copy(error = "谱子暂时无法下载，请稍后重试") }
+                }
             // 后台解析、校验及入库完成才结束下载状态，避免保存期间再次点击。
             _state.update { it.copy(downloading = it.downloading - remote.id) }
         }
