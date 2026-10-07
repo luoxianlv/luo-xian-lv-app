@@ -63,7 +63,11 @@ jobs:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
       - name: Test and build APKs
-        run: bash ./gradlew testDebugUnitTest assembleDebug assembleRelease --no-daemon
+        # 多模块 DEX 合并会超过默认 2 GiB；限制并发，避免多个合并任务争抢堆内存。
+        run: |
+          bash ./gradlew testDebugUnitTest assembleDebug assembleRelease \
+            '-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' --max-workers=2 \
+            --no-daemon --console=plain --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
