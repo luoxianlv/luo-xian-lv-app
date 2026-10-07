@@ -36,7 +36,8 @@ object ScreenRecognizer {
         internal val modeRadius: Float = 0f,
     )
 
-    private const val TARGET_WIDTH = 1024
+    internal const val TARGET_WIDTH = 1024
+    private const val PIXEL_ROWS = 64
 
     /** 音区按钮从左至右依次为半音、升调、自然音、降调。 */
     private val MODE_ORDER =
@@ -53,15 +54,31 @@ object ScreenRecognizer {
             }
         val w = scaled.width
         val h = scaled.height
-        val px = IntArray(w * h)
-        scaled.getPixels(px, 0, w, 0, 0, w, h)
-        if (scaled !== bitmap) scaled.recycle()
-        val luma =
-            FloatArray(w * h) { i ->
-                val c = px[i]
-                0.299f * (c shr 16 and 0xff) + 0.587f * (c shr 8 and 0xff) + 0.114f * (c and 0xff)
+        val rows = min(PIXEL_ROWS, h)
+        val px = IntArray(w * rows)
+        val luma = FloatArray(w * h)
+        // 按条带转换，避免同时持有完整 ARGB 和灰度副本；缩放与像素顺序保持一致。
+        try {
+            var top = 0
+            while (top < h) {
+                val count = min(rows, h - top)
+                scaled.getPixels(px, 0, w, 0, top, w, count)
+                copyLuminance(px, luma, top * w, count * w)
+                top += count
             }
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+        }
         return analyze(luma, w, h, previous)
+    }
+
+    /** 最后一条带可能不足缓冲区大小，只转换实际像素，不读取上次剩余内容。 */
+    internal fun copyLuminance(pixels: IntArray, luma: FloatArray, offset: Int, count: Int) {
+        for (i in 0 until count) {
+            val c = pixels[i]
+            luma[offset + i] =
+                0.299f * (c shr 16 and 0xff) + 0.587f * (c shr 8 and 0xff) + 0.114f * (c and 0xff)
+        }
     }
 
     fun analyze(
@@ -71,22 +88,24 @@ object ScreenRecognizer {
         previous: Result? = null,
     ): Result? {
         require(width > 0 && height > 0 && luma.size.toLong() == width.toLong() * height)
-        validatePrevious(luma, width, height, previous)?.let {
-            return it
-        }
+        // 同帧验证失败后仍可复用梯度与圆环缓存，不重复分配两张全图梯度缓冲区。
+        val borders by lazy { ButtonBorderDetector(luma, width, height) }
+        validatePrevious(luma, width, height, previous) { borders }
+            ?.let {
+                return it
+            }
         // 顶帽阈值提取明显亮于邻域的像素，即使天空比数字更亮也能保留字形。
         val integral = LuminanceIntegral(luma, width, height)
         val local = integral.mean(18)
         val stack = IntArray(luma.size)
         val mask = BooleanArray(luma.size)
-        val borders by lazy { ButtonBorderDetector(luma, width, height) }
         val candidates = mutableListOf<List<Glyph>>()
         for (threshold in listOf(45f, 30f, 20f, 10f)) {
             for (i in luma.indices) mask[i] = luma[i] - local[i] > threshold && luma[i] > 120f
             val glyphs = glyphs(mask, width, height, stack = stack)
             candidates.add(glyphs)
             val notes = findNoteRows(glyphs, width).firstOrNull() ?: continue
-            resolveLayout(luma, local, integral, stack, width, height, notes, borders)?.let {
+            resolveLayout(luma, local, integral, stack, mask, width, height, notes, borders)?.let {
                 return it
             }
         }
@@ -95,7 +114,7 @@ object ScreenRecognizer {
             val glyphs = glyphs(mask, width, height, stack = stack)
             candidates.add(glyphs)
             val notes = findNoteRows(glyphs, width).firstOrNull() ?: continue
-            resolveLayout(luma, local, integral, stack, width, height, notes, borders)?.let {
+            resolveLayout(luma, local, integral, stack, mask, width, height, notes, borders)?.let {
                 return it
             }
         }
@@ -120,6 +139,7 @@ object ScreenRecognizer {
                     local,
                     integral,
                     stack,
+                    mask,
                     width,
                     height,
                     notes,
@@ -141,6 +161,7 @@ object ScreenRecognizer {
         local: FloatArray,
         integral: LuminanceIntegral,
         stack: IntArray,
+        mask: BooleanArray,
         width: Int,
         height: Int,
         notes: List<Glyph>,
@@ -172,19 +193,19 @@ object ScreenRecognizer {
         val predictedY = noteY + MODE_Y_OFFSET * spacing
         val predictedX = FloatArray(4) { noteXs[0] + (MODE_SEMI_OFFSET + MODE_GAPS[it]) * spacing }
         // 确定音符行后再搜索音区行，避免将无关 HUD 和场景大量纳入连通域。
-        val loose = BooleanArray(luma.size)
+        // 全图连通域已清空 mask；此区域在每次候选中重新填充并消费，避免全图重复分配。
         val modeTop = max(0, (predictedY - spacing).toInt())
         val modeBottom = min(height - 1, (predictedY + spacing).toInt())
         val modeLeft = max(0, (predictedX.first() - spacing).toInt())
         val modeRight = min(width - 1, (predictedX.last() + spacing).toInt())
         for (y in modeTop..modeBottom) for (x in modeLeft..modeRight) {
             val i = y * width + x
-            loose[i] = luma[i] - local[i] > 22f && luma[i] > 85f
+            mask[i] = luma[i] - local[i] > 22f && luma[i] > 85f
         }
         val labels =
             modeLabels(
                 glyphs(
-                    loose,
+                    mask,
                     width,
                     height,
                     modeLeft,
@@ -271,6 +292,7 @@ object ScreenRecognizer {
         width: Int,
         height: Int,
         previous: Result?,
+        borderDetector: () -> ButtonBorderDetector,
     ): Result? {
         if (
             previous == null ||
@@ -303,30 +325,29 @@ object ScreenRecognizer {
             else if (abs(point[1] * height - modeY) > .01f) return null
         }
         if (modeY <= 0f || modeY >= noteY) return null
-        val borders = ButtonBorderDetector(luma, width, height)
+        val borders = borderDetector()
         fun verifyRow(points: FloatArray, y: Float, radius: Float, units: FloatArray): BorderRow? {
-            val circles = points.map { x ->
-                borders.locate(
-                    x,
-                    y,
-                    spacing,
-                    1f,
-                    1f,
-                    minRadius = max(.1f, (radius - 2f) / spacing),
-                    maxRadius = (radius + 2f) / spacing,
-                )
-            }
-            if (circles.any { it == null }) return null
-            // 移动超过两个分析像素即回到完整搜索，避免沿用旧位置。
-            if (
-                circles.indices.any { i ->
-                    val circle = circles[i]!!
-                    abs(circle.x - points[i]) > 2f ||
+            val circles = ArrayList<ButtonBorderDetector.Circle>(points.size)
+            for (x in points) {
+                val circle =
+                    borders.locate(
+                        x,
+                        y,
+                        spacing,
+                        1f,
+                        1f,
+                        minRadius = max(.1f, (radius - 2f) / spacing),
+                        maxRadius = (radius + 2f) / spacing,
+                    ) ?: return null
+                // 任一圆框移动超过两个像素即可回到完整搜索，不必继续验证剩余旧位置。
+                if (
+                    abs(circle.x - x) > 2f ||
                         abs(circle.y - y) > 2f ||
                         abs(circle.radius - radius) > 2f
-                }
-            )
-                return null
+                )
+                    return null
+                circles.add(circle)
+            }
             return fitBorderRow(circles, units, spacing)?.takeIf { it.count == points.size }
         }
         val notes =

@@ -28,23 +28,44 @@ internal class LuminanceIntegral(luma: FloatArray, private val w: Int, private v
         bottom: Int = h,
     ): FloatArray {
         val result = FloatArray(w * h)
-        val x0 = IntArray(right - left) { max(0, left + it - radius) }
-        val x1 = IntArray(right - left) { min(w, left + it + radius + 1) }
-        val widths = IntArray(right - left) { x1[it] - x0[it] }
+        val middleLeft = max(left, min(right, radius))
+        val middleRight = max(middleLeft, min(right, w - radius))
+        val windowWidth = radius * 2 + 1
         for (y in top until bottom) {
             val y0 = max(0, y - radius)
             val y1 = min(h, y + radius + 1)
             val upper = y0 * stride
             val lower = y1 * stride
             val rows = y1 - y0
-            val dst = y * w + left
-            for (i in x0.indices) {
+            val dst = y * w
+            for (x in left until middleLeft) {
+                result[dst + x] = clippedMean(x, radius, upper, lower, rows)
+            }
+            // 内部窗口宽度固定，沿积分图递增读取；除法与加减顺序保持原样。
+            val denominator = (windowWidth * rows).toDouble()
+            var upperLeft = upper + middleLeft - radius
+            var upperRight = upper + middleLeft + radius + 1
+            var lowerLeft = lower + middleLeft - radius
+            var lowerRight = lower + middleLeft + radius + 1
+            for (x in middleLeft until middleRight) {
                 val sum =
-                    integral[lower + x1[i]] - integral[upper + x1[i]] - integral[lower + x0[i]] +
-                        integral[upper + x0[i]]
-                result[dst + i] = (sum / (widths[i] * rows)).toFloat()
+                    integral[lowerRight++] - integral[upperRight++] - integral[lowerLeft++] +
+                        integral[upperLeft++]
+                result[dst + x] = (sum / denominator).toFloat()
+            }
+            for (x in middleRight until right) {
+                result[dst + x] = clippedMean(x, radius, upper, lower, rows)
             }
         }
         return result
+    }
+
+    private fun clippedMean(x: Int, radius: Int, upper: Int, lower: Int, rows: Int): Float {
+        val x0 = max(0, x - radius)
+        val x1 = min(w, x + radius + 1)
+        val sum =
+            integral[lower + x1] - integral[upper + x1] - integral[lower + x0] +
+                integral[upper + x0]
+        return (sum / ((x1 - x0) * rows)).toFloat()
     }
 }

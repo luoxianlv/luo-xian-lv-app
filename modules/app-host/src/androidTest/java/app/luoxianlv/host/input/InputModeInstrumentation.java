@@ -183,14 +183,15 @@ public final class InputModeInstrumentation extends Instrumentation {
     var frame = result.get();
     require(frame != null && onMain.get(), "没有实际截图或回调未回到主线程");
     try {
-      require(frame.width > 100 && frame.height > 100 && frame.buffer == null, "截图没有返回有效软件图像");
-      // 真实业务识别器消费软件帧，验证不依赖无障碍 HardwareBuffer。
+      require(frame.width > 100 && frame.height > 100, "截图没有返回有效图像");
+      // 真实业务识别器消费软件或硬件帧，核对所有权交付和释放。
       var loader = app.luoxianlv.host.Bootstrap.source().prepared.classLoader();
       Class<?> analyzer = Class.forName("app.luoxianlv.recognition.ScreenshotAnalyzer", true, loader);
       var recognize = java.util.Arrays.stream(analyzer.getDeclaredMethods()).filter(m -> m.getName().equals("recognize")).findFirst().orElseThrow();
       recognize.setAccessible(true);
       recognize.invoke(analyzer.getField("INSTANCE").get(null), frame, null);
       require(frame.takeBitmap() == null, "识别器没有消费截图所有权");
+      require(frame.buffer == null || frame.buffer.isClosed(), "识别器没有归还截图硬件缓冲");
     } finally { frame.close(); }
   }
 
@@ -226,6 +227,19 @@ public final class InputModeInstrumentation extends Instrumentation {
   private void checkMerged() throws Exception {
     bridge.select(mergedMode);
     await("未采用指定合流模式", () -> mergedMode.equals(bridge.state().getString("mode")), 5000);
+    // 现代模拟器还带其他触屏，用测试设备在宿主实际触摸一次，走生产的来源确认流程。
+    Activity home = startActivitySync(new Intent().setClassName(getTargetContext(), "app.luoxianlv.MainActivity")
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    await("记录测试触点前宿主未获焦", home::hasWindowFocus, 10000);
+    Display initialDisplay = getTargetContext().getSystemService(DisplayManager.class).getDisplay(Display.DEFAULT_DISPLAY);
+    physicalPoint("down", .5f, .12f, initialDisplay.getRotation()); fingerDown = true;
+    var hintField = app.luoxianlv.input.InputController.class.getDeclaredField("touchHint");
+    hintField.setAccessible(true);
+    await("宿主未收到测试设备触点", () -> {
+      try { return hintField.get(app.luoxianlv.input.InputController.current()) != null; }
+      catch (IllegalAccessException failure) { throw new AssertionError(failure); }
+    }, 5000);
+    physical("up"); fingerDown = false;
     if (wirelessCode != null || wirelessPairPort != null) {
       require(SharedInput.WIRELESS.equals(mergedMode), "配对参数仅用于无线 ADB 模式");
       require(wirelessCode != null && wirelessCode.matches("[0-9]{6}"), "请输入有效的六位配对码");
@@ -472,11 +486,17 @@ public final class InputModeInstrumentation extends Instrumentation {
   private void verifyStaleContactFrames(ArrayList<JSONObject> frames, int width,
       long startedAt, long contactOnAt, long contactOffAt) throws Exception {
     boolean combined = false, automaticContinued = false;
+    boolean injectedStarted = false;
     int automaticId = -1;
     for (JSONObject frame : frames) {
       if (!isTouch(frame)) continue;
       long at = frame.getLong("eventTimeMs");
       if (at < startedAt) continue;
+      // Android 在接管时取消旧物理流；只允许首个注入 DOWN 之前的物理 CANCEL。
+      if (!injectedStarted && frame.getInt("deviceId") > 0
+          && frame.getInt("actionMasked") == MotionEvent.ACTION_CANCEL) continue;
+      if (frame.getInt("deviceId") <= 0 && frame.getInt("actionMasked") == MotionEvent.ACTION_DOWN)
+        injectedStarted = true;
       require(frame.getInt("actionMasked") != MotionEvent.ACTION_CANCEL,
           "接触切换期间出现 ACTION_CANCEL");
       JSONArray points = frame.getJSONArray("pointers");
@@ -526,6 +546,10 @@ public final class InputModeInstrumentation extends Instrumentation {
 
   /** 点击播放的手指尚未抬起不能永久锁死就绪状态，取消等待也不能稍后抓取触屏。 */
   private void checkActivationWait(Point size, int rotation) throws Exception {
+    if ("type-b".equals(bridge.state().getString("touchProtocol"))) {
+      checkHeldActivation(size, rotation);
+      return;
+    }
     var session = lease();
     physicalPoint("down", .25f, .65f, rotation); fingerDown = true;
     Outcome held = new Outcome();
@@ -560,6 +584,34 @@ public final class InputModeInstrumentation extends Instrumentation {
     require(cancelled.calls.get() == 1, "取消激活等待发生重复回调");
     session.close();
     await("抬手等待测试没有释放会话", session::idle, 5000);
+  }
+
+  /** 首音前已经按住方向键，接管后仍能移动、换音、松手；音符间隙不能丢失真实手指。 */
+  private void checkHeldActivation(Point size, int rotation) throws Exception {
+    var session = lease();
+    physicalPoint("down", .25f, .65f, rotation); fingerDown = true;
+    long started = SystemClock.uptimeMillis();
+    Outcome note = new Outcome();
+    session.press(new float[] {size.x * .75f, size.y * .65f}, 2000,
+        size.x, size.y, rotation, note);
+    awaitFrames("按住启动未合并真实手指与自动音符", frames -> hasCombined(frames, size.x, started), 5000);
+    physicalPoint("move", .3f, .6f, rotation);
+    require(note.await("按住启动的音符没有完成"), "按住启动仍被拒绝：" + note.message);
+    require(bridge.state().getBoolean("active"), "音符结束错误停止了真实触点读取");
+    long followingAt = SystemClock.uptimeMillis();
+    Outcome following = new Outcome();
+    session.press(new float[] {size.x * .75f, size.y * .65f}, 2000,
+        size.x, size.y, rotation, following);
+    awaitFrames("接续手指在下一音符丢失", frames -> hasCombined(frames, size.x, followingAt), 5000);
+    long liftedAt = SystemClock.uptimeMillis();
+    physical("up"); fingerDown = false;
+    awaitFrames("松手后自动按键未继续", frames -> hasPointerUp(frames, liftedAt)
+        && hasOnlyAutomatic(frames, size.x, liftedAt), 5000);
+    require(following.await("松手后的音符没有完成"), "松手打断了自动音符");
+    require(note.calls.get() == 1 && following.calls.get() == 1, "接续触点产生重复回调");
+    session.release();
+    await("按住启动测试没有归还触屏", session::idle, 5000);
+    session.close();
   }
 
   private void verifyPhysicalFrames(ArrayList<JSONObject> frames, long gap, int width) throws Exception {

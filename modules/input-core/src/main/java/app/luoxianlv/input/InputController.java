@@ -49,6 +49,9 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   // 旧助手冻结时，不能占满 Shizuku 授权、启动和清理使用的 RPC 通道。
   private final BoundedInputRpc shizukuRpc = new BoundedInputRpc(2500);
   private final AtomicBoolean screenshotPending = new AtomicBoolean();
+  private final BoundedInputRpc screenshotRpc = new BoundedInputRpc(6000);
+  private final java.util.concurrent.atomic.AtomicReference<ScreenshotResources> screenshotResources =
+      new java.util.concurrent.atomic.AtomicReference<>();
   private final CopyOnWriteArrayList<Runnable> observers = new CopyOnWriteArrayList<>();
   private final ConcurrentHashMap<Long, Request> requests = new ConcurrentHashMap<>();
   private final AtomicLong tokens = new AtomicLong();
@@ -69,6 +72,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private boolean binding;
   private volatile long generation;
   private volatile IInputService service;
+  private volatile TouchRouteModel.Hint touchHint;
+  private volatile long touchHintAt;
   private IBinder.DeathRecipient serviceDeath;
   private ServiceConnection connection;
   private Shizuku.UserServiceArgs serviceArgs;
@@ -668,7 +673,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
           });
         }
       };
-      rpc.call(() -> { remote.attach(callback); return null; });
+      rpc.call(() -> { sendTouchHint(remote); remote.attach(callback); return null; });
       stage = "读取助手预检快照";
       Bundle initial = rpc.call(remote::inspect);
       if (!InputIdentity.matches(expectedUid, initial.getInt("uid", -1)))
@@ -695,6 +700,30 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
 
   @Override public SharedInput.Session openSession() { return new Lease(owners.incrementAndGet()); }
 
+  /** 仅记录 Activity 实际收到的手指来源，注入设备 0、鼠标和笔不能替用户确认触屏。 */
+  public void observeTouch(android.view.MotionEvent event, int displayId) {
+    if (closed || displayId != 0 || event.getActionMasked() != android.view.MotionEvent.ACTION_DOWN
+        || event.getDeviceId() <= 0 || !event.isFromSource(android.view.InputDevice.SOURCE_TOUCHSCREEN)
+        || event.getToolType(0) != android.view.MotionEvent.TOOL_TYPE_FINGER) return;
+    android.view.InputDevice device = event.getDevice();
+    if (device == null || (android.os.Build.VERSION.SDK_INT >= 27 && !device.isEnabled())) return;
+    TouchRouteModel.Hint next = new TouchRouteModel.Hint(device.getId(), device.getDescriptor(), displayId);
+    long now = SystemClock.elapsedRealtime();
+    if (next.equals(touchHint) && now - touchHintAt < 200) return;
+    touchHint = next;
+    touchHintAt = now;
+    try { worker.execute(() -> {
+      IInputService remote = service;
+      if (!closed && remote != null) try { rpc.call(() -> { sendTouchHint(remote); return null; }); }
+      catch (Exception ignored) { /* 连接交付时会再次发送，不在 UI 等待或额外重连。 */ }
+    }); } catch (RejectedExecutionException stopped) { }
+  }
+
+  private void sendTouchHint(IInputService remote) throws RemoteException {
+    TouchRouteModel.Hint hint = touchHint;
+    if (hint != null) remote.routingHint(hint.id(), hint.display(), hint.descriptor());
+  }
+
   @Override public void screenshot(int displayId, app.luoxianlv.hot.contract.AccessibilityBinding.ScreenshotCallback callback) {
     IInputService remote = service;
     long epoch = generation;
@@ -703,33 +732,82 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     }
     try {
       screenshots.execute(() -> {
-        android.graphics.Bitmap bitmap = null;
         long began = SystemClock.elapsedRealtime();
-        try (var descriptor = remote.screenshot(displayId)) {
-          if (descriptor == null) throw new java.io.IOException("截图没有返回图像");
-          var options = new android.graphics.BitmapFactory.Options();
-          options.inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888;
-          bitmap = android.graphics.BitmapFactory.decodeFileDescriptor(descriptor.getFileDescriptor(), null, options);
-          if (bitmap == null || bitmap.getWidth() < 2 || bitmap.getHeight() < 2)
-            throw new java.io.IOException("截图图像无效");
-          var frame = new app.luoxianlv.hot.contract.AccessibilityBinding.Frame(bitmap);
-          bitmap = null;
+        AtomicBoolean finished = new AtomicBoolean();
+        var reply = new java.util.concurrent.atomic.AtomicReference<ScreenshotPacket>();
+        var resources = new ScreenshotResources();
+        screenshotResources.set(resources);
+        var deadline = worker.schedule(resources::close, 6500, TimeUnit.MILLISECONDS);
+        try {
+          ScreenshotPacket packet = screenshotRpc.call(() -> {
+            ScreenshotPacket response = remote.screenshotFrame(displayId, false);
+            reply.set(response);
+            if (finished.get() || closed || service != remote || generation != epoch)
+              ScreenshotPacket.discard(reply.getAndSet(null));
+            return response;
+          });
+          if (closed || service != remote || generation != epoch)
+            throw new java.io.IOException("截图连接已变化");
+          reply.compareAndSet(packet, null);
+          long received = SystemClock.elapsedRealtime();
+          String kind = packet == null ? "unknown" : packet.kind();
+          long captureMs = packet == null ? -1 : packet.captureMs();
+          app.luoxianlv.hot.contract.AccessibilityBinding.Frame frame;
+          try {
+            frame = ScreenshotPacket.decode(packet, descriptor -> {
+              try { resources.track(descriptor); }
+              catch (java.io.IOException closed) { throw new java.io.UncheckedIOException(closed); }
+            });
+          } catch (RawScreenshotHeader.Unsupported unsupported) {
+            resources.clear();
+            // 仅格式/颜色配置不支持时兼容 PNG，捕获失败或超时不再连着等待第二次捕获。
+            kind = "png-fallback";
+            android.os.ParcelFileDescriptor descriptor = screenshotRpc.call(() -> {
+              var value = remote.screenshot(displayId);
+              if (finished.get() || closed || service != remote || generation != epoch) {
+                if (value != null) value.close();
+                throw new java.io.IOException("兼容截图请求已结束");
+              }
+              resources.track(value);
+              return value;
+            });
+            if (descriptor == null) throw new java.io.IOException("兼容截图没有返回图像");
+            try (ScreenshotPacket compatible = ScreenshotPacket.png(descriptor)) {
+              frame = ScreenshotPacket.decode(compatible);
+            }
+          } finally {
+            ScreenshotPacket.discard(packet);
+          }
           HostDiagnostics.log(Log.INFO, "截图", "输入服务截图完成：尺寸=" + frame.width + "x" + frame.height
-              + "，耗时=" + (SystemClock.elapsedRealtime() - began) + "毫秒", null);
+              + "，耗时=" + (SystemClock.elapsedRealtime() - began) + "毫秒，路径=" + kind
+              + (captureMs < 0 ? "" : "，系统捕获=" + captureMs + "毫秒")
+              + "，获取=" + (received - began) + "毫秒，传输解码="
+              + (SystemClock.elapsedRealtime() - received) + "毫秒", null);
+          var deliveredFrame = frame;
           main.post(() -> {
             screenshotPending.set(false);
-            if (closed || service != remote || generation != epoch) { frame.close(); callback.failure(-1); }
-            else callback.success(frame);
+            if (closed || service != remote || generation != epoch) { deliveredFrame.close(); callback.failure(-1); }
+            else callback.success(deliveredFrame);
           });
-        } catch (Exception | LinkageError failure) {
-          if (bitmap != null) bitmap.recycle();
+        } catch (Exception | LinkageError | OutOfMemoryError failure) {
           HostDiagnostics.log(Log.WARN, "截图", "输入服务截图失败：类型=" + failure.getClass().getSimpleName(), null);
           main.post(() -> { screenshotPending.set(false); callback.failure(-1); });
+        } finally {
+          finished.set(true);
+          deadline.cancel(false);
+          resources.close();
+          screenshotResources.compareAndSet(resources, null);
+          ScreenshotPacket.discard(reply.getAndSet(null));
         }
       });
     } catch (RejectedExecutionException stopped) {
       screenshotPending.set(false); main.post(() -> callback.failure(-1));
     }
+  }
+
+  private void closeScreenshotStream() {
+    var resources = screenshotResources.get();
+    if (resources != null) resources.close();
   }
 
   @Override public AutoCloseable press(float[] points, int durationMs, int width, int height,
@@ -847,6 +925,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   }
 
   private void disconnectService(String message) {
+    closeScreenshotStream();
     ++generation;
     binding = false;
     shizukuConnection.invalidate();
@@ -969,6 +1048,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       observers.clear();
       rpc.close();
       shizukuRpc.close();
+      screenshotRpc.close();
       if (ownership.owner() == null) worker.shutdown();
     });
   }

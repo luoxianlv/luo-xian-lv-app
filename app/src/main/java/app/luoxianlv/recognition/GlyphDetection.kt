@@ -19,6 +19,7 @@ internal object GlyphDetection {
         stack: IntArray = IntArray((right - left) * (bottom - top)),
     ): List<Glyph> {
         val raw = mutableListOf<Glyph>()
+        val neighbors = intArrayOf(-w - 1, -w, -w + 1, -1, 1, w - 1, w, w + 1)
         for (sy in top until bottom) for (sx in left until right) {
             val start = sy * w + sx
             if (!mask[start]) continue
@@ -33,22 +34,33 @@ internal object GlyphDetection {
             while (pending > 0) {
                 val p = stack[--pending]
                 count++
-                val x = p % w
                 val y = p / w
+                val x = p - y * w
                 if (x < x0) x0 = x
                 if (x > x1) x1 = x
                 if (y < y0) y0 = y
                 if (y > y1) y1 = y
-                for (dy in -1..1) {
-                    for (dx in -1..1) {
-                        if (dx == 0 && dy == 0) continue
-                        val nx = x + dx
-                        val ny = y + dy
-                        if (nx !in left until right || ny !in top until bottom) continue
-                        val q = ny * w + nx
+                // 区域内部的八个邻居均有效，直接用偏移；边界仍按原坐标裁剪。
+                if (x > left && x < right - 1 && y > top && y < bottom - 1) {
+                    for (offset in neighbors) {
+                        val q = p + offset
                         if (mask[q]) {
                             mask[q] = false
                             stack[pending++] = q
+                        }
+                    }
+                } else {
+                    for (dy in -1..1) {
+                        for (dx in -1..1) {
+                            if (dx == 0 && dy == 0) continue
+                            val nx = x + dx
+                            val ny = y + dy
+                            if (nx !in left until right || ny !in top until bottom) continue
+                            val q = ny * w + nx
+                            if (mask[q]) {
+                                mask[q] = false
+                                stack[pending++] = q
+                            }
                         }
                     }
                 }

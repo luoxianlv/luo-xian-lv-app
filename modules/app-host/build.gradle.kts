@@ -35,6 +35,7 @@ android {
         versionName = providers.gradleProperty("appVersionName").get()
         testInstrumentationRunner = "app.luoxianlv.host.NativeAppInstrumentation"
     }
+    sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("app/src/test/resources"))
     if (hasReleaseSigning) {
         signingConfigs.create("release") {
             // 保留旧 :app 的相对路径含义，避免迁移时指向另一份 keystore。

@@ -16,6 +16,13 @@ internal class ButtonBorderDetector(
 ) {
     data class Circle(val x: Float, val y: Float, val radius: Float, val score: Float)
 
+    private class Candidate {
+        var x = 0f
+        var y = 0f
+        var radius = 0f
+        var score = 0f
+    }
+
     private val gx = FloatArray(luma.size)
     private val gy = FloatArray(luma.size)
     private val gradientLeft = IntArray(height) { width }
@@ -41,16 +48,20 @@ internal class ButtonBorderDetector(
     private fun gradientRow(y: Int, left: Int, right: Int) {
         for (x in left until right) {
             val p = y * width + x
+            val topLeft = luma[p - width - 1]
+            val topCenter = luma[p - width]
+            val topRight = luma[p - width + 1]
+            val centerLeft = luma[p - 1]
+            val centerRight = luma[p + 1]
+            val bottomLeft = luma[p + width - 1]
+            val bottomCenter = luma[p + width]
+            val bottomRight = luma[p + width + 1]
             gx[p] =
-                (luma[p - width + 1] + 2 * luma[p + 1] + luma[p + width + 1] -
-                    luma[p - width - 1] -
-                    2 * luma[p - 1] -
-                    luma[p + width - 1]) / 8f
+                (topRight + 2 * centerRight + bottomRight - topLeft - 2 * centerLeft - bottomLeft) /
+                    8f
             gy[p] =
-                (luma[p + width - 1] + 2 * luma[p + width] + luma[p + width + 1] -
-                    luma[p - width - 1] -
-                    2 * luma[p - width] -
-                    luma[p - width + 1]) / 8f
+                (bottomLeft + 2 * bottomCenter + bottomRight - topLeft - 2 * topCenter - topRight) /
+                    8f
         }
     }
 
@@ -74,7 +85,8 @@ internal class ButtonBorderDetector(
             (y - searchY).roundToInt() - margin,
             (y + searchY).roundToInt() + margin,
         )
-        var best: Circle? = null
+        // 搜索时只更新同一候选，最终通过后才构造圆框，避免每次改进都创建对象。
+        val best = Candidate()
         fun search(
             left: Int,
             right: Int,
@@ -85,14 +97,34 @@ internal class ButtonBorderDetector(
             stride: Int,
             radiusStride: Int,
             relaxed: Boolean,
+            projection: Projection? = null,
         ) {
             for (r in lo..hi step radiusStride) {
-                val ring = offsets(r)
+                val ring = projection?.rings?.get(r - lo) ?: offsets(r)
                 for (cy in max(r + 2, top)..min(height - r - 3, bottom) step stride) {
                     for (cx in max(r + 2, left)..min(width - r - 3, right) step stride) {
-                        val score = score(cx, cy, ring, relaxed, best?.score ?: 0f)
-                        if (score > (best?.score ?: 0f))
-                            best = Circle(cx.toFloat(), cy.toFloat(), r.toFloat(), score)
+                        val score =
+                            if (projection == null) {
+                                score(cy * width + cx, ring, relaxed, best.score) { index, i ->
+                                    val dx = gx[index]
+                                    val dy = gy[index]
+                                    val radial = dx * COS[i] + dy * SIN[i]
+                                    val tangent = -dx * SIN[i] + dy * COS[i]
+                                    if (abs(tangent) > abs(radial) * .8f) 0f else radial
+                                }
+                            } else {
+                                score(cy * projection.stride + cx, ring, relaxed, best.score) {
+                                    index,
+                                    _ ->
+                                    projection.values[index]
+                                }
+                            }
+                        if (score > best.score) {
+                            best.x = cx.toFloat()
+                            best.y = cy.toFloat()
+                            best.radius = r.toFloat()
+                            best.score = score
+                        }
                     }
                 }
             }
@@ -108,20 +140,27 @@ internal class ButtonBorderDetector(
             2,
             relaxed = true,
         )
-        val coarse = best ?: return null
-        best = null
+        if (best.score == 0f) return null
+        val coarseX = best.x.toInt()
+        val coarseY = best.y.toInt()
+        val coarseRadius = best.radius.toInt()
+        val fineLo = max(r0, coarseRadius - 2)
+        val fineHi = min(r1, coarseRadius + 2)
+        val projection = project(coarseX, coarseY, step, fineLo, fineHi)
+        best.score = 0f
         search(
-            coarse.x.toInt() - step,
-            coarse.x.toInt() + step,
-            coarse.y.toInt() - step,
-            coarse.y.toInt() + step,
-            max(r0, coarse.radius.toInt() - 2),
-            min(r1, coarse.radius.toInt() + 2),
+            coarseX - step,
+            coarseX + step,
+            coarseY - step,
+            coarseY + step,
+            fineLo,
+            fineHi,
             1,
             1,
             relaxed = false,
+            projection = projection,
         )
-        return best?.takeIf { it.score >= 3f }
+        return if (best.score >= 3f) Circle(best.x, best.y, best.radius, best.score) else null
     }
 
     // 十二个按钮共用按半径缓存的采样偏移。
@@ -129,20 +168,65 @@ internal class ButtonBorderDetector(
 
     private fun offsets(radius: Int): IntArray =
         rings.getOrPut(radius) {
-            IntArray(SAMPLES * 3) { index ->
-                val sample = index / 3
-                val delta = index % 3 - 1
-                ((radius + delta) * SIN[sample]).roundToInt() * width +
-                    ((radius + delta) * COS[sample]).roundToInt()
+            val offsets = IntArray(SAMPLES * 3)
+            for (sample in 0 until SAMPLES) {
+                val sin = SIN[sample]
+                val cos = COS[sample]
+                for (delta in 0..2) {
+                    offsets[sample * 3 + delta] =
+                        ((radius + delta - 1) * sin).roundToInt() * width +
+                            ((radius + delta - 1) * cos).roundToInt()
+                }
             }
+            offsets
         }
 
-    private fun score(
-        cx: Int,
-        cy: Int,
+    private class Projection(val stride: Int, val values: FloatArray, val rings: Array<IntArray>)
+
+    private var projectionValues = FloatArray(0)
+    private val projectionRings by lazy { Array(5) { IntArray(SAMPLES * 3) } }
+
+    /** 精搜相邻圆重复读取同一方向梯度；只缓存各角度附近的小块，评分顺序和采样位置不变。 */
+    private fun project(cx: Int, cy: Int, step: Int, lo: Int, hi: Int): Projection {
+        val stride = 2 * step + hi - lo + 3
+        val area = stride * stride
+        // 十二个圆框串行使用同一工作区，生命周期仅限当前帧。
+        if (projectionValues.size < SAMPLES * area) projectionValues = FloatArray(SAMPLES * area)
+        val values = projectionValues
+        val rings = projectionRings
+        for (i in 0 until SAMPLES) {
+            val cos = COS[i]
+            val sin = SIN[i]
+            val left = cx - step + min(((lo - 1) * cos).roundToInt(), ((hi + 1) * cos).roundToInt())
+            val top = cy - step + min(((lo - 1) * sin).roundToInt(), ((hi + 1) * sin).roundToInt())
+            val origin = i * area - top * stride - left
+            for (y in max(1, top) until min(height - 1, top + stride)) {
+                var source = y * width + max(1, left)
+                var target = origin + y * stride + max(1, left)
+                for (x in max(1, left) until min(width - 1, left + stride)) {
+                    val dx = gx[source]
+                    val dy = gy[source++]
+                    val radial = dx * cos + dy * sin
+                    val tangent = -dx * sin + dy * cos
+                    values[target++] = if (abs(tangent) > abs(radial) * .8f) 0f else radial
+                }
+            }
+            for (radius in lo..hi) for (delta in 0..2) {
+                rings[radius - lo][i * 3 + delta] =
+                    origin +
+                        ((radius + delta - 1) * sin).roundToInt() * stride +
+                        ((radius + delta - 1) * cos).roundToInt()
+            }
+        }
+        return Projection(stride, values, rings)
+    }
+
+    private inline fun score(
+        center: Int,
         ring: IntArray,
         relaxed: Boolean,
         minimumScore: Float,
+        sample: (Int, Int) -> Float,
     ): Float {
         var positive = 0f
         var negative = 0f
@@ -154,19 +238,13 @@ internal class ButtonBorderDetector(
         var nSector = 0
         val minCount = if (relaxed) 12 else 26
         val minSectors = if (relaxed) 3 else 6
-        val center = cy * width + cx
+        var sectorEnd = 5
         for (i in 0 until SAMPLES) {
             var p = 0f
             var n = 0f
-            val cos = COS[i]
-            val sin = SIN[i]
             for (delta in 0..2) {
                 val index = center + ring[i * 3 + delta]
-                val dx = gx[index]
-                val dy = gy[index]
-                val radial = dx * cos + dy * sin
-                val tangent = -dx * sin + dy * cos
-                if (abs(tangent) > abs(radial) * .8f) continue
+                val radial = sample(index, i)
                 p = max(p, radial)
                 n = max(n, -radial)
             }
@@ -180,7 +258,8 @@ internal class ButtonBorderDetector(
             }
             positive += min(p, 16f)
             negative += min(n, 16f)
-            if (i % 6 == 5) {
+            if (i == sectorEnd) {
+                sectorEnd += 6
                 if (pSector >= 3) positiveSectors++
                 if (nSector >= 3) negativeSectors++
                 pSector = 0

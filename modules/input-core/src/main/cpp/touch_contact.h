@@ -28,6 +28,12 @@ struct ContactState {
         return readError == 0 &&
                 (decision == ContactDecision::Clear || decision == ContactDecision::InactiveTracking);
     }
+
+    // 有槽位快照的 Type B 可接续已经按下的手指；半帧、读取失败和空槽按下不作猜测。
+    bool adoptable(bool hasSlots) const {
+        return released() || (hasSlots && decision == ContactDecision::Contact &&
+                readError == 0 && trackedSlots > 0);
+    }
 };
 
 inline ContactState evaluateContact(int trackedSlots, bool touchSupported,

@@ -50,7 +50,7 @@ class RecognitionHintTest {
         assertTrue(checked.reusedGeometry)
         assertCoordinates(original, checked, f.w, f.h)
         val changed = f.pixels.copyOf()
-        for (mode in listOf(PlayMode.RAISE, PlayMode.NATURAL)) {
+        for (mode in listOf(PlayMode.SEMITONE, PlayMode.RAISE, PlayMode.NATURAL)) {
             val point = original.layout.modes.getValue(mode)
             val cx = point[0] * f.w
             val cy = point[1] * f.h
@@ -58,7 +58,7 @@ class RecognitionHintTest {
             for (y in (cy - radius).toInt()..(cy + radius).toInt()) {
                 for (x in (cx - radius).toInt()..(cx + radius).toInt()) {
                     if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < radius * radius) {
-                        changed[y * f.w + x] = if (mode == PlayMode.RAISE) 250f else 20f
+                        changed[y * f.w + x] = if (mode != PlayMode.NATURAL) 250f else 20f
                     }
                 }
             }
@@ -66,6 +66,7 @@ class RecognitionHintTest {
         val full = ScreenRecognizer.analyze(changed, f.w, f.h)!!
         val withHint = ScreenRecognizer.analyze(changed, f.w, f.h, original)!!
         assertEquals(PlayMode.RAISE, withHint.mode)
+        assertEquals(true, withHint.halfTone)
         assertCoordinates(full, withHint, f.w, f.h)
     }
 

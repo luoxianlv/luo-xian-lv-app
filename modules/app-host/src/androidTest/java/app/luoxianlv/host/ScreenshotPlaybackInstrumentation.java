@@ -5,7 +5,10 @@ import android.app.Instrumentation;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import app.luoxianlv.hot.NativePlaybackHost;
 import app.luoxianlv.hot.contract.AccessibilityBinding;
@@ -16,13 +19,19 @@ import app.luoxianlv.hot.contract.SharedInput;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** 完整播放入口消费软件截图；空画面应正常报未识别，不能关闭宿主或泄露图像。 */
+/** 完整播放截图入口；keyboardPath 可指定公开琴键样本，验证慢回退仍能识别演奏。 */
 public final class ScreenshotPlaybackInstrumentation extends Instrumentation {
-  @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+  private Bundle arguments;
+  @Override public void onCreate(Bundle args) {
+    arguments = args == null ? new Bundle() : new Bundle(args);
+    super.onCreate(args); start();
+  }
   @Override public void onStart() {
     Bundle output = new Bundle(); boolean passed = false;
     SharedInput.Bridge real = null; AutoCloseable replacement = null; Host host = null;
     android.content.SharedPreferences prefs = null; boolean saved = false, previous = false, present = false;
+    android.content.SharedPreferences layoutPrefs = null; java.util.Map<String, ?> savedLayout = null;
+    Bitmap keyboard = null;
     try {
       require(getTargetContext().getPackageName().endsWith(".debug"), "只允许 Debug 验证");
       getTargetContext().startActivity(new Intent().setClassName(getTargetContext(), "app.luoxianlv.MainActivity")
@@ -37,11 +46,19 @@ public final class ScreenshotPlaybackInstrumentation extends Instrumentation {
       Class<?> kv = Class.forName("app.luoxianlv.shared.Kv", true, Bootstrap.source().prepared.classLoader());
       prefs = (android.content.SharedPreferences) kv.getMethod("of", Context.class, String.class)
           .invoke(kv.getField("INSTANCE").get(null), context.get(), "experimental_options");
+      String keyboardPath = arguments.getString("keyboardPath");
+      if (keyboardPath != null) {
+        keyboard = BitmapFactory.decodeFile(keyboardPath);
+        require(keyboard != null, "琴键样本无法读取：" + keyboardPath);
+        layoutPrefs = (android.content.SharedPreferences) kv.getMethod("of", Context.class, String.class)
+            .invoke(kv.getField("INSTANCE").get(null), context.get(), "ratio_config_v3");
+        savedLayout = new java.util.HashMap<>(layoutPrefs.getAll());
+      }
       present = prefs.contains("fixed_harmonica_keys"); previous = prefs.getBoolean("fixed_harmonica_keys", false);
       saved = true; require(prefs.edit().putBoolean("fixed_harmonica_keys", false).commit(), "关闭固定布局失败");
       real = SharedInput.current();
       for (String mode : new String[] {SharedInput.SHIZUKU, SharedInput.WIRELESS}) {
-        FakeInput input = new FakeInput(mode); replacement = SharedInput.connect(input);
+        FakeInput input = new FakeInput(mode, keyboard); replacement = SharedInput.connect(input);
         Host current = new Host(context.get()); host = current;
         main(() -> { require(NativePlaybackHost.current() == null, "请先关闭播放浮窗"); current.open(); });
         // 已创建的真实播放会话采用内存曲目，绑定仍由真正的 NativePlaybackHost 提供。
@@ -71,9 +88,31 @@ public final class ScreenshotPlaybackInstrumentation extends Instrumentation {
         require(current.failure == null && NativePlaybackHost.current() == current
             && !state.get().getBoolean("playing") && !state.get().getBoolean("preparing")
             && input.bitmap.isRecycled(), "过期软件截图没有安全释放，或关闭了播放宿主");
+        if (keyboard != null) {
+          input.recognizable = true;
+          main(() -> PlaybackBridge.current().command("play", new Bundle()));
+          require(input.pending != null, "没有接收慢截图请求");
+          SystemClock.sleep(3000);
+          main(() -> state.set(current.session.query("state")));
+          require(state.get().getBoolean("preparing") && state.get().getString("error") == null
+              && input.presses.get() == 0, "慢截图在交付前提前超时或点击：" + state.get());
+          main(input::deliver);
+          deadline = SystemClock.elapsedRealtime() + 3000;
+          while (SystemClock.elapsedRealtime() < deadline) {
+            main(() -> state.set(current.session.query("state")));
+            if (current.failure != null || state.get().getString("error") != null || input.presses.get() > 0) break;
+            SystemClock.sleep(20);
+          }
+          require(current.failure == null && NativePlaybackHost.current() == current
+              && state.get().getBoolean("playing") && !state.get().getBoolean("preparing")
+              && state.get().getString("error") == null && input.presses.get() > 0,
+              "3 秒截图没有成功识别并开始演奏：" + state.get());
+          main(() -> PlaybackBridge.current().command("pause", new Bundle()));
+        }
         main(current::close); host = null; replacement.close(); replacement = null;
       }
-      output.putString("stream", "完整播放截图回归通过：Shizuku/无线模式经过真实宿主、真实业务截图校验和识别；空图正常提示未识别，无空指针。\n");
+      output.putString("stream", "完整播放截图回归通过：Shizuku/无线空图与暂停迟到帧安全；3 秒成功识别="
+          + (keyboard != null) + "。\n");
       passed = true;
     } catch (Throwable failure) {
       output.putString("stream", "完整播放截图回归失败：" + failure + "\n");
@@ -85,7 +124,17 @@ public final class ScreenshotPlaybackInstrumentation extends Instrumentation {
         if (real != null) SharedInput.connect(real);
         if (saved) { var edit=prefs.edit(); if (present) edit.putBoolean("fixed_harmonica_keys",previous);
           else edit.remove("fixed_harmonica_keys"); require(edit.commit(),"恢复偏好失败"); }
+        if (savedLayout != null) {
+          var edit = layoutPrefs.edit();
+          for (String key : new String[] {"noteX0", "noteX1", "noteX2", "noteX3", "noteX4", "noteX5", "noteX6", "noteX7",
+              "noteY", "SEMITONEX", "SEMITONEY", "RAISEX", "RAISEY", "NATURALX", "NATURALY", "LOWERX", "LOWERY"}) {
+            if (savedLayout.containsKey(key)) edit.putFloat(key, (Float) savedLayout.get(key));
+            else edit.remove(key);
+          }
+          require(edit.commit(), "恢复琴键位置失败");
+        }
       } catch (Throwable failure) { passed=false; output.putString("cleanup",failure.toString()); }
+      if (keyboard != null) keyboard.recycle();
     }
     finish(passed ? Activity.RESULT_OK : Activity.RESULT_CANCELED,output);
   }
@@ -103,25 +152,33 @@ public final class ScreenshotPlaybackInstrumentation extends Instrumentation {
     protected void playbackFailed(Throwable error) { failure=error; }
   }
   private static final class FakeInput implements SharedInput.Bridge {
-    final String mode; final AtomicInteger calls=new AtomicInteger();
-    boolean delayed; AccessibilityBinding.ScreenshotCallback pending; Bitmap bitmap;
-    FakeInput(String mode){this.mode=mode;}
+    final String mode; final Bitmap keyboard; final AtomicInteger calls=new AtomicInteger(), presses=new AtomicInteger();
+    boolean delayed, recognizable; AccessibilityBinding.ScreenshotCallback pending; Bitmap bitmap;
+    SharedInput.Completion held;
+    FakeInput(String mode, Bitmap keyboard){this.mode=mode;this.keyboard=keyboard;}
     public Bundle state(){Bundle b=new Bundle();b.putString("mode",mode);return b;}
     public void select(String mode){} public void command(String a,Bundle b){}
     public AutoCloseable observe(Runnable r){return () -> {};}
     public SharedInput.Session openSession(){return new SharedInput.Session(){
-      public AutoCloseable press(float[] p,int d,int w,int h,int r,SharedInput.Completion c){throw new AssertionError("空图不应点击");}
-      public void release(){} public boolean idle(){return true;} public void close(){}
+      public AutoCloseable press(float[] p,int d,int w,int h,int r,SharedInput.Completion c){return FakeInput.this.press(p,d,w,h,r,c);}
+      public void release(){FakeInput.this.release();} public boolean idle(){return held == null;}
+      public void close(){release();}
     };}
-    public AutoCloseable press(float[] p,int d,int w,int h,int r,SharedInput.Completion c){throw new AssertionError("空图不应点击");}
-    public void release(){}
+    public AutoCloseable press(float[] p,int d,int w,int h,int r,SharedInput.Completion c){
+      require(recognizable, "空图不应点击"); presses.incrementAndGet(); held=c; return () -> {};
+    }
+    public void release(){
+      var completion=held;held=null;
+      if(completion!=null)new Handler(Looper.getMainLooper()).post(() -> completion.complete(false,"演奏已暂停"));
+    }
     public void screenshot(int d,AccessibilityBinding.ScreenshotCallback callback){
       calls.incrementAndGet(); pending=callback;
       if (!delayed) deliver();
     }
     void deliver(){
       var callback=pending;pending=null;
-      bitmap=Bitmap.createBitmap(720,1600,Bitmap.Config.ARGB_8888);
+      bitmap=recognizable ? keyboard.copy(Bitmap.Config.ARGB_8888,false)
+          : Bitmap.createBitmap(720,1600,Bitmap.Config.ARGB_8888);
       callback.success(new AccessibilityBinding.Frame(bitmap));
     }
   }

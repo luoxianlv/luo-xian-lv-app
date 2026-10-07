@@ -104,6 +104,7 @@ public final class RecoveryActivity extends Activity {
     finish();
   }
 
+  @android.annotation.TargetApi(28)
   private static final class Api28 {
     static String name() {
       return android.app.Application.getProcessName();

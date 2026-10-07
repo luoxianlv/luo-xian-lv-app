@@ -140,6 +140,7 @@ final class HostStartup {
   }
 
   /** Android 8–10 不解析新平台的退出记录类型。 */
+  @android.annotation.TargetApi(30)
   private static final class Api30 {
     static Exit recentExit(Application application, int pid, long startedAt) {
       ActivityManager manager = application.getSystemService(ActivityManager.class);

@@ -33,6 +33,18 @@ public final class InputUserService extends IInputService.Stub {
   private ScheduledFuture<?> activationTask;
   private long releaseTicket;
   private volatile int lastCallerUid;
+  private final ThreadLocal<ScreenshotPacket> screenshotReply = new ThreadLocal<>();
+
+  @Override public boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags)
+      throws RemoteException {
+    try { return super.onTransact(code, data, reply, flags); }
+    finally {
+      ScreenshotPacket packet = screenshotReply.get();
+      screenshotReply.remove();
+      // Binder 已复制缓冲/管道句柄，源端不再保留本地引用。
+      if (packet != null) packet.close();
+    }
+  }
 
   /** Shizuku v13 提供的是宿主包上下文，不能拿它启动 Activity 或注册广播。 */
   public InputUserService(Context context) {
@@ -86,7 +98,7 @@ public final class InputUserService extends IInputService.Stub {
           // Shizuku 的类加载器不一定提供可用的 JNI 搜索路径，直接核对并加载宿主库。
           if (nativeLibraryDir != null) TouchEngine.initialize(nativeLibraryDir);
           probeStage = "probe";
-          state = TouchEngine.probe(null);
+          state = probeTouch();
           if (!state.getBoolean("supported", false))
             Log.w("触控共存", "触屏预检失败，阶段=" + state.getString("diagnosticStage", "probe")
                 + "，类型=" + state.getString("diagnosticType", "") + "，原因=" + state.getString("message", ""));
@@ -168,7 +180,7 @@ public final class InputUserService extends IInputService.Stub {
     }
   }
 
-  /** 只等待首次接管前的抬手，不占住控制线程，也不改变已激活会话的合流节奏。 */
+  /** 等待完整触点快照，不占住控制线程；无槽位快照的旧协议仍需先抬手。 */
   private void attemptActivation(ActivationWait request) {
     if (closed || request != activationWait || !request.current(activeToken)) return;
     String stage = "activate";
@@ -187,7 +199,7 @@ public final class InputUserService extends IInputService.Stub {
           long now = SystemClock.elapsedRealtime();
           if (request.retry(now)) {
             if (!snapshot.getBoolean("waitingForFingers"))
-              publishActivationWait(request, "正在等待手指抬起", "waiting-finger");
+              publishActivationWait(request, reason, "waiting-finger");
             activationTask = worker.schedule(() -> attemptActivation(request),
                 ActivationWait.RETRY_MS, TimeUnit.MILLISECONDS);
             return;
@@ -195,8 +207,9 @@ public final class InputUserService extends IInputService.Stub {
           activeToken = 0;
           cancelActivationWait();
           // 预检仍然通过；一次长按不能把后续演奏永久判为设备不支持。
-          publishActivationWait(request, "开始演奏时仍有手指按下，请松开后再播放", "waiting-finger");
-          finished(request.token, false, "开始演奏时仍有手指按下，请松开后再播放");
+          String message = reason == null || reason.isEmpty() ? "触点同步超时，请重试" : reason;
+          publishActivationWait(request, message, "waiting-finger");
+          finished(request.token, false, message);
           return;
         }
         if (reason == null || reason.isEmpty()) reason = "触屏接管失败";
@@ -292,6 +305,40 @@ public final class InputUserService extends IInputService.Stub {
     if (closed) throw new RemoteException("输入服务已关闭");
     try { return ShellScreenshot.capture(displayId); }
     catch (java.io.IOException failure) { throw new RemoteException("系统截图失败：" + failure.getClass().getSimpleName()); }
+  }
+
+  @Override public ScreenshotPacket screenshotFrame(int displayId, boolean rawOnly) throws RemoteException {
+    checkCaller();
+    if (closed) throw new RemoteException("输入服务已关闭");
+    long identity = Binder.clearCallingIdentity();
+    try {
+      ScreenshotPacket packet = ScreenshotPacket.capture(displayId, rawOnly);
+      screenshotReply.set(packet);
+      return packet;
+    } catch (java.io.IOException failure) {
+      throw new RemoteException("系统快速截图失败：" + failure.getClass().getSimpleName());
+    } finally { Binder.restoreCallingIdentity(identity); }
+  }
+
+  @Override public void routingHint(int deviceId, int displayId, String descriptor) {
+    checkCaller();
+    worker.execute(() -> {
+      if (closed || !TouchDeviceRouting.hint(deviceId, displayId, descriptor)) return;
+      // 正在合流时不重新接管；新的正常触摸仅帮助尚未就绪的连接消除歧义。
+      if (engine == null && callback != null && !snapshot.getBoolean("supported"))
+        publish(probeTouch());
+    });
+  }
+
+  private Bundle probeTouch() {
+    Bundle state = TouchEngine.probe(null);
+    Log.i("触控共存", "触屏筛选：兼容=" + state.getInt("candidateCount") + "，未知=" + state.getInt("candidateUnknownCount")
+        + "，方法=" + state.getString("deviceSelectionMethod", "") + "，原因=" + state.getString("deviceSelectionReason", ""));
+    if (!state.getBoolean("supported")) {
+      Log.w("触控共存", "触屏候选：" + state.getString("details", ""));
+      Log.w("触控共存", "系统路由：" + state.getString("routingDiagnostics", ""));
+    }
+    return state;
   }
 
   @Override public void heartbeat() {

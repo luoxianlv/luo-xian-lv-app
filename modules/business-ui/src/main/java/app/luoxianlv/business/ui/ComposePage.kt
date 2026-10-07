@@ -116,6 +116,20 @@ abstract class ComposePage :
         jobs.launch { recomposer.runRecomposeAndApplyChanges() }
         return ComposeView(context).also { root ->
             view = root
+            if (android.os.Build.VERSION.SDK_INT < 28) {
+                // 旧系统在窗口显示时提前查找焦点；预组合节点须等首次布局挂载后才能参与。
+                val focusability = root.descendantFocusability
+                root.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                root.viewTreeObserver.addOnPreDrawListener(
+                    object : android.view.ViewTreeObserver.OnPreDrawListener {
+                        override fun onPreDraw(): Boolean {
+                            root.viewTreeObserver.removeOnPreDrawListener(this)
+                            root.descendantFocusability = focusability
+                            return true
+                        }
+                    }
+                )
+            }
             root.id = 0x0010f00d
             root.isSaveFromParentEnabled = false
             root.setViewTreeLifecycleOwner(this)

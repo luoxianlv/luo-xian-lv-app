@@ -1,6 +1,5 @@
 package app.luoxianlv.recognition
 
-import android.graphics.Bitmap
 import android.os.SystemClock
 import app.luoxianlv.diagnostics.AppLog
 import app.luoxianlv.hot.contract.AccessibilityBinding
@@ -16,21 +15,7 @@ internal object ScreenshotAnalyzer {
         var conversionMs = 0L
         var analysisMs = 0L
         val result = runCatching {
-            val software = screenshot.takeBitmap()
-            val hardware =
-                if (software == null)
-                    try {
-                        Bitmap.wrapHardwareBuffer(screenshot.buffer, screenshot.colorSpace)
-                    } finally {
-                        screenshot.close()
-                    }
-                else null
-            val bitmap =
-                try {
-                    software ?: hardware?.copy(Bitmap.Config.ARGB_8888, false)
-                } finally {
-                    hardware?.recycle()
-                }
+            val bitmap = ScreenshotBitmapReader.read(screenshot)
             try {
                 conversionMs = SystemClock.uptimeMillis() - started
                 AppLog.log("开始分析截图：尺寸=${bitmap?.width}x${bitmap?.height}")

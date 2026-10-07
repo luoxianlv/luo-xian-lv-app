@@ -169,6 +169,15 @@ public final class NativeAppInstrumentation extends Instrumentation {
 
   private AccessibilityNodeInfo find(String text) {
     if (android.os.Build.VERSION.SDK_INT >= 33) automation.clearCache();
+    else if (android.os.Build.VERSION.SDK_INT < 28) {
+      // 旧 UiAutomation 缓存了窗口挂载前的 visible=false，查询前同样刷新缓存。
+      try {
+        Class<?> client = Class.forName("android.view.accessibility.AccessibilityInteractionClient");
+        client.getMethod("clearCache").invoke(client.getMethod("getInstance").invoke(null));
+      } catch (ReflectiveOperationException failure) {
+        throw new AssertionError("无法刷新旧系统的无障碍测试缓存", failure);
+      }
+    }
     for (var window : automation.getWindows()) {
       var found = find(text, window.getRoot());
       if (found != null) return found;

@@ -13,6 +13,26 @@ static void require(bool condition, const char* message) {
 
 int main() {
     {
+        require(evaluateContact(1, true, 1, 1).adoptable(true), "已按住的 Type B 触点不能接续");
+        require(evaluateContact(2, false, -1, -1).adoptable(true), "无接触键的有效槽位不能接续");
+        require(!evaluateContact(1, true, 0, 1).adoptable(true), "变化中的触点被误作完整快照");
+        require(!evaluateContact(0, true, 1, 1).adoptable(true), "按下但没有槽位时不应接管");
+        require(!evaluateContact(1, true, 1, 1).adoptable(false), "Type A 缺少快照仍强行接管");
+        require(!evaluateContact(1, true, 1, 1, 5).adoptable(true), "读取失败仍接管");
+        TouchModel held(10, 0, 1000, 0, 2000, 501, 1001, 0, true);
+        held.select(0); held.tracking(42); held.x(200); held.y(600); held.touch(1);
+        const float note[] = {400, 900};
+        require(held.begin(note, 1) && held.frame().count == 2, "接续的手指未加入首个自动音符");
+        held.x(300);
+        require(held.frame().xy[0] == 150 && held.frame().count == 2, "接续后移动没有更新");
+        held.cancelAutomatic();
+        require(held.frame().count == 1 && held.frame().ids[0] == 0, "音符结束误抬起接续手指");
+        held.begin(note, 1); held.tracking(-1); held.touch(0);
+        require(held.frame().count == 1 && held.frame().ids[0] == 10, "真实手指松开未保留自动音符");
+        held.cancelAutomatic();
+        require(held.frame().count == 0, "接续结束残留触点");
+    }
+    {
         require(evaluateContact(0, false, -1, -1).released(), "无接触键的空槽被错误拒绝");
         require(!evaluateContact(1, false, -1, -1).released(), "无接触键时忽略了真实tracking");
         require(evaluateContact(0, true, 0, 0).released(), "完整抬手状态被错误拒绝");

@@ -33,7 +33,7 @@
 
 ## 截图与播放衔接
 
-自动截图识别使用 Android 11 起的无障碍截图能力。固定口琴布局走演练场几何，不请求截图。
+无障碍截图需 Android 11；Android 8–10 可使用已授权的 Shizuku 截图，旧系统走 PNG 兼容路径。固定口琴布局和演练场使用实际几何，不请求截图。
 
 截图转换和识别在工作线程执行；硬件缓冲及位图在处理后释放。主线程应用结果前再次检查播放请求代次和显示状态，暂停、换曲或旋转后的旧结果不覆盖当前布局。流程入口在 [PlaybackSession](../app/src/main/java/app/luoxianlv/playback/PlaybackSession.kt) 的 `syncWithScreen`。
 

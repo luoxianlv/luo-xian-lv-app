@@ -16,6 +16,11 @@ internal class PlaybackScreenCapture(
     private val handler: Handler,
     private val closed: () -> Boolean,
 ) {
+    companion object {
+        // 覆盖助手 5 秒硬截止和解析余量；快速截图识别完成后立即回调。
+        const val RECOGNITION_TIMEOUT_MS = 7000L
+    }
+
     private val jobs = AtomicInteger()
     private val executor = Executors.newSingleThreadExecutor()
     private var previous: ScreenRecognizer.Result? = null

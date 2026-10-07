@@ -1,4 +1,4 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!--
       深色下重定义整个 AppTheme。
 
@@ -17,7 +17,7 @@
         <item name="android:navigationBarColor">@color/app_navigation_bar</item>
         <item name="android:statusBarColor">@color/app_status_bar</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
         <item name="shapeAppearanceSmallComponent">@style/PlayerShape</item>
         <item name="shapeAppearanceMediumComponent">@style/PlayerShape</item>
     </style>

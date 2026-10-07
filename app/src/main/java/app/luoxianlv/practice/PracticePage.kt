@@ -84,7 +84,7 @@ class PracticePage : ViewPage() {
                 }
             }
         )
-        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateCanvasSnapshot() }
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateForeground() }
         // 同窗口候选自行准备无声画面，不从仍在使用的旧页夺走渲染器。
         backdrop =
             (if (host.isCurrent()) PreparedWallpaper.take(activity, pageContext)
@@ -292,7 +292,12 @@ class PracticePage : ViewPage() {
     private fun updateForeground() {
         // 宿主和窗口只能在主线程读取；共享桥接接口在任意线程读取此快照。
         foregroundSnapshot =
-            resumed && !ending && !exiting && host.isCurrent() && activity.hasWindowFocus()
+            resumed &&
+                !ending &&
+                !exiting &&
+                host.isCurrent() &&
+                activity.hasWindowFocus() &&
+                keyboard?.playableSize != false
         if (!foreground) {
             canvasSnapshot = null
             if (routeActive) deactivateRoute()
@@ -410,7 +415,14 @@ class PracticePage : ViewPage() {
     }
 
     private fun publishReady() {
-        if (!keyboardReady || !openingFinished || exiting || ending) return
+        if (
+            !keyboardReady ||
+                !openingFinished ||
+                exiting ||
+                ending ||
+                keyboard?.playableSize != true
+        )
+            return
         updateCanvasSnapshot()
         if (!reportedReady) {
             reportedReady = true

@@ -183,6 +183,17 @@ object DebugExport {
                     "productId",
                     "physicalSlots",
                     "deviceMatchMethod",
+                    "candidateCount",
+                    "candidateNodeCount",
+                    "candidateUnknownCount",
+                    "candidateDuplicateCount",
+                    "candidateScanTruncated",
+                    "candidateScanError",
+                    "deviceSelectionMethod",
+                    "deviceSelectionReason",
+                    "routingDiagnostics",
+                    "deviceIdentity",
+                    "deviceScanIdentity",
                     "touchProtocol",
                     "shizukuTransport",
                     "hardwareTrackingIds",
@@ -203,6 +214,28 @@ object DebugExport {
                     "rotation",
                 )
                 .forEach { key -> if (state?.containsKey(key) == true) put(key, state.get(key)) }
+            state?.getParcelableArrayList<android.os.Bundle>("deviceCandidates")?.let { candidates
+                ->
+                put(
+                    "deviceCandidates",
+                    org.json.JSONArray().apply {
+                        candidates.take(64).forEach { candidate ->
+                            put(
+                                JSONObject().apply {
+                                    candidate.keySet().sorted().forEach { key ->
+                                        when (val value = candidate.get(key)) {
+                                            is String,
+                                            is Number,
+                                            is Boolean -> put(key, value)
+                                            is List<*> -> put(key, org.json.JSONArray(value))
+                                        }
+                                    }
+                                }
+                            )
+                        }
+                    },
+                )
+            }
         }
     }
         .getOrElse { JSONObject().put("errorType", it.javaClass.simpleName) }

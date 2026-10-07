@@ -290,7 +290,9 @@ fun InputModeScreen(onBack: () -> Unit, startAfterSetup: Boolean = false) {
             }
             item(key = "hint") {
                 Text(
-                    "自动识别按键需要无障碍；固定按键和演练场可使用已连接的 Shizuku 或无线调试。切换模式会暂停演奏。",
+                    if (android.os.Build.VERSION.SDK_INT < 30)
+                        "Android 8–10 自动识别需使用 Shizuku，可按其指引通过电脑启动。无障碍可使用已保存的按键位置或实验性设置中的固定按键。"
+                    else "无障碍、Shizuku 和无线调试均可识别琴键；后两种模式连接后可边操作边演奏。切换模式会暂停演奏。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 6.dp),

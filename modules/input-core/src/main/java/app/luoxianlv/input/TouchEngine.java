@@ -7,6 +7,7 @@ import android.os.Process;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Objects;
 
 /** 只在 shell 助手运行的触点合流内核；预检不接管设备。 */
@@ -82,42 +83,151 @@ public final class TouchEngine implements AutoCloseable {
         }
     }
 
+    private record Inventory(ArrayList<Bundle> candidates, Bundle diagnostics, int selected,
+                             String error, String selectionReason, String identity) {}
+
+    private static Inventory inventory(String[][] rows) {
+        if (rows == null || rows.length < 1 || rows.length > 129 || rows[0] == null
+                || rows[0].length != 11 || !"touch-candidates-v1".equals(rows[0][0]))
+            throw new IllegalStateException("触屏预检没有返回有效信息");
+        String[] metadata = rows[0];
+        ArrayList<Bundle> candidates = new ArrayList<>();
+        StringBuilder details = new StringBuilder();
+        for (int i = 1; i < rows.length; ++i) {
+            String[] row = rows[i];
+            if (row == null || row.length != 34) throw new IllegalStateException("触屏候选信息不完整");
+            Bundle candidate = new Bundle();
+            candidate.putString("path", row[0]); candidate.putString("name", row[1]);
+            candidate.putInt("physicalSlots", Integer.parseInt(row[2]));
+            candidate.putInt("minX", Integer.parseInt(row[3])); candidate.putInt("maxX", Integer.parseInt(row[4]));
+            candidate.putInt("minY", Integer.parseInt(row[5])); candidate.putInt("maxY", Integer.parseInt(row[6]));
+            candidate.putInt("vendorId", Integer.parseInt(row[7])); candidate.putInt("productId", Integer.parseInt(row[8]));
+            candidate.putInt("version", Integer.parseInt(row[9])); candidate.putInt("bus", Integer.parseInt(row[10]));
+            candidate.putString("touchProtocol", row[12]);
+            candidate.putBoolean("hardwareTrackingIds", "1".equals(row[13]));
+            candidate.putString("identityFingerprint", row[14]); candidate.putString("rdev", row[15]);
+            candidate.putString("propertyBits", row[16]); candidate.putString("keyBits", row[17]);
+            candidate.putString("absBits", row[18]); candidate.putBoolean("touchSupported", "1".equals(row[19]));
+            candidate.putString("sysfsTopology", row[20]); candidate.putString("sysfsHash", row[21]);
+            candidate.putString("driver", row[22]); candidate.putString("physHash", row[23]); candidate.putString("uniqHash", row[24]);
+            candidate.putInt("errno", Integer.parseInt(row[25])); candidate.putInt("topologyErrno", Integer.parseInt(row[26]));
+            candidate.putInt("slotMin", Integer.parseInt(row[27])); candidate.putInt("slotMax", Integer.parseInt(row[28]));
+            candidate.putInt("trackingMin", Integer.parseInt(row[29])); candidate.putInt("trackingMax", Integer.parseInt(row[30]));
+            candidate.putString("duplicateOf", row[31]);
+            candidate.putString("canonicalPath", row[31].isEmpty() ? row[0] : row[31]);
+            candidate.putBoolean("capabilitiesKnown", "1".equals(row[32])); candidate.putBoolean("uncertain", "1".equals(row[33]));
+            long properties = row[16].isEmpty() ? 0 : Long.parseUnsignedLong(row[16], 16);
+            candidate.putBoolean("direct", (properties & 2) != 0);
+            candidate.putBoolean("pointer", (properties & 1) != 0);
+            candidate.putBoolean("semiMt", (properties & 8) != 0);
+            boolean compatible = row[11].isEmpty() && !row[15].isEmpty() && candidate.getBoolean("capabilitiesKnown");
+            candidate.putBoolean("compatible", compatible);
+            candidate.putBoolean("eligible", compatible && row[31].isEmpty());
+            String rejection = row[31].isEmpty() ? row[11] : "duplicate-rdev";
+            candidate.putString("rejectReason", rejection);
+            String summary = row[0] + " name=" + bounded(row[1], 160)
+                    + " rdev=" + row[15] + " protocol=" + row[12] + " slots=" + row[2]
+                    + " properties=" + row[16] + " topology=" + row[20] + " driver=" + row[22]
+                    + " reason=" + (rejection.isEmpty() ? "compatible" : rejection) + " errno=" + row[25];
+            candidate.putString("capabilitySummary", summary);
+            if (details.length() != 0) details.append('\n');
+            details.append(summary);
+            candidates.add(candidate);
+        }
+        // 路由可能只登记了另一个同 rdev 别名；去重不应丢失可核对的精确路径。
+        for (Bundle canonical : candidates) {
+            if (!canonical.getBoolean("eligible")) continue;
+            String path = canonical.getString("path");
+            ArrayList<String> aliases = new ArrayList<>();
+            for (Bundle value : candidates)
+                if (value.getBoolean("compatible") && path.equals(value.getString("canonicalPath")))
+                    aliases.add(value.getString("path"));
+            canonical.putStringArrayList("aliases", aliases);
+        }
+        Bundle diagnostics = new Bundle();
+        diagnostics.putParcelableArrayList("deviceCandidates", candidates);
+        diagnostics.putInt("candidateCount", Integer.parseInt(metadata[7]));
+        diagnostics.putInt("candidateNodeCount", Integer.parseInt(metadata[3]));
+        diagnostics.putInt("candidateUnknownCount", Integer.parseInt(metadata[8]));
+        diagnostics.putInt("candidateDuplicateCount", Integer.parseInt(metadata[9]));
+        diagnostics.putBoolean("candidateScanTruncated", "1".equals(metadata[2]));
+        diagnostics.putString("candidateScanError", metadata[1]);
+        diagnostics.putString("nativeSelectionDecision", metadata[5]);
+        diagnostics.putString("deviceScanIdentity", metadata[10]);
+        diagnostics.putString("details", details.toString());
+        return new Inventory(candidates, diagnostics, Integer.parseInt(metadata[4]), metadata[1], metadata[6], metadata[10]);
+    }
+
+    private static String bounded(String value, int maximum) {
+        return value == null ? "" : value.substring(0, Math.min(value.length(), maximum));
+    }
+
+    private static Bundle candidate(Inventory inventory, String path) {
+        for (Bundle value : inventory.candidates)
+            if (path.equals(value.getString("path")) && value.getBoolean("compatible")) return value;
+        return null;
+    }
+
+    private static Bundle failedProbe(String stage, String message, Throwable error, Bundle diagnostics) {
+        Bundle result = new Bundle(diagnostics);
+        result.putAll(failure(stage, message, error));
+        return result;
+    }
+
     public static Bundle probe(String preferredDevice) {
         String stage = "native-load";
+        Bundle diagnostics = new Bundle();
         try {
             ensureLoaded();
             stage = "device-probe";
-            String[] info = nativeProbe(preferredDevice == null ? "" : preferredDevice);
-            if (info == null || info.length != 14) return failure(stage, "触屏预检没有返回有效信息", null);
-            if (!info[11].isEmpty()) return failure(stage, info[11], null);
-            stage = "device-capabilities";
-            Bundle result = new Bundle();
-            result.putString("path", info[0]);
-            result.putString("name", info[1]);
-            result.putInt("physicalSlots", Integer.parseInt(info[2]));
-            result.putInt("minX", Integer.parseInt(info[3]));
-            result.putInt("maxX", Integer.parseInt(info[4]));
-            result.putInt("minY", Integer.parseInt(info[5]));
-            result.putInt("maxY", Integer.parseInt(info[6]));
-            result.putInt("vendorId", Integer.parseInt(info[7]));
-            result.putInt("productId", Integer.parseInt(info[8]));
-            result.putInt("version", Integer.parseInt(info[9]));
-            result.putInt("bus", Integer.parseInt(info[10]));
+            Inventory initial = inventory(nativeProbe(""));
+            diagnostics.putAll(initial.diagnostics);
+            if (!initial.error.isEmpty()) return failedProbe(stage, initial.error, null, diagnostics);
+            if (diagnostics.getBoolean("candidateScanTruncated"))
+                return failedProbe(stage, "触屏设备列表超过安全范围，不能确认输入来源", null, diagnostics);
+            stage = "device-routing";
+            Bundle selection = TouchDeviceRouting.resolve(initial.candidates);
+            if (selection == null) return failedProbe(stage, "系统输入路由没有返回有效信息", null, diagnostics);
+            String selectedPath = selection.getString("selectedPath", "");
+            diagnostics.putString("deviceSelectionMethod", bounded(selection.getString("selectionMethod", ""), 80));
+            diagnostics.putString("deviceSelectionReason", bounded(selection.getString("selectionReason", ""), 2000));
+            diagnostics.putString("routingDiagnostics", bounded(selection.getString("routingDiagnostics", ""), 32768));
+            if (selectedPath.isEmpty()) {
+                String reason = selection.getString("selectionReason", "无法确认当前主屏触屏，请重新连接");
+                return failedProbe(stage, reason, null, diagnostics);
+            }
+            // 首选只能缩小已经核对的系统路由，不能覆盖真实歧义或用名称猜设备。
+            if (preferredDevice != null && !preferredDevice.isEmpty() && !preferredDevice.equals(selectedPath))
+                return failedProbe(stage, "首选触屏与已确认的主屏输入来源不一致", null, diagnostics);
+            Bundle before = candidate(initial, selectedPath);
+            if (before == null) return failedProbe(stage, "系统路由指向的触屏不在兼容候选中", null, diagnostics);
+            stage = "device-revalidate";
+            Inventory current = inventory(nativeProbe(selectedPath));
+            if (!current.error.isEmpty()) return failedProbe(stage, current.error, null, diagnostics);
+            Bundle after = current.selected < 0 || current.selected >= current.candidates.size()
+                    ? null : current.candidates.get(current.selected);
+            if (after == null || !after.getBoolean("compatible") || !selectedPath.equals(after.getString("path"))
+                    || !initial.identity.equals(current.identity)
+                    || !before.getString("identityFingerprint", "").equals(after.getString("identityFingerprint", "")))
+                return failedProbe(stage, "输入设备身份或能力发生变化，请重新预检", null, diagnostics);
+            Bundle result = new Bundle(diagnostics);
+            result.putAll(after);
+            result.putBoolean("eligible", true);
+            result.putString("rejectReason", "");
+            result.putString("deviceIdentity", after.getString("identityFingerprint"));
             result.putInt("maxAutomaticPointers", Math.min(10, 32 - result.getInt("physicalSlots")));
             result.putInt("maxPointers", 16);
             // 合流输出是独立的虚拟触摸流；与 scrcpy 一样使用设备 0，不伪装成物理 InputDevice。
             result.putInt("deviceId", MergedTouchDispatcher.DEVICE_ID);
             result.putString("deviceMatchMethod", "virtual-injection");
-            result.putString("touchProtocol", info[12]);
-            result.putBoolean("hardwareTrackingIds", "1".equals(info[13]));
             result.putBoolean("supported", true);
             result.putString("message", "触屏预检通过");
             result.putString("diagnosticStage", "ready");
             return result;
         } catch (RuntimeException e) {
-            return failure(stage, "触屏能力检查失败", e);
+            return failedProbe(stage, "触屏能力检查失败", e, diagnostics);
         } catch (LinkageError e) {
-            return failure(stage, "触控原生库加载失败", e);
+            return failedProbe(stage, stage.equals("native-load") ? "触控原生库加载失败" : "触屏接口不兼容", e, diagnostics);
         }
     }
 
@@ -128,17 +238,17 @@ public final class TouchEngine implements AutoCloseable {
         Bundle result = probe(preferredDevice);
         if (!result.getBoolean("supported")) return result;
         try {
-            handle = nativePrepare(listener, result.getString("path"), result.getString("name"),
-                    result.getInt("vendorId"), result.getInt("productId"), width, height, rotation);
-            if (handle == 0) return failure("native-prepare", "触控引擎没有成功准备", null);
+            handle = nativePrepare(listener, result.getString("path"), result.getString("deviceIdentity"),
+                    result.getString("deviceScanIdentity"), width, height, rotation);
+            if (handle == 0) return failedProbe("native-prepare", "触控引擎没有成功准备", null, result);
             result.putInt("width", width);
             result.putInt("height", height);
             result.putInt("rotation", rotation);
             return result;
         } catch (RuntimeException e) {
-            return failure("native-prepare", "触控引擎准备失败：" + concise(e), e);
+            return failedProbe("native-prepare", "触控引擎准备失败：" + concise(e), e, result);
         } catch (LinkageError e) {
-            return failure("native-prepare", "触控原生接口不可用", e);
+            return failedProbe("native-prepare", "触控原生接口不可用", e, result);
         }
     }
 
@@ -180,6 +290,7 @@ public final class TouchEngine implements AutoCloseable {
     }
 
     private static Bundle failure(String stage, String message, Throwable error) {
+        if (error != null) android.util.Log.w("触控共存", "触屏预检异常：阶段=" + stage, error);
         Bundle result = new Bundle();
         result.putBoolean("supported", false);
         String type = safeErrorType(error);
@@ -218,9 +329,9 @@ public final class TouchEngine implements AutoCloseable {
         return message == null || message.trim().isEmpty() ? failure.getClass().getSimpleName() : message;
     }
 
-    private static native String[] nativeProbe(String preferred);
-    private static native long nativePrepare(Listener listener, String path, String name,
-            int vendorId, int productId, int width, int height, int rotation);
+    private static native String[][] nativeProbe(String preferred);
+    private static native long nativePrepare(Listener listener, String path, String identity,
+            String scanIdentity, int width, int height, int rotation);
     private static native boolean nativeActivate(long handle);
     private static native String nativeFailure(long handle);
     private static native boolean nativeActivationWaiting(long handle);

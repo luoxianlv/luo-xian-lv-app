@@ -471,13 +471,13 @@ public abstract class NativePlaybackHost implements AutoCloseable {
       if (!current()) return;
       if (Looper.myLooper() != Looper.getMainLooper())
         throw new IllegalStateException("截图请求必须来自主线程");
-      if (Build.VERSION.SDK_INT < 30) {
-        callback.failure(-1);
-        return;
-      }
       var input = SharedInput.current();
       if (input != null && !SharedInput.ACCESSIBILITY.equals(input.state().getString("mode", SharedInput.ACCESSIBILITY))) {
         captureInput(input, displayId, callback);
+        return;
+      }
+      if (Build.VERSION.SDK_INT < 30) {
+        callback.failure(-1);
         return;
       }
       NativeAccessibilityService accessibility = NativeAccessibilityService.current();

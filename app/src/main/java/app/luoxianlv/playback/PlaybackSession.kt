@@ -217,7 +217,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                         handler.postDelayed(this, 500)
                     }
                 }
-                handler.postDelayed(timeout, 2000)
+                handler.postDelayed(timeout, PlaybackScreenCapture.RECOGNITION_TIMEOUT_MS)
                 syncWithScreen(token) { recognized ->
                     if (token != generation || !recoveringDisplay || completed)
                         return@syncWithScreen
@@ -619,10 +619,12 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         playbackDisplay = displayState()
         coordinateFrame = null
         AppLog.log("开始播放：显示=$playbackDisplay 起点毫秒=$baseMs 速度=$speed")
-        if (fixedKeys) {
+        if (syncPracticeLayout(generation)) {
+            startPlaying()
+        } else if (fixedKeys) {
             syncFixedLayout()
             startPlaying()
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        } else if (canCaptureScreen()) {
             preparing = true
             val token = ++generation
             floating.refresh()
@@ -635,7 +637,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                     floating.refresh()
                 }
             }
-            handler.postDelayed(timeout, 2500)
+            handler.postDelayed(timeout, PlaybackScreenCapture.RECOGNITION_TIMEOUT_MS)
             syncWithScreen(token) { recognized ->
                 handler.removeCallbacks(timeout)
                 if (token != generation) return@syncWithScreen
@@ -785,6 +787,15 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         return false
     }
 
+    /** 无障碍截图从 Android 11 起提供；shell 截图可用于 Android 8–10。 */
+    private fun canCaptureScreen(): Boolean {
+        val input = app.luoxianlv.hot.contract.SharedInput.current()
+        val mode = input?.state()?.getString("mode")
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ||
+            mode == app.luoxianlv.hot.contract.SharedInput.SHIZUKU ||
+            mode == app.luoxianlv.hot.contract.SharedInput.WIRELESS
+    }
+
     /** 截图识别后保存布局并同步音区；回调在主线程执行。 */
     private fun syncWithScreen(
         token: Int,
@@ -802,7 +813,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             }
             return
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+        if (!canCaptureScreen()) {
             done(false)
             return
         }
@@ -1089,7 +1100,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         }
         val frame =
             coordinateFrame
-                ?: if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                ?: if (!canCaptureScreen()) {
                     PlaybackCoordinates.Frame(currentDisplay.width, currentDisplay.height)
                 } else {
                     gestureFailure = "缺少无障碍截图坐标，请重新识别"

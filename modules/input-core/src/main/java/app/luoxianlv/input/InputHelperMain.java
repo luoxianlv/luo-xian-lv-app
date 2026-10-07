@@ -138,14 +138,22 @@ public final class InputHelperMain {
       String nonce, Bundle extras) throws Exception {
     Class<?> managerClass = Class.forName("android.app.IActivityManager");
     Object manager = Class.forName("android.app.ActivityManager").getDeclaredMethod("getService").invoke(null);
-    Method acquire = managerClass.getMethod("getContentProviderExternal", String.class, int.class, IBinder.class, String.class);
-    Method release = managerClass.getMethod("removeContentProviderExternalAsUser", String.class, IBinder.class, int.class);
+    // Android 8–9 尚无 tag 和按用户释放接口，不能套用 Android 11 的签名。
+    boolean tagged = Build.VERSION.SDK_INT >= 29;
+    if (!tagged && userId != 0) throw new UnsupportedOperationException("旧系统仅支持主用户输入连接");
+    Method acquire = tagged
+        ? managerClass.getMethod("getContentProviderExternal", String.class, int.class, IBinder.class, String.class)
+        : managerClass.getMethod("getContentProviderExternal", String.class, int.class, IBinder.class);
+    Method release = tagged
+        ? managerClass.getMethod("removeContentProviderExternalAsUser", String.class, IBinder.class, int.class)
+        : managerClass.getMethod("removeContentProviderExternal", String.class, IBinder.class);
     IBinder token = new Binder();
     Object holder = null;
     Exception primaryFailure = null;
     String stage = "获取外部桥接入口";
     try {
-      holder = acquire.invoke(manager, authority, userId, token, "luoxianlv-input");
+      holder = tagged ? acquire.invoke(manager, authority, userId, token, "luoxianlv-input")
+          : acquire.invoke(manager, authority, userId, token);
       if (holder == null) throw new IllegalStateException("宿主连接入口不可用");
       Object provider = Class.forName("android.app.ContentProviderHolder").getField("provider").get(holder);
       if (provider == null) throw new IllegalStateException("宿主连接入口未就绪");
@@ -157,16 +165,27 @@ public final class InputHelperMain {
             String.class, String.class, String.class, Bundle.class);
         return (Bundle) call.invoke(provider, callingContext.getAttributionSource(), authority, "connect", nonce, extras);
       }
-      Method call = providerClass.getMethod("call", String.class, String.class, String.class,
-          String.class, String.class, Bundle.class);
-      return (Bundle) call.invoke(provider, callingContext.getPackageName(), null, authority, "connect", nonce, extras);
+      if (Build.VERSION.SDK_INT >= 30) {
+        Method call = providerClass.getMethod("call", String.class, String.class, String.class,
+            String.class, String.class, Bundle.class);
+        return (Bundle) call.invoke(provider, callingContext.getPackageName(), null, authority, "connect", nonce, extras);
+      }
+      if (Build.VERSION.SDK_INT >= 29) {
+        Method call = providerClass.getMethod("call", String.class, String.class, String.class, String.class, Bundle.class);
+        return (Bundle) call.invoke(provider, callingContext.getPackageName(), authority, "connect", nonce, extras);
+      }
+      Method call = providerClass.getMethod("call", String.class, String.class, String.class, Bundle.class);
+      return (Bundle) call.invoke(provider, callingContext.getPackageName(), "connect", nonce, extras);
     } catch (Exception failure) {
       primaryFailure = failure;
       Log.e("落弦律输入助手", "外部交付失败：阶段=" + stage + "；类型=" + safeFailureType(failure));
       throw failure;
     } finally {
       if (holder != null) {
-        try { release.invoke(manager, authority, token, userId); }
+        try {
+          if (tagged) release.invoke(manager, authority, token, userId);
+          else release.invoke(manager, authority, token);
+        }
         catch (Exception failure) {
           Log.e("落弦律输入助手", "外部交付失败：阶段=释放外部桥接入口；类型=" + safeFailureType(failure));
           if (primaryFailure != null) primaryFailure.addSuppressed(failure);

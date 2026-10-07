@@ -13,6 +13,12 @@ public abstract class BusinessActivity extends NativeHostActivity {
 
   protected abstract String route();
 
+  @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+    app.luoxianlv.input.InputController input = app.luoxianlv.input.InputController.current();
+    if (input != null) input.observeTouch(event, getWindowManager().getDefaultDisplay().getDisplayId());
+    return super.dispatchTouchEvent(event);
+  }
+
   @Override
   protected void onCreate(android.os.Bundle saved) {
     Bootstrap.windowOpened(this);

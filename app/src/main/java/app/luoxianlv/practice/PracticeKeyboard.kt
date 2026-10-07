@@ -449,16 +449,26 @@ class PracticeKeyboard(context: Context) : View(context) {
         return true
     }
 
+    internal val playableSize: Boolean
+        get() = width > height && height >= 200 * density
+
+    private val exitInvalidSize = Runnable {
+        if (isAttachedToWindow && hasWindowFocus() && !playableSize) onExit()
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (w > 0 && h > 0 && (w <= h || h < 200 * density)) {
+        removeCallbacks(exitInvalidSize)
+        if (w > 0 && h > 0 && !playableSize) {
             close()
             PracticePlaybackGate.invalidateSession(session)
-            post { onExit() }
+            // 后台返回可能先收到竖屏布局；先停音，留出系统恢复横屏的时间。
+            postDelayed(exitInvalidSize, 2000)
         }
     }
 
     override fun onDetachedFromWindow() {
+        removeCallbacks(exitInvalidSize)
         close()
         super.onDetachedFromWindow()
     }
