@@ -1,0 +1,11 @@
+name: 想问个问题
+description: 使用中有不明白的地方
+labels: [question]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 想问什么？
+      description: 可以直接描述，也可以拖入截图。
+    validations:
+      required: false

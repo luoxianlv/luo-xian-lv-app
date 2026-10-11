@@ -1,0 +1,32 @@
+name: 遇到了问题
+description: 告诉我们哪里不好用，能写多少就写多少
+labels: [bug]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 出了什么问题？
+      description: 可以直接描述，也可以拖入截图。
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: 大概怎么遇到的？
+      placeholder: 不确定也没关系。
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: App 版本
+      placeholder: 知道的话填一下
+    validations:
+      required: false
+  - type: input
+    id: device
+    attributes:
+      label: 手机型号 / Android 版本
+      placeholder: 知道的话填一下
+    validations:
+      required: false
