@@ -17,8 +17,12 @@ final class HostResultsChecks {
     HostResults results = new HostResults(activity, null);
     results.launch("midi.import", new Intent(Intent.ACTION_GET_CONTENT), null);
     int code = activity.code;
-    rejects(() -> results.launch("midi.import", new Intent(), null));
+    for (int i = 0; i < 100; i++) results.launch("midi.import", new Intent(), null);
+    check(activity.launches == 1 && activity.code == code, "重复点击覆盖了在途请求");
+    check(results.save().getIntArray("codes").length == 1, "重复点击扩张了请求数量");
     HostResults restored = new HostResults(activity, results.save());
+    restored.launch("midi.import", new Intent(), null);
+    check(activity.launches == 1 && activity.code == code, "重建后的重复点击重启了请求");
     Uri uri = Uri.parse("content://test/中文.mid");
     Intent file =
         new Intent()
@@ -28,6 +32,8 @@ final class HostResultsChecks {
     file.setClipData(ClipData.newRawUri("谱子", uri));
     restored.accept(code, Activity.RESULT_OK, file, page);
     check(restored.busy(), "未注册回调的结果丢失");
+    restored.launch("midi.import", new Intent(), null);
+    check(activity.launches == 1, "重复点击丢弃了待消费结果");
     HostResults buffered = new HostResults(activity, restored.save());
     page.ready = true;
     buffered.deliver("midi.import", page);
@@ -65,6 +71,8 @@ final class HostResultsChecks {
     permissionState.putStringArray("keys", new String[] {"notifications"});
     permissionState.putBooleanArray("permissions", new boolean[] {true});
     HostResults permissions = new HostResults(activity, permissionState);
+    permissions.permissions("notifications", new String[] {"android.permission.POST_NOTIFICATIONS"});
+    check(permissions.save().getIntArray("codes").length == 1, "重复权限请求未合并");
     permissions.accept(0x6000, Activity.RESULT_OK, new Intent(), page);
     check(permissions.busy(), "请求类型不匹配却消费了权限结果");
     permissions.acceptPermissions(
@@ -89,6 +97,15 @@ final class HostResultsChecks {
     check(activity.code == 0xfffe, "请求序号未保留");
     wrap.launch("first", new Intent(), null);
     check(activity.code == 0x6000, "请求序号未环回");
+
+    HostResults full = new HostResults(activity, null);
+    for (int i = 0; i < 32; i++) full.launch("budget.key" + i, new Intent(), null);
+    int launched = activity.launches;
+    full.launch("budget.key0", new Intent(), null);
+    check(activity.launches == launched, "满预算时重复点击未合并");
+    rejects(() -> full.launch("budget.extra", new Intent(), null));
+    rejects(() -> full.launch("invalid key", new Intent(), null));
+    check(full.save().getIntArray("codes").length == 32, "请求预算校验失效");
   }
 
   private static Bundle emptyState() {
@@ -110,10 +127,12 @@ final class HostResultsChecks {
 
   private static final class Recorder extends Activity {
     int code;
+    int launches;
 
     @Override
     public void startActivityForResult(Intent intent, int code, Bundle options) {
       this.code = code;
+      launches++;
     }
   }
 

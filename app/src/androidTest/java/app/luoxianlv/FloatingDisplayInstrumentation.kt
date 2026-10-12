@@ -15,6 +15,8 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.EditText
+import app.luoxianlv.hot.contract.SharedInput
+import app.luoxianlv.library.SongRepository
 import app.luoxianlv.playback.FloatingControls
 import app.luoxianlv.playback.PlaybackConnection
 import app.luoxianlv.playback.PlayerUi.dp
@@ -83,6 +85,8 @@ class FloatingDisplayInstrumentation : Instrumentation() {
         var previousState: Bundle? = null
         var previousOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         var success = false
+        val repository = SongRepository(targetContext)
+        val priorFloatingEnabled = repository.floatingEnabled
         try {
             val component =
                 "${targetContext.packageName}/app.luoxianlv.service.MusicAccessibilityService"
@@ -104,7 +108,14 @@ class FloatingDisplayInstrumentation : Instrumentation() {
             val host = checkNotNull(activity)
             previousOrientation = host.requestedOrientation
             main { host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
-            await("无障碍连接") { PlaybackConnection.instance != null }
+            await("输入宿主悬浮窗权限") {
+                SharedInput.current()?.state()?.getBoolean("overlayGranted") == true
+            }
+            main {
+                repository.floatingEnabled = true
+                PlaybackConnection.startFloating(host)
+            }
+            await("播放服务连接") { PlaybackConnection.instance != null }
             val connection = checkNotNull(PlaybackConnection.instance)
             val session = currentPlaybackSession()
             val floating = value(session, "floating") as FloatingControls
@@ -112,11 +123,23 @@ class FloatingDisplayInstrumentation : Instrumentation() {
             previousVisible = connection.floatingVisible
             main {
                 previousState = floating.snapshot()
-                connection.showFloating(false)
-                connection.showFloating(true)
+                // 只重置待测窗口，不通过业务开关停止它所属的前台服务。
+                floating.hide()
+                floating.restore(
+                    Bundle(checkNotNull(previousState)).apply {
+                        putBoolean("expanded", false)
+                        putBoolean("speedControls", false)
+                        putInt("x", 0)
+                        putInt("y", 0)
+                        putString("dock", "NONE")
+                    }
+                )
+                floating.show()
             }
             await("竖屏气泡挂载") {
-                value(floating, "root") != null &&
+                (value(floating, "root") as? View)?.let {
+                    it.isAttachedToWindow && it.contentDescription == "展开播放器"
+                } == true &&
                     connection.screenBounds().height() > connection.screenBounds().width() &&
                     !floating.interacting
             }
@@ -229,7 +252,14 @@ class FloatingDisplayInstrumentation : Instrumentation() {
                         )
                         .apply { isAccessible = true }
                         .invoke(floating, panel!!, layout) as Boolean
-                check(!updated && value(floating, "root") == null && floating.isVisible)
+                check(
+                    !updated &&
+                        value(floating, "root") == null &&
+                        floating.isRequested &&
+                        !floating.isVisible
+                ) {
+                    "系统移除后应保留恢复意图，挂载前不能报为已显示"
+                }
             }
             await("系统移除后恢复原面板") {
                 value(floating, "root") === panel && panel!!.isAttachedToWindow
@@ -331,6 +361,7 @@ class FloatingDisplayInstrumentation : Instrumentation() {
                 PlaybackConnection.instance?.showFloating(previousVisible)
                 activity?.requestedOrientation = previousOrientation
                 activity?.finish()
+                repository.floatingEnabled = priorFloatingEnabled
             }
             if (priorServices == "null")
                 shell("settings delete secure enabled_accessibility_services")
