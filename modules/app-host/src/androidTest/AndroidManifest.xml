@@ -91,4 +91,6 @@
         android:targetPackage="app.luoxianlv.debug" android:handleProfiling="false" android:functionalTest="true" />
     <instrumentation android:name="app.luoxianlv.host.HarmonicaOutputInstrumentation"
         android:targetPackage="app.luoxianlv.debug" android:handleProfiling="false" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.input.TouchCompatibilityInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:handleProfiling="false" android:functionalTest="true" />
 </manifest>

@@ -614,6 +614,8 @@ class FloatingControls(private val service: PlaybackSession) {
 
     /** 选歌：居中独立小窗（卡片 + 当前曲目蓝色高亮）。打开时面板退出，关闭后恢复。 */
     private fun showPlaylist() {
+        // 先停止按键和准备中的播放，再读取列表，避免自动触摸落到选歌窗口。
+        service.pause()
         if (playlistJob?.isActive == true) return
         playlistJob = scope.launch {
             try {

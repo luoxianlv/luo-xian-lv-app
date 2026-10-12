@@ -135,6 +135,13 @@ object DebugExport {
     /** 仅导出定位连接和触控故障所需的状态；不包含配对身份、候选地址或令牌。 */
     private fun inputState(): JSONObject = runCatching {
         val state = SharedInput.current()?.state()
+        inputSnapshot(state).apply {
+            state?.getBundle("lastTouchCheck")?.let { put("lastTouchCheck", inputSnapshot(it)) }
+        }
+    }
+        .getOrElse { JSONObject().put("errorType", it.javaClass.simpleName) }
+
+    private fun inputSnapshot(state: android.os.Bundle?): JSONObject =
         JSONObject().apply {
             put("bridgeAvailable", state != null)
             listOf(
@@ -151,6 +158,9 @@ object DebugExport {
                     "shizukuUid",
                     "connected",
                     "touchReady",
+                    "mergeSupported",
+                    "coexistenceReady",
+                    "inputStrategy",
                     "active",
                     "waitingForFingers",
                     "activationWaitMs",
@@ -192,6 +202,7 @@ object DebugExport {
                     "deviceSelectionMethod",
                     "deviceSelectionReason",
                     "routingDiagnostics",
+                    "routingErrorType",
                     "deviceIdentity",
                     "deviceScanIdentity",
                     "touchProtocol",
@@ -237,8 +248,6 @@ object DebugExport {
                 )
             }
         }
-    }
-        .getOrElse { JSONObject().put("errorType", it.javaClass.simpleName) }
 
     /** Android 11 起可区分 Java 崩溃、原生崩溃、ANR、低内存回收与主动退出。 */
     private fun processExits(context: Context): JSONObject {

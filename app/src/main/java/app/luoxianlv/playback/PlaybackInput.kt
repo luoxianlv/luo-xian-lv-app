@@ -1,12 +1,40 @@
 package app.luoxianlv.playback
 
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 import app.luoxianlv.diagnostics.AppLog
 import app.luoxianlv.hot.contract.SharedInput
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+
+/** 正常点击悬浮窗即可补充主屏来源，不保存坐标，也不发送测试点击。 */
+internal fun observePlaybackTouch(event: MotionEvent, displayId: Int) {
+    if (
+        displayId != 0 ||
+            event.actionMasked != MotionEvent.ACTION_DOWN ||
+            event.deviceId <= 0 ||
+            !event.isFromSource(InputDevice.SOURCE_TOUCHSCREEN) ||
+            event.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER
+    )
+        return
+    val device = event.device ?: return
+    runCatching {
+        val bridge = SharedInput.current() ?: return@runCatching
+        if (!bridge.state().getBoolean("touchObservationSupported")) return@runCatching
+        bridge.command(
+            "observeTouch",
+            Bundle().apply {
+                putInt("deviceId", device.id)
+                putInt("displayId", displayId)
+                putString("descriptor", device.descriptor)
+            },
+        )
+    }
+}
 
 /** 每个播放业务独占自己的输入租约，退出后仍等待宿主确认物理触屏已归还。 */
 internal class PlaybackInput : AutoCloseable {

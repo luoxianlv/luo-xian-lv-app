@@ -43,14 +43,31 @@ public final class MergedTouchDispatcher {
             inputManager = instance.invoke(null);
             inject = managerClass.getMethod("injectInputEvent", InputEvent.class, int.class);
             setDisplayId = Build.VERSION.SDK_INT >= 29 ? InputEvent.class.getMethod("setDisplayId", int.class) : null;
-            Class<?> displays = Class.forName("android.hardware.display.DisplayManagerGlobal");
-            Object global = displays.getDeclaredMethod("getInstance").invoke(null);
-            display = (Display) displays.getMethod("getRealDisplay", int.class).invoke(global, Display.DEFAULT_DISPLAY);
+            display = mainDisplay();
             if (display == null) throw new IllegalStateException("无法确认主屏幕");
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("系统不支持触控注入", e);
         }
         if (!geometryMatches()) throw new IllegalStateException("屏幕方向或尺寸已变化，请重新准备触控");
+    }
+
+    /** 只核对系统接口与当前显示，不发送测试点击，也不抓取任何物理设备。 */
+    static void checkAvailable() {
+        try {
+            Display current = mainDisplay();
+            if (current == null) throw new IllegalStateException("主屏暂不可用");
+            Point pixels = new Point();
+            current.getRealSize(pixels);
+            new MergedTouchDispatcher(pixels.x, pixels.y, current.getRotation());
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("系统触控接口暂不可用", error);
+        }
+    }
+
+    private static Display mainDisplay() throws ReflectiveOperationException {
+        Class<?> displays = Class.forName("android.hardware.display.DisplayManagerGlobal");
+        Object global = displays.getDeclaredMethod("getInstance").invoke(null);
+        return (Display) displays.getMethod("getRealDisplay", int.class).invoke(global, Display.DEFAULT_DISPLAY);
     }
 
     public synchronized boolean frame(int[] ids, float[] xy, boolean cancel) {

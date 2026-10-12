@@ -62,6 +62,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private long expectedRelease;
   private final AtomicBoolean refreshQueued = new AtomicBoolean();
   private volatile Bundle snapshot = defaults(SharedInput.ACCESSIBILITY);
+  private Bundle lastTouchCheck;
+  private String lastTouchDiagnostics = "";
   private volatile boolean closed;
   private String mode = SharedInput.ACCESSIBILITY;
   private boolean wantConnection = true;
@@ -280,6 +282,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     worker.execute(() -> {
       if (closed) return;
       switch (action) {
+        case "observeTouch" -> recordTouch(copy.getInt("deviceId", -1), copy.getInt("displayId", -1), copy.getString("descriptor", ""));
         case "openSettings" -> open(new Intent(SharedInput.ACCESSIBILITY.equals(mode)
             ? Settings.ACTION_ACCESSIBILITY_SETTINGS : Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
         case "openShizuku" -> {
@@ -318,7 +321,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
                 if (ownership.owner() != null) releaseOwner(ownership.owner());
                 else { IInputService current = service; rpc.call(() -> { current.release(); return null; }); }
                 for (Long token : requests.keySet()) complete(token, false, "正在重新检查连接");
-                attach(service);
+                attach(service, true);
               } else refreshNow();
             } catch (Exception error) { diagnose("请求 Shizuku 授权", error, "无法请求授权，请打开 Shizuku 检查"); }
           } else open(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
@@ -612,7 +615,12 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   }
 
   private void attach(IInputService remote) {
+    attach(remote, false);
+  }
+
+  private void attach(IInputService remote, boolean recheck) {
     if (remote == null) { message("连接不可用，请重试"); return; }
+    if (!recheck && service != null && serviceDeath != null && service.asBinder().equals(remote.asBinder())) return;
     final int expectedUid = SharedInput.SHIZUKU.equals(mode) ? snapshot.getInt("shizukuUid", -1) : 2000;
     String stage = "关联助手死亡监听";
     try {
@@ -656,7 +664,26 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
                   + " 判断=" + copy.getString("contactDecision")
                   + " 读取错误=" + copy.getInt("contactReadErrno")
                   + " 忽略非接触槽=" + copy.getBoolean("staleContactIgnored"), null);
-            if (!value.getBoolean("touchReady", false)) {
+            if (copy.containsKey("candidateCount") || copy.containsKey("inputStrategy")) {
+              lastTouchCheck = new Bundle(copy);
+              lastTouchCheck.putString("mode", mode);
+              String diagnosis = mode + ':' + copy.getString("inputStrategy", "") + ':'
+                  + copy.getString("details", "") + ':' + copy.getString("routingDiagnostics", "");
+              if (!diagnosis.equals(lastTouchDiagnostics)) {
+                lastTouchDiagnostics = diagnosis;
+                HostDiagnostics.log(Log.INFO, TAG, "触屏自动检查：模式=" + mode
+                    + " 策略=" + copy.getString("inputStrategy", "")
+                    + " 方法=" + copy.getString("deviceSelectionMethod", "")
+                    + " 兼容=" + copy.getInt("candidateCount") + " 未知=" + copy.getInt("candidateUnknownCount")
+                    + " 来源=" + copy.getString("path", "")
+                    + " 说明=" + copy.getString("deviceSelectionReason", ""), null);
+                if (!copy.getBoolean("mergeSupported", copy.getBoolean("supported"))) {
+                  HostDiagnostics.log(Log.INFO, TAG, "触屏候选摘要：" + copy.getString("details", ""), null);
+                  HostDiagnostics.log(Log.INFO, TAG, "触屏路由摘要：" + copy.getString("routingDiagnostics", ""), null);
+                }
+              }
+            }
+            if (!value.getBoolean("touchReady", false) && !sameValues(snapshot, value)) {
               HostDiagnostics.log(Log.WARN, TAG, "输入预检未就绪：模式=" + mode
                   + " 助手UID=" + copy.getInt("uid", -1)
                   + " 阶段=" + copy.getString("errorStage", copy.getString("diagnosticStage", "预检"))
@@ -707,9 +734,19 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
         || event.getToolType(0) != android.view.MotionEvent.TOOL_TYPE_FINGER) return;
     android.view.InputDevice device = event.getDevice();
     if (device == null || (android.os.Build.VERSION.SDK_INT >= 27 && !device.isEnabled())) return;
+    recordTouch(device.getId(), displayId, device.getDescriptor());
+  }
+
+  /** 悬浮窗口使用现有宿主命令转交其收到的手指来源，宿主再次核对当前系统设备。 */
+  private void recordTouch(int id, int displayId, String descriptor) {
+    android.view.InputDevice device = android.view.InputDevice.getDevice(id);
+    if (closed || displayId != 0 || id <= 0 || device == null
+        || !device.supportsSource(android.view.InputDevice.SOURCE_TOUCHSCREEN)
+        || !device.getDescriptor().equals(descriptor)
+        || (Build.VERSION.SDK_INT >= 27 && !device.isEnabled())) return;
     TouchRouteModel.Hint next = new TouchRouteModel.Hint(device.getId(), device.getDescriptor(), displayId);
     long now = SystemClock.elapsedRealtime();
-    if (next.equals(touchHint) && now - touchHintAt < 200) return;
+    if (next.equals(touchHint) && now - touchHintAt < 500) return;
     touchHint = next;
     touchHintAt = now;
     try { worker.execute(() -> {
@@ -1018,6 +1055,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   }
 
   private void publish(Bundle value) {
+    value.putBoolean("touchObservationSupported", true);
+    if (lastTouchCheck != null) value.putBundle("lastTouchCheck", lastTouchCheck);
     value.putBoolean("overlayGranted", overlayGranted);
     value.putBoolean("initialized", initialized);
     Bundle previous = snapshot;

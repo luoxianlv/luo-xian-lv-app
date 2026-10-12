@@ -31,6 +31,11 @@ public final class InputUserService extends IInputService.Stub {
   private long activeToken;
   private ActivationWait activationWait;
   private ScheduledFuture<?> activationTask;
+  private ScheduledFuture<?> standardTask;
+  private ScheduledFuture<?> routeTask;
+  private int routeAttempts;
+  private int routeHintId = -1;
+  private String routeHintDescriptor = "";
   private long releaseTicket;
   private volatile int lastCallerUid;
   private final ThreadLocal<ScreenshotPacket> screenshotReply = new ThreadLocal<>();
@@ -65,7 +70,7 @@ public final class InputUserService extends IInputService.Stub {
     Log.i("触控共存", "输入助手已创建，宿主UID=" + ownerUid + "，助手UID=" + Process.myUid()
         + "，架构=" + (Process.is64Bit() ? "64位" : "32位"));
     worker.scheduleWithFixedDelay(() -> {
-      if (!closed && engine != null && engine.isActive()
+      if (!closed && ((engine != null && engine.isActive()) || (standardTask != null && activeToken != 0))
           && SystemClock.elapsedRealtime() - lastHeartbeat > 4500) {
         releaseEngine("连接超时，已归还触屏");
       }
@@ -102,9 +107,11 @@ public final class InputUserService extends IInputService.Stub {
           if (!state.getBoolean("supported", false))
             Log.w("触控共存", "触屏预检失败，阶段=" + state.getString("diagnosticStage", "probe")
                 + "，类型=" + state.getString("diagnosticType", "") + "，原因=" + state.getString("message", ""));
-        } catch (Throwable error) { state = failed(probeStage, "触屏能力检查失败", error); }
+        } catch (Throwable error) { state = standardFallback(failed(probeStage, "触屏能力检查失败", error)); }
       }
       publish(state);
+      routeAttempts = 0;
+      scheduleTouchCheck(state);
     });
   }
 
@@ -123,6 +130,10 @@ public final class InputUserService extends IInputService.Stub {
   private void startNote(float[] points, int durationMs, int w, int h, int r, long token) {
     if (closed) { finished(token, false, "输入助手已关闭"); return; }
     lastHeartbeat = SystemClock.elapsedRealtime();
+    if (!snapshot.getBoolean("mergeSupported", true)) {
+      startStandardNote(points, durationMs, w, h, r, token);
+      return;
+    }
     String stage = "native-load";
     try {
       if (engine == null || width != w || height != h || rotation != r) {
@@ -156,12 +167,17 @@ public final class InputUserService extends IInputService.Stub {
         prepared.putAll(engine.contactState());
         prepared.putInt("uid", Process.myUid());
         prepared.putLong("activationWaitMs", 0);
-        publish(prepared);
         if (!prepared.getBoolean("supported", false)) {
-          releaseEngine(prepared.getString("message", "当前触屏不支持触控共存"));
-          finished(token, false, prepared.getString("message", "当前触屏不支持触控共存"));
+          releaseEngine(null);
+          publish(standardFallback(prepared));
+          if (snapshot.getBoolean("supported")) startStandardNote(points, durationMs, w, h, r, token);
+          else finished(token, false, snapshot.getString("message", "触控准备失败"));
           return;
         }
+        prepared.putBoolean("mergeSupported", true);
+        prepared.putBoolean("coexistenceReady", true);
+        prepared.putString("inputStrategy", "merged");
+        publish(prepared);
         stage = "dispatcher-prepare";
         dispatcher = new MergedTouchDispatcher(w, h, r);
       }
@@ -181,6 +197,38 @@ public final class InputUserService extends IInputService.Stub {
   }
 
   /** 等待完整触点快照，不占住控制线程；无槽位快照的旧协议仍需先抬手。 */
+  /** 标准注入复用同一多点事件构造器；确认抬键完成后才报告成功。 */
+  private void startStandardNote(float[] points, int durationMs, int w, int h, int r, long token) {
+    try {
+      if (dispatcher == null || engine != null || width != w || height != h || rotation != r) {
+        releaseEngine(null);
+        width = w; height = h; rotation = r;
+        dispatcher = new MergedTouchDispatcher(w, h, r);
+      }
+      if (activeToken != 0 && activeToken != token) finished(activeToken, false, "已由后续音符替换");
+      if (standardTask != null) standardTask.cancel(false);
+      activeToken = token;
+      int[] ids = new int[points.length / 2];
+      for (int i = 0; i < ids.length; ++i) ids[i] = i;
+      if (!dispatcher.frame(ids, points, false)) throw new IllegalStateException("系统未接受触摸事件");
+      standardTask = worker.schedule(() -> {
+        if (closed || activeToken != token) return;
+        boolean accepted = dispatcher != null && dispatcher.frame(new int[0], new float[0], false);
+        activeToken = 0;
+        standardTask = null;
+        publish(new Bundle(snapshot));
+        finished(token, accepted, accepted ? "" : "系统未接受抬键，请检查 USB 调试（安全设置）");
+      }, durationMs, TimeUnit.MILLISECONDS);
+      publish(new Bundle(snapshot));
+    } catch (Throwable error) {
+      activeToken = 0;
+      releaseEngine(null);
+      Bundle state = failed("inject", "系统未接受点击，请检查 USB 调试（安全设置）", error);
+      publish(state);
+      finished(token, false, state.getString("message"));
+    }
+  }
+
   private void attemptActivation(ActivationWait request) {
     if (closed || request != activationWait || !request.current(activeToken)) return;
     String stage = "activate";
@@ -272,7 +320,9 @@ public final class InputUserService extends IInputService.Stub {
   @Override public void cancel(long token) {
     checkCaller();
     worker.execute(() -> {
-      if (token != activeToken || engine == null) return;
+      if (token != activeToken) return;
+      if (standardTask != null) { releaseEngine("本次按键已取消"); return; }
+      if (engine == null) return;
       if (activationWait != null && activationWait.current(token)) {
         ActivationWait cancelled = activationWait;
         activeToken = 0;
@@ -324,9 +374,18 @@ public final class InputUserService extends IInputService.Stub {
     checkCaller();
     worker.execute(() -> {
       if (closed || !TouchDeviceRouting.hint(deviceId, displayId, descriptor)) return;
+      boolean changed = deviceId != routeHintId || !descriptor.equals(routeHintDescriptor);
+      routeHintId = deviceId;
+      routeHintDescriptor = descriptor;
       // 正在合流时不重新接管；新的正常触摸仅帮助尚未就绪的连接消除歧义。
-      if (engine == null && callback != null && !snapshot.getBoolean("supported"))
-        publish(probeTouch());
+      if (engine == null && activeToken == 0 && callback != null
+          && (changed || !snapshot.getBoolean("mergeSupported", snapshot.getBoolean("supported")))) {
+        TouchDeviceRouting.invalidate();
+        routeAttempts = 0;
+        Bundle state = probeTouch();
+        publish(state);
+        scheduleTouchCheck(state);
+      }
     });
   }
 
@@ -338,7 +397,47 @@ public final class InputUserService extends IInputService.Stub {
       Log.w("触控共存", "触屏候选：" + state.getString("details", ""));
       Log.w("触控共存", "系统路由：" + state.getString("routingDiagnostics", ""));
     }
+    if (state.getBoolean("supported")) {
+      state.putBoolean("mergeSupported", true);
+      state.putBoolean("coexistenceReady", true);
+      state.putString("inputStrategy", "merged");
+      return state;
+    }
+    return standardFallback(state);
+  }
+
+  private Bundle standardFallback(Bundle check) {
+    Bundle state = new Bundle(check);
+    state.putBoolean("mergeSupported", false);
+    state.putBoolean("coexistenceReady", false);
+    try {
+      MergedTouchDispatcher.checkAvailable();
+      state.putBoolean("supported", true);
+      state.putString("inputStrategy", "standard");
+      state.putString("message", "已连接，可自动演奏；触控共存将自动检查");
+    } catch (RuntimeException unavailable) {
+      state.putBoolean("supported", false);
+      state.putString("message", "系统暂不允许点击，请检查 USB 调试（安全设置）");
+    }
     return state;
+  }
+
+  private void scheduleTouchCheck(Bundle state) {
+    if (routeTask != null) routeTask.cancel(false);
+    routeTask = null;
+    if (closed || callback == null || engine != null || activeToken != 0 || state.getBoolean("mergeSupported")) return;
+    long delay = TouchRecoveryPolicy.retryDelay(state.getString("deviceSelectionMethod", ""),
+        state.getString("routingErrorType", state.getString("diagnosticType", "")), routeAttempts);
+    if (delay < 0) return;
+    routeAttempts++;
+    routeTask = worker.schedule(() -> {
+      routeTask = null;
+      if (closed || callback == null || engine != null || activeToken != 0) return;
+      TouchDeviceRouting.invalidate();
+      Bundle checked = probeTouch();
+      publish(checked);
+      scheduleTouchCheck(checked);
+    }, delay, TimeUnit.MILLISECONDS);
   }
 
   @Override public void heartbeat() {
@@ -359,6 +458,8 @@ public final class InputUserService extends IInputService.Stub {
     ActivationWait waiting = activationWait;
     activeToken = 0;
     cancelActivationWait();
+    if (standardTask != null) standardTask.cancel(false);
+    standardTask = null;
     TouchEngine old = engine;
     engine = null;
     if (old != null) {
@@ -393,7 +494,7 @@ public final class InputUserService extends IInputService.Stub {
     if (!state.containsKey("activationRequestAt")) state.putLong("activationRequestAt", 0);
     if (!state.containsKey("activationWaitMs")) state.putLong("activationWaitMs", 0);
     state.putInt("uid", Process.myUid());
-    state.putBoolean("active", engine != null && engine.isActive());
+    state.putBoolean("active", (engine != null && engine.isActive()) || (standardTask != null && activeToken != 0));
     state.putLong("activeToken", activeToken);
     state.putBoolean("waitingForFingers", activationWait != null && activationWait.waiting());
     state.putLong("releaseTicket", releaseTicket);
@@ -416,6 +517,8 @@ public final class InputUserService extends IInputService.Stub {
   }
 
   private void shutdown() {
+    if (routeTask != null) routeTask.cancel(false);
+    routeTask = null;
     if (closed) return;
     closed = true;
     releaseEngine("输入连接已关闭");

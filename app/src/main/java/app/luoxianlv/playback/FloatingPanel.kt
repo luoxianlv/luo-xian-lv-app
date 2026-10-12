@@ -2,7 +2,9 @@ package app.luoxianlv.playback
 
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Rect
 import android.view.MotionEvent
+import android.view.TouchDelegate
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -29,6 +31,7 @@ internal class FloatingPanel(
         private set
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        observePlaybackTouch(event, display?.displayId ?: 0)
         if (event.actionMasked == MotionEvent.ACTION_DOWN) touching = true
         try {
             return super.dispatchTouchEvent(event)
@@ -77,13 +80,21 @@ internal class FloatingPanel(
                 scaleType = ImageView.ScaleType.CENTER
                 bindPlaybackButton(
                     this,
-                    { service.playing || service.preparing },
+                    { service.playing || service.preparing || service.waitingToPlay },
                     service::pause,
                     service::toggle,
                     service::canStartPlayback,
                 )
             }
         row.addView(play, LinearLayout.LayoutParams(context.dp(34), context.dp(34)))
+        // 保留圆钮尺寸，把首行留白也用于点击，避免暂停必须点中小圆圈。
+        val playBounds = Rect()
+        row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            play?.let { button ->
+                playBounds.set(0, 0, button.right + context.dp(7), row.height)
+                row.touchDelegate = TouchDelegate(playBounds, button)
+            }
+        }
         // 曲名 + 状态（拖动把手）
         val info =
             PlayerUi.column(context).apply {
@@ -232,7 +243,7 @@ internal class FloatingPanel(
         }
         refreshStatus()
         play?.apply {
-            val pending = service.playing || service.waitingToPlay
+            val pending = service.playing || service.preparing || service.waitingToPlay
             val description = if (pending) "暂停" else "播放"
             if (contentDescription?.toString() != description) {
                 setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)

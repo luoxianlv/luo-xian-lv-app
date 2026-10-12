@@ -42,7 +42,10 @@ public final class InputModeInstrumentation extends Instrumentation {
   private int expectedHelperUid = 2000;
   private String wirelessCode, wirelessPairPort;
   private boolean fixture;
+  private boolean hostTouch;
   private boolean floatingWithoutAccessibility;
+  private boolean floatingPause;
+  private boolean floatingPauseOnly;
   private boolean frozenConnection;
   private boolean frozenManager;
   private boolean notificationPair, pairedSaved, previousPaired, previousPairedPresent;
@@ -63,7 +66,11 @@ public final class InputModeInstrumentation extends Instrumentation {
     wirelessCode = arguments == null ? null : arguments.getString("wirelessCode");
     wirelessPairPort = arguments == null ? null : arguments.getString("wirelessPairPort");
     fixture = arguments != null && "true".equals(arguments.getString("fixture"));
+    hostTouch = arguments != null && "true".equals(arguments.getString("hostTouch"));
     floatingWithoutAccessibility = arguments != null && "true".equals(arguments.getString("floatingWithoutAccessibility"));
+    floatingPause = arguments != null && "true".equals(arguments.getString("floatingPause"));
+    floatingPauseOnly = arguments != null && "true".equals(arguments.getString("floatingPauseOnly"));
+    floatingPause |= floatingPauseOnly;
     frozenConnection = arguments != null && "true".equals(arguments.getString("frozenConnection"));
     frozenManager = arguments != null && "true".equals(arguments.getString("frozenManager"));
     notificationPair = arguments != null && "true".equals(arguments.getString("notificationPair"));
@@ -112,13 +119,18 @@ public final class InputModeInstrumentation extends Instrumentation {
         checkMerged();
         if (frozenManager) ShizukuManagerFrozenChecks.run(this, automation, bridge);
         if (frozenConnection) ShizukuFrozenChecks.run(this, automation, bridge);
-        checkScreenshot();
-        app.luoxianlv.host.FixedInputChecks.run(this);
+        if (!floatingPauseOnly) {
+          checkScreenshot();
+          app.luoxianlv.host.FixedInputChecks.run(this);
+        }
         if (floatingWithoutAccessibility) FloatingWithoutAccessibilityChecks.run(this, automation);
-        result.putString("stream", "输入模式验收通过：协议=" + bridge.state().getString("touchProtocol")
+        if (floatingPause) FloatingPauseChecks.run(this, automation, fixtureCommand);
+        result.putString("stream", floatingPauseOnly ? "输入模式单次暂停验收通过。\n" : "输入模式验收通过：协议=" + bridge.state().getString("touchProtocol")
             + "，真实截图、固定琴键演奏、长按合流、音符间隙保留手指、抬手等待与取消、协议帧处理、租约释放及旧 owner 隔离。\n");
         if (floatingWithoutAccessibility)
           result.putString("stream", result.getString("stream") + "通过：关闭无障碍，真实输入连接下通过业务启动悬浮窗，展开、选歌、收起与关闭；未点击播放。\n");
+        if (floatingPause)
+          result.putString("stream", result.getString("stream") + "通过：真实合流长音期间物理触屏单次暂停六轮，抬手不重播、旧定时器不续播、进度冻结及触屏归还；实际选歌入口暂停长音，选歌和关闭窗口期间不续播。\n");
       } else {
         result.putString("stream", "输入模式状态验收通过；本次未指定 fixture，未执行真实触点合流测试。\n");
       }
@@ -266,6 +278,20 @@ public final class InputModeInstrumentation extends Instrumentation {
     require(expectedHelperUid == 2000 || (expectedHelperUid == 0 && SharedInput.SHIZUKU.equals(mergedMode)),
         "仅允许官方 Shizuku 身份；无线调试必须为普通 shell");
     require(bridge.state().getInt("uid", -1) == expectedHelperUid, "合流助手与指定服务身份不符");
+    if (hostTouch) {
+      getTargetContext().startActivity(new Intent(getTargetContext(),app.luoxianlv.MainActivity.class)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+      await("主界面未就绪",() -> {
+        var root = automation.getRootInActiveWindow();
+        if (root == null) return false;
+        boolean target = getTargetContext().getPackageName().contentEquals(root.getPackageName()); root.recycle(); return target;
+      },10000);
+      physical("down 16384 16384");
+      SystemClock.sleep(50);
+      physical("up");
+      await("正常触摸没有自动确认输入来源",() -> "android-host-touch".equals(bridge.state().getString("deviceSelectionMethod"))
+          && bridge.state().getBoolean("coexistenceReady"),10000);
+    }
     require("Luoxianlv Audit Direct Touch".equals(bridge.state().getString("name")),
         "拒绝操作非测试触屏设备");
     if (expectedTouchProtocol != null)
@@ -284,6 +310,7 @@ public final class InputModeInstrumentation extends Instrumentation {
     Point size = new Point(); display.getRealSize(size);
     int rotation = display.getRotation();
     await("独立接收页未取得焦点或真实显示尺寸不稳定", () -> receiverReady(size, rotation), 10000);
+    if (floatingPauseOnly) return;
     var first = lease(); var second = lease();
     Outcome initial = new Outcome();
     AutoCloseable oldToken = first.press(new float[] {size.x * .75f, size.y * .65f},

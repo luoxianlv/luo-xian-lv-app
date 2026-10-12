@@ -62,7 +62,7 @@ public final class TouchRouteModelTest {
   @Test public void incompleteCapabilitiesAreNeverSelected() {
     var unreadable=new TouchRouteModel.Candidate(ONE.path(),"",-1,-1,-1,-1,false);
     assertEquals("",TouchRouteModel.choose(List.of(unreadable),Map.of(),List.of(),null,0).path());
-    assertEquals("",TouchRouteModel.choose(List.of(ONE,new TouchRouteModel.Candidate(TWO.path(),"",-1,-1,-1,-1,false)),Map.of(),List.of(),null,0).path());
+    assertEquals(ONE.path(),TouchRouteModel.choose(List.of(ONE,new TouchRouteModel.Candidate(TWO.path(),"",-1,-1,-1,-1,false)),Map.of(),List.of(),null,0).path());
   }
   @Test public void readerDisabledMapperIsExcludedOnlyWhenCurrentGenerationMatches() {
     var route=new TouchRouteModel.Reader(66,17,TWO.name(),2,true,-1);
@@ -79,9 +79,9 @@ public final class TouchRouteModelTest {
     assertEquals("",result.path());
     assertEquals("",TouchRouteModel.choose(List.of(ONE),both(),routes,List.of(device(ONE,A,41,0)),new TouchRouteModel.Hint(41,A,0,17),0).path());
   }
-  @Test public void unknownNodeCannotBeIgnoredEvenWithKnownTouchHint() {
+  @Test public void confirmedHostTouchIsNotBlockedByAnUnrelatedUnreadableNode() {
     var unknown=new TouchRouteModel.Candidate(TWO.path(),"",-1,-1,-1,-1,false);
-    assertEquals("",TouchRouteModel.choose(List.of(ONE,unknown),both(),List.of(device(ONE,A,41,0)),new TouchRouteModel.Hint(41,A,0,17),0).path());
+    assertEquals(ONE.path(),TouchRouteModel.choose(List.of(ONE,unknown),both(),List.of(device(ONE,A,41,0)),new TouchRouteModel.Hint(41,A,0,17),0).path());
   }
   @Test public void changedHintGenerationCannotConfirmCurrentTouchOrigin() {
     assertEquals("",choose(List.of(ONE,TWO),List.of(device(ONE,A,41,-1),device(TWO,B,66,-1)),new TouchRouteModel.Hint(41,A,0,16)).path());
@@ -96,7 +96,9 @@ public final class TouchRouteModelTest {
     var routes=TouchRouteModel.readers(dump().replace("    EventHub Devices: [ 9 ] \n",""),true);
     assertEquals(0,routes.get(-41).display());
     var modern=TouchRouteModel.readers(dump().replace("    EventHub Devices: [ 9 ] \n",""),false);
-    assertTrue(modern.get(-41).composite());
+    assertFalse(modern.get(-41).composite());
+    assertEquals(ONE.path(),TouchRouteModel.choose(List.of(ONE),both(),modern,
+        List.of(device(ONE,A,41,-1)),null,0).path());
   }
   @Test public void legacyDisabledMapperSupportsAospModeCasing() throws Exception {
     for (String disabled : List.of("disabled", "DISABLED")) {
@@ -115,6 +117,43 @@ public final class TouchRouteModelTest {
     var reader=new TouchRouteModel.Reader(41,18,ONE.name(),9,true,-1);
     var result=TouchRouteModel.choose(List.of(ONE),both(),Map.of(9,reader),List.of(device(ONE,A,41,0)),new TouchRouteModel.Hint(41,A,0,17),0);
     assertEquals("",result.path()); assertEquals("stale-route",result.method());
+  }
+
+  @Test public void unreadableKeyboardDoesNotBlockTheTouchscreen() throws Exception {
+    String keyboard = dump().replace("    9: panel", "    2: mirror").replace(ONE.path(),TWO.path())
+        .replace(A,B).replace("      Identifier:", "      Classes: KEYBOARD | ALPHAKEY\n      Identifier:");
+    Map<String,TouchRouteModel.Raw> nodes = new java.util.HashMap<>(TouchRouteModel.parse(keyboard));
+    nodes.put(ONE.path(),raw(ONE,A,true));
+    var unreadable = new TouchRouteModel.Candidate(TWO.path(),"",-1,-1,-1,-1,false);
+    var result = TouchRouteModel.choose(List.of(ONE,unreadable),nodes,List.of(device(ONE,A,41,0)),null,0);
+    assertEquals(ONE.path(),result.path());
+    assertEquals("系统确认不是触控设备",result.evidence().get(TWO.path()));
+  }
+
+  @Test public void eventHubAcceptsBothNumericAndSymbolicTouchClasses() throws Exception {
+    for (String value : List.of("00000015", "0x00000015", "KEYBOARD | TOUCH | TOUCH_MT"))
+      assertEquals(1,TouchRouteModel.parse(dump().replace("      Identifier:","      Classes: "+value+"\n      Identifier:")).get(ONE.path()).touchClass());
+    assertEquals(-1,TouchRouteModel.parse(dump().replace("      Identifier:","      Classes: OEM_CUSTOM\n      Identifier:")).get(ONE.path()).touchClass());
+  }
+
+  @Test public void anExplicitCompositeCannotBeSelectedByReadableFallback() throws Exception {
+    var unknown = new TouchRouteModel.Candidate(TWO.path(),"",-1,-1,-1,-1,false);
+    var routes=TouchRouteModel.readers(dump().replace("[ 9 ]","[ 9, 2 ]"));
+    assertEquals("",TouchRouteModel.choose(List.of(ONE,unknown),both(),routes,
+        List.of(device(ONE,A,41,0)),new TouchRouteModel.Hint(41,A,0,17),0).path());
+  }
+
+  @Test public void duplicateRawIdentityIsNotPromotedByMissingReaderMembers() throws Exception {
+    var nodes = Map.of(ONE.path(),raw(ONE,A,true),TWO.path(),new TouchRouteModel.Raw(2,TWO.path(),ONE.name(),A,true,6,1,2,3));
+    var routes=TouchRouteModel.readers(dump().replace("    EventHub Devices: [ 9 ] \n",""));
+    assertEquals("",TouchRouteModel.choose(List.of(ONE),nodes,routes,
+        List.of(device(ONE,A,41,0)),new TouchRouteModel.Hint(41,A,0,17),0).path());
+  }
+
+  @Test public void disabledDuplicateIdentityDoesNotBlockTheCurrentTouchSource() {
+    var nodes = Map.of(ONE.path(),raw(ONE,A,true),TWO.path(),new TouchRouteModel.Raw(2,TWO.path(),ONE.name(),A,false,6,1,2,3));
+    assertEquals(ONE.path(),TouchRouteModel.choose(List.of(ONE),nodes,List.of(device(ONE,A,41,0)),
+        new TouchRouteModel.Hint(41,A,0,17),0).path());
   }
   private static String dump() { return "Event Hub State:\n  Devices:\n    9: panel\n      Path: /dev/input/event23\n      Enabled: true\n      Descriptor: " + A + "\n      Identifier: bus=0x0006, vendor=0x0001, product=0x0002, version=0x0003, bluetoothAddress=<not set>\n  Unattached video devices:\n\nInput Reader State:\n  Device 41: panel\n    EventHub Devices: [ 9 ] \n    Generation: 17\n    Touch Input Mapper (mode - DIRECT):\n      Viewport INTERNAL: displayId=0, uniqueId=secret\nInput Dispatcher State:\n"; }
   @Test public void parsesOnlyBoundedCanonicalEventHubFieldsAndReaderLink() throws Exception {

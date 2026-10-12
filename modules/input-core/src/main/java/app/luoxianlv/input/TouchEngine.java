@@ -192,6 +192,7 @@ public final class TouchEngine implements AutoCloseable {
             diagnostics.putString("deviceSelectionMethod", bounded(selection.getString("selectionMethod", ""), 80));
             diagnostics.putString("deviceSelectionReason", bounded(selection.getString("selectionReason", ""), 2000));
             diagnostics.putString("routingDiagnostics", bounded(selection.getString("routingDiagnostics", ""), 32768));
+            diagnostics.putString("routingErrorType", bounded(selection.getString("routingErrorType", ""), 80));
             if (selectedPath.isEmpty()) {
                 String reason = selection.getString("selectionReason", "无法确认当前主屏触屏，请重新连接");
                 return failedProbe(stage, reason, null, diagnostics);

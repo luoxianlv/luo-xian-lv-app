@@ -50,6 +50,7 @@ final class TouchDeviceRouting {
           node.getInt("bus", -1), node.getInt("vendorId", -1), node.getInt("productId", -1), node.getInt("version", -1), node.getBoolean("eligible"), node.getBoolean("direct")));
     }
     String error = "";
+    String errorType = "";
     List<TouchRouteModel.Device> devices = List.of();
     Map<String, TouchRouteModel.Raw> raw = Map.of();
     Map<Integer, TouchRouteModel.Reader> readers = Map.of();
@@ -60,7 +61,7 @@ final class TouchDeviceRouting {
           || android.os.SystemClock.elapsedRealtime() - cachedAt > 5000) {
         String dump = dump();
         Map<String, TouchRouteModel.Raw> found = TouchRouteModel.parse(dump, android.os.Build.VERSION.SDK_INT == 26);
-        Map<Integer, TouchRouteModel.Reader> associations = TouchRouteModel.readers(dump, android.os.Build.VERSION.SDK_INT < 34);
+        Map<Integer, TouchRouteModel.Reader> associations = TouchRouteModel.readers(dump);
         cachedRaw = found; cachedReaders = associations; cachedKey = key; cachedAt = android.os.SystemClock.elapsedRealtime();
       }
       raw = cachedRaw; readers = cachedReaders;
@@ -69,12 +70,13 @@ final class TouchDeviceRouting {
         cachedKey = null;
         Bundle changed = new Bundle();
         changed.putString("selectedPath", ""); changed.putString("selectionMethod", "state-changed");
-        changed.putString("selectionReason", "系统输入状态刚发生变化，请重新连接");
+        changed.putString("selectionReason", "系统输入状态正在变化，稍后自动检查");
         changed.putString("routingDiagnostics", "采集前后的逻辑设备身份或配置不一致，未接管触屏");
         return changed;
       }
     } catch (Exception failure) {
       cachedKey = null;
+      errorType = failure.getClass().getSimpleName();
       error = "系统路由证据不可用（" + failure.getClass().getSimpleName() + "）"
           + (failure instanceof IOException ? "：" + failure.getMessage() : "");
     }
@@ -108,8 +110,11 @@ final class TouchDeviceRouting {
       diagnostics.append(candidate.path()).append('：').append(decision.evidence().get(candidate.path()));
     });
     result.putString("routingDiagnostics", diagnostics.toString());
+    result.putString("routingErrorType", errorType);
     return result;
   }
+
+  static synchronized void invalidate() { cachedKey = null; }
 
   private static List<TouchRouteModel.Device> devices() throws IOException {
     int[] ids = InputDevice.getDeviceIds();

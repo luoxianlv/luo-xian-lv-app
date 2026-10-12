@@ -19,7 +19,12 @@ final class TouchRouteModel {
       this(path,name,bus,vendor,product,version,capable,true);
     }
   }
-  record Raw(int hubId, String path, String name, String descriptor, boolean enabled, int bus, int vendor, int product, int version) { }
+  record Raw(int hubId, String path, String name, String descriptor, boolean enabled, int bus, int vendor, int product, int version,
+             int touchClass) {
+    Raw(int hubId, String path, String name, String descriptor, boolean enabled, int bus, int vendor, int product, int version) {
+      this(hubId,path,name,descriptor,enabled,bus,vendor,product,version,-1);
+    }
+  }
   record Device(int id, int generation, String name, String descriptor, int vendor, int product,
                 boolean enabled, boolean touchscreen, int display) { }
   record Hint(int id, String descriptor, int display, int generation) {
@@ -73,7 +78,7 @@ final class TouchRouteModel {
         || !entry.descriptor.matches("[0-9a-f]{40}") || (entry.enabled == null && !legacyEnabled) || entry.identity == null)
       throw new IOException("系统输入节点缺少完整身份");
     int[] id = entry.identity;
-    Raw raw = new Raw(entry.id, entry.path, entry.name, entry.descriptor, entry.enabled == null || entry.enabled, id[0], id[1], id[2], id[3]);
+    Raw raw = new Raw(entry.id, entry.path, entry.name, entry.descriptor, entry.enabled == null || entry.enabled, id[0], id[1], id[2], id[3], entry.touchClass);
     for (Raw old : result.values()) if (old.hubId == raw.hubId) throw new IOException("系统输入摘要重复声明原始设备身份");
     if (result.put(raw.path, raw) != null) throw new IOException("系统输入摘要重复声明设备路径");
   }
@@ -84,6 +89,7 @@ final class TouchRouteModel {
     String path, descriptor;
     Boolean enabled;
     int[] identity;
+    int touchClass = -1;
     Entry(int id, String name) { this.id = id; this.name = name; }
     void read(String line) throws IOException {
       if (line.startsWith("      Path: ")) {
@@ -97,6 +103,8 @@ final class TouchRouteModel {
         String value = line.substring(15);
         if (!value.equals("true") && !value.equals("false")) throw new IOException("系统输入节点启用状态无效");
         enabled = value.equals("true");
+      } else if (line.startsWith("      Classes: ")) {
+        touchClass = touchClass(line.substring(15).trim());
       } else if (line.startsWith("      Identifier: ")) {
         if (identity != null) throw new IOException("系统输入节点重复能力身份");
         var match = IDENTITY.matcher(line);
@@ -105,6 +113,22 @@ final class TouchRouteModel {
         for (int i = 0; i < 4; i++) identity[i] = Integer.parseInt(match.group(i + 1), 16);
       }
     }
+  }
+
+  /** EventHub 新版输出符号，旧版输出位掩码；未识别格式保留未知，不能据此排除设备。 */
+  private static int touchClass(String value) {
+    if (value.matches("(?:0x)?[0-9a-fA-F]{1,8}")) {
+      long classes = Long.parseLong(value.replaceFirst("^0x", ""), 16);
+      return (classes & 0x14) != 0 ? 1 : 0;
+    }
+    if (!value.matches("[A-Z_]+(?:\\s*\\|\\s*[A-Z_]+)*")) return -1;
+    for (String type : value.split("\\|"))
+      if (type.trim().equals("TOUCH") || type.trim().equals("TOUCH_MT")) return 1;
+    // 厂商扩展类不作为排除依据。
+    for (String type : value.split("\\|"))
+      if (!List.of("KEYBOARD", "ALPHAKEY", "CURSOR", "DPAD", "GAMEPAD", "SWITCH", "JOYSTICK",
+          "VIBRATOR", "VIRTUAL", "EXTERNAL", "ROTARY_ENCODER", "SENSOR", "BATTERY", "LIGHT", "MIC", "TOUCHPAD").contains(type.trim())) return -1;
+    return value.contains("TOUCHPAD") ? 1 : 0;
   }
 
   /** Android 14 起的显式 EventHub 联结；只使用单节点、单触屏映射的完整条目。 */
@@ -129,7 +153,8 @@ final class TouchRouteModel {
         boolean sectionEnd = !line.isEmpty() && !line.startsWith("  ");
         if (match.matches() || sectionEnd) {
           if (id > 0 && (group.size() > 1 || (generation >= 0 && modes >= 1))) {
-            boolean composite = group.size() > 1 || modes > 1 || (!allowLegacyLogicalLink && group.isEmpty());
+            // OEM 可省略成员字段，与 Android 版本无关；缺失时由完整身份的唯一映射核对。
+            boolean composite = group.size() > 1 || modes > 1;
             Reader logical = new Reader(id,generation,name,-1,disabled,display,composite);
             if (result.put(-id,logical) != null) throw new IOException("系统输入路由重复逻辑设备");
             for (int member : group) if (member > 0)
@@ -175,11 +200,15 @@ final class TouchRouteModel {
     boolean unknownCapabilities = false;
     boolean staleRoute = false;
     for (Candidate candidate : candidates) {
+      Raw node = raw.get(candidate.path);
+      if (node != null && (!node.enabled || node.touchClass == 0)) {
+        evidence.put(candidate.path, node.enabled ? "系统确认不是触控设备" : "系统原始节点已停用");
+        continue;
+      }
       if (!candidate.capable) {
         possible.add(candidate); unknownCapabilities = true;
         evidence.put(candidate.path, "节点能力或身份读取失败，仍可能属于主屏"); continue;
       }
-      Raw node = raw.get(candidate.path);
       if (node == null || (candidate.capable && !same(candidate, node))) {
         possible.add(candidate); evidence.put(candidate.path, "缺少一致的系统节点映射"); continue;
       }
@@ -196,6 +225,12 @@ final class TouchRouteModel {
       }
       if (matches != 1) {
         possible.add(candidate); evidence.put(candidate.path, "系统逻辑设备映射不唯一"); continue;
+      }
+      long rawMatches = raw.values().stream().filter(value -> value.enabled && value.touchClass != 0 && value.descriptor.equals(node.descriptor)
+          && value.name.equals(node.name) && value.vendor == node.vendor && value.product == node.product).count();
+      if (rawMatches != 1) {
+        possible.add(candidate); blockedFallback.add(candidate.path);
+        evidence.put(candidate.path, "同一逻辑身份对应多个原始节点，等待实际来源确认"); continue;
       }
       if (!device.enabled || !device.touchscreen) { evidence.put(candidate.path, "系统未启用此触屏来源"); continue; }
       int display = device.display;
@@ -222,18 +257,23 @@ final class TouchRouteModel {
         routed.add(candidate); evidence.put(candidate.path, "系统确认属于当前显示器");
       } else evidence.put(candidate.path, "已确认触屏来源，显示关联未知");
     }
-    if (staleRoute) return new Decision("", "stale-route", "系统输入配置正在更新，请重新连接", evidence);
-    if (unknownCapabilities) return new Decision("", "unknown-capabilities", "部分输入节点无法读取身份或能力，未接管触屏", evidence);
+    if (staleRoute) return new Decision("", "stale-route", "系统输入配置正在变化，稍后自动检查", evidence);
     if (touched.size() == 1) return new Decision(touched.get(0).path, "android-host-touch", "已按当前显示的真实触摸来源确认触屏", evidence);
     if (touched.size() > 1) return new Decision("", "ambiguous", "同一触摸来源对应多个触屏节点，不能安全接管", evidence);
+    List<Candidate> readableDirect = possible.stream().filter(node -> node.capable && node.direct
+        && !blockedFallback.contains(node.path)).collect(java.util.stream.Collectors.toList());
+    if (unknownCapabilities && readableDirect.size() == 1)
+      return new Decision(readableDirect.get(0).path, "readable-direct-fallback", "已选择唯一可读直触设备", evidence);
+    if (unknownCapabilities) return new Decision("", "unknown-capabilities", "系统限制读取部分输入设备；请触摸当前页面，程序会自动确认触屏", evidence);
     if (possible.size() == 1 && possible.get(0).capable && !blockedFallback.contains(possible.get(0).path)
         && (possible.get(0).direct || routed.size() == 1)) return new Decision(possible.get(0).path,
         routed.size() == 1 ? "android-display-route" : "unique-capabilities", "已确认唯一可用触屏", evidence);
-    if (possible.size() == 1) return new Decision("", "unconfirmed-source", "未确认此输入节点属于当前主屏，请在设置页点重新连接", evidence);
+    if (possible.size() == 1) return new Decision("", "unconfirmed-source", "正在确认主屏触屏，触摸当前页面后会自动检查", evidence);
     // 未知候选仍可能属于主屏，不能因为另一个候选证据较多就随意丢弃它。
     return new Decision("", possible.isEmpty() ? "none" : "ambiguous",
-        possible.isEmpty() ? "系统没有启用可用触屏" : "仍有多个当前触屏候选，请在设置页点重新连接以确认触摸来源", evidence);
+        possible.isEmpty() ? "系统没有启用可用触屏" : "正在区分多个触控设备，触摸当前页面后会自动检查", evidence);
   }
+
 
   private static boolean same(Candidate candidate, Raw node) {
     return candidate.name.equals(node.name) && candidate.bus == node.bus && candidate.vendor == node.vendor

@@ -19,6 +19,8 @@ internal object FloatingWindowLayout {
                 height,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    // 自动琴键仍按在游戏窗口时，暂停手指需要独立分发到悬浮窗。
+                    WindowManager.LayoutParams.FLAG_SPLIT_TOUCH or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT,
             )

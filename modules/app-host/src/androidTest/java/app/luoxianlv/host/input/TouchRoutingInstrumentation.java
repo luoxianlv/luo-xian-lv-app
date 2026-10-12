@@ -42,6 +42,7 @@ public final class TouchRoutingInstrumentation extends Instrumentation {
       Bundle state=bridge.state();
       require(state.getBoolean("connected") && state.getInt("helperUid")==2000,"不是实际 shell 连接："+state.getString("message"));
       require(state.getBoolean("touchReady"),"触屏筛选失败："+state.getString("message")+"；"+state.getString("routingDiagnostics"));
+      require(state.getBoolean("coexistenceReady", true),"本轮降为标准点击，不能作为合流筛选成功证据");
       if(requireMultiple)require(state.getInt("candidateCount")>1,"本轮未覆盖多个兼容触屏");
       require(!state.getBoolean("active"),"预检意外接管了触屏");
       JSONObject report=new JSONObject().put("mode",mode).put("helperUid",state.getInt("helperUid"))

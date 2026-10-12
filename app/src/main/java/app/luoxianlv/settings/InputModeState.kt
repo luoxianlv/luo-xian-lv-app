@@ -30,6 +30,7 @@ internal data class InputModeState(
     val permissionState: String = "",
     val connected: Boolean = false,
     val touchReady: Boolean = false,
+    val coexistenceReady: Boolean = false,
     val accessibilityEnabled: Boolean = false,
     val wirelessSupported: Boolean = false,
     val notificationGranted: Boolean = false,
@@ -82,7 +83,12 @@ internal data class InputModeState(
             when {
                 !supported -> message
                 !overlayGranted -> "先允许显示在其他应用上方，再选择输入模式。"
-                usable -> if (mode == "accessibility") "使用无障碍自动演奏" else "已连接，支持的手机可边操作边演奏"
+                usable ->
+                    when {
+                        mode == "accessibility" -> "使用无障碍自动演奏"
+                        coexistenceReady -> "已连接，可边操作边演奏"
+                        else -> "已连接，当前使用标准点击；手动触摸可能中断演奏。"
+                    }
                 mode == "shizuku" && !busy && !installed -> "安装后，按 Shizuku 内的指引启动。"
                 mode == "shizuku" && !busy && !binderAlive -> "打开 Shizuku，按其中的指引启动后再回来。"
                 mode == "shizuku" && !busy && !binderReady -> "正在等待 Shizuku 完成连接，稍后会自动检查授权。"
@@ -134,6 +140,8 @@ internal data class InputModeState(
                     permissionState = state.getString("permissionState").orEmpty(),
                     connected = state.getBoolean("connected"),
                     touchReady = state.getBoolean("touchReady"),
+                    coexistenceReady =
+                        state.getBoolean("coexistenceReady", state.getBoolean("touchReady")),
                     accessibilityEnabled = state.getBoolean("accessibilityEnabled"),
                     wirelessSupported = state.getBoolean("wirelessSupported"),
                     notificationGranted = state.getBoolean("notificationGranted"),

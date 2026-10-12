@@ -865,24 +865,26 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     }
 
     private fun pauseNow() {
+        val pausedPosition = positionMs
+        val wasPlaying = playing
+        val wasPreparing = preparing
         changeRevision++
+        // 先封住调度和旧回调，再异步归还触屏；释放回调不能推进下一音符。
+        generation++
+        playing = false
+        preparing = false
+        busy = false
+        baseMs = pausedPosition
+        handler.removeCallbacks(next)
         gestureWait.cancel()
         input.release()
         songLoad.pause()
-        AppLog.log("暂停播放：播放中=$playing 准备中=$preparing")
+        AppLog.log("暂停播放：播放中=$wasPlaying 准备中=$wasPreparing")
         if (recoveringDisplay) {
-            generation++
-            busy = false
             recoveryWasPlaying = false
             finishDisplayRecovery(false)
             return
         }
-        preparing = false
-        baseMs = positionMs
-        playing = false
-        busy = false
-        generation++
-        handler.removeCallbacks(next)
         if (::floating.isInitialized) floating.refresh()
     }
 

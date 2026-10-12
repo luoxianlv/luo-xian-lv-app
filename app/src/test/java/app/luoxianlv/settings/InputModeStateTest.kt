@@ -40,4 +40,15 @@ class InputModeStateTest {
         assertEquals("触控检查未通过", failure.statusTitle)
         assertEquals("connect", failure.primaryAction?.command)
     }
+
+    @Test
+    fun standardFallbackRemainsUsableAndStatesItsTouchLimitation() {
+        val ready = shizuku.copy(connected = true, touchReady = true, coexistenceReady = false)
+        assertTrue(ready.usable)
+        assertEquals("可以开始演奏", ready.statusTitle)
+        assertTrue(ready.statusSummary.contains("标准点击"))
+        assertTrue(ready.statusSummary.contains("中断"))
+        assertNull(ready.primaryAction)
+        assertEquals("已连接，可边操作边演奏", ready.copy(coexistenceReady = true).statusSummary)
+    }
 }
