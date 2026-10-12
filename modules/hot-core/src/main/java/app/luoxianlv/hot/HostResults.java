@@ -79,11 +79,10 @@ final class HostResults {
 
   private int request(String key, boolean permission) {
     checkKey(key);
-    StrictJson.require(
-        requests.size() + pending.size() < LIMIT
-            && !pending.containsKey(key)
-            && requests.values().stream().noneMatch(value -> value.key.equals(key)),
-        "该系统请求尚未结束或数量过多");
+    // 连点、重建后的再次点击共用原请求，不覆盖仍在途或尚未消费的结果。
+    if (pending.containsKey(key)
+        || requests.values().stream().anyMatch(value -> value.key.equals(key))) return 0;
+    StrictJson.require(requests.size() + pending.size() < LIMIT, "系统请求数量过多");
     // 序号环回前跳过仍在途的请求，不因长期运行而耗尽整个窗口。
     while (requests.containsKey(next)) next = following(next);
     int code = next;
@@ -98,6 +97,7 @@ final class HostResults {
 
   void launch(String key, Intent intent, Bundle options) {
     int code = request(key, false);
+    if (code == 0) return;
     try {
       activity.startActivityForResult(intent, code, options);
     } catch (RuntimeException failure) {
@@ -109,6 +109,7 @@ final class HostResults {
   void permissions(String key, String[] permissions) {
     checkPermissions(permissions, null, false);
     int code = request(key, true);
+    if (code == 0) return;
     try {
       activity.requestPermissions(permissions.clone(), code);
     } catch (RuntimeException failure) {

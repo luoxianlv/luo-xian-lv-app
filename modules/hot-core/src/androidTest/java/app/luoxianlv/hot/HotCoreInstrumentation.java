@@ -19,6 +19,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
   private boolean spaceOnly;
   private boolean cacheOnly;
   private boolean repairOnly;
+  private boolean resultsOnly;
 
   @Override
   public void onCreate(Bundle arguments) {
@@ -31,6 +32,7 @@ public final class HotCoreInstrumentation extends Instrumentation {
     spaceOnly = arguments != null && "true".equals(arguments.getString("spaceOnly"));
     cacheOnly = arguments != null && "true".equals(arguments.getString("cacheOnly"));
     repairOnly = arguments != null && "true".equals(arguments.getString("repairOnly"));
+    resultsOnly = arguments != null && "true".equals(arguments.getString("resultsOnly"));
     start();
   }
 
@@ -38,6 +40,12 @@ public final class HotCoreInstrumentation extends Instrumentation {
   public void onStart() {
     Bundle report = new Bundle();
     try {
+      if (resultsOnly) {
+        runOnMainSync(HostResultsChecks::run);
+        report.putString("stream", "Android 系统请求检查通过：重复点击合并、重建与待消费结果保留、重复权限请求合并、结果仅投递一次、重入新请求、预算与外部结果校验保留。\n");
+        finish(-1, report);
+        return;
+      }
       if (repairOnly) {
         checkObjectRepair();
         report.putString("stream", "Android对象修复检查通过：错误副本保留旧字节，正确只读副本原子替换，快照与目录外文件保留。\n");
