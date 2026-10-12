@@ -20,54 +20,22 @@ class HarmonicaSampler(
     private val commands = HarmonicaCommands()
     private val voice = HarmonicaVoice(samples)
     private val main = Handler(Looper.getMainLooper())
-    private val attributes =
-        AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_GAME)
-            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-            .build()
     @Volatile private var running = true
     @Volatile private var closed = false
-    private val track =
-        AudioTrack.Builder()
-            .setAudioAttributes(attributes)
-            .setAudioFormat(
-                AudioFormat.Builder()
-                    .setSampleRate(48000)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                    .build()
-            )
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-            .setBufferSizeInBytes(
-                maxOf(
-                    1920,
-                    AudioTrack.getMinBufferSize(
-                        48000,
-                        AudioFormat.CHANNEL_OUT_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                    ),
-                )
-            )
-            .build()
     private val worker: Thread
 
     init {
-        if (track.state != AudioTrack.STATE_INITIALIZED) {
-            track.release()
-            error("无法初始化音频输出")
-        }
-        val lease =
-            BusinessJobs.gate.retain()
-                ?: run {
-                    track.release()
-                    error("本代音频已退役")
-                }
+        val lease = BusinessJobs.gate.retain() ?: error("本代音频已退役")
         worker =
             Thread(
                     {
+                        var track: AudioTrack? = null
                         try {
+                            if (!running) return@Thread
                             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+                            track = createTrack() ?: return@Thread
+                            check(track.state == AudioTrack.STATE_INITIALIZED) { "无法初始化音频输出" }
+                            if (!running) return@Thread
                             track.play()
                             val buffer = ShortArray(240)
                             while (running) {
@@ -98,10 +66,12 @@ class HarmonicaSampler(
                         } finally {
                             running = false
                             try {
-                                runCatching { track.pause() }
-                                runCatching { track.flush() }
-                                runCatching { track.stop() }
-                                track.release()
+                                track?.let { output ->
+                                    runCatching { output.pause() }
+                                    runCatching { output.flush() }
+                                    runCatching { output.stop() }
+                                    output.release()
+                                }
                             } finally {
                                 lease.close()
                             }
@@ -113,14 +83,39 @@ class HarmonicaSampler(
                     try {
                         start()
                     } catch (failure: Throwable) {
-                        try {
-                            track.release()
-                        } finally {
-                            lease.close()
-                        }
+                        lease.close()
                         throw failure
                     }
                 }
+    }
+
+    /** 查询音频缓冲和创建原生流都会等待系统服务，只由输出线程执行。 */
+    private fun createTrack(): AudioTrack? {
+        val minimum =
+            AudioTrack.getMinBufferSize(
+                48000,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+            )
+        if (!running) return null
+        return AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(48000)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .build()
+            )
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+            .setBufferSizeInBytes(maxOf(1920, minimum))
+            .build()
     }
 
     fun noteOn(midi: Int): Boolean {
