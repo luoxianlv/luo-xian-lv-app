@@ -429,16 +429,8 @@ public final class HotApiClient {
       boolean authenticated,
       UpdateCancellation cancellation)
       throws Exception {
-    long started = System.nanoTime();
-    while (true) {
-      try {
-        return postOnce(route, body, idempotency, authenticated, cancellation);
-      } catch (java.net.SocketTimeoutException waiting) {
-        cancellation.check();
-        if (System.nanoTime() - started >= readTimeout * 1_000_000L)
-          throw new java.net.SocketTimeoutException("API 响应等待超时");
-      }
-    }
+    // 响应头超时不能重发 POST：服务端可能已完成处理，重新发送还会消耗限频预算。
+    return postOnce(route, body, idempotency, authenticated, cancellation);
   }
 
   private Response postOnce(
@@ -456,7 +448,7 @@ public final class HotApiClient {
       connection.setInstanceFollowRedirects(false);
       connection.setUseCaches(false);
       connection.setConnectTimeout(connectTimeout);
-      connection.setReadTimeout(Math.min(500, readTimeout));
+      connection.setReadTimeout(readTimeout);
       connection.setRequestMethod("POST");
       connection.setDoOutput(true);
       connection.setFixedLengthStreamingMode(raw.length);
@@ -470,6 +462,7 @@ public final class HotApiClient {
         output.write(raw);
       }
       int status = connection.getResponseCode();
+      connection.setReadTimeout(Math.min(500, readTimeout));
       cancellation.check();
       if (status < 200 || status >= 300) {
         String code = "request_failed";

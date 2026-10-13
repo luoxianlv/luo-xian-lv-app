@@ -5,6 +5,15 @@
         android:targetPackage="app.luoxianlv.debug"
         android:handleProfiling="false"
         android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.HostHttpInstrumentation" android:targetPackage="app.luoxianlv.debug" />
+    <instrumentation android:name="app.luoxianlv.host.RealtimeInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.RealtimeTlsInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.EnsembleMultiInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.BusinessHttpInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
     <instrumentation
         android:name="app.luoxianlv.host.NativeServiceColdInstrumentation"
         android:targetPackage="app.luoxianlv.debug"
@@ -61,6 +70,8 @@
         android:handleProfiling="false"
         android:functionalTest="true" />
     <instrumentation android:name="app.luoxianlv.host.ScreenshotPlaybackInstrumentation" android:targetPackage="app.luoxianlv.debug" android:handleProfiling="false" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.UpgradeDataInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:handleProfiling="false" android:functionalTest="true" />
     <application>
         <activity android:name="app.luoxianlv.host.input.ScreenshotPatternActivity"
             android:exported="true" android:theme="@android:style/Theme.Material.Light.NoActionBar" />

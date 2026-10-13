@@ -26,6 +26,11 @@ public final class SharedInput {
 
   /** 每个播放业务拥有独立租约，旧业务退场不能取消新业务的按键。 */
   public interface Session extends AutoCloseable {
+    /** 提前建立输入会话，不注入音符；准备失败不能进入合奏就绪。 */
+    default AutoCloseable prepare(int width, int height, int rotation, Completion completion) {
+      completion.complete(false, "当前输入组件不支持合奏准备，请升级应用");
+      return () -> {};
+    }
     AutoCloseable press(float[] points, int durationMs, int width, int height, int rotation,
         Completion completion);
     void release();

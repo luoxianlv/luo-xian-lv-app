@@ -6,6 +6,52 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.Test;
 
 public final class UpdateScheduleTest {
+  @Test public void publicationHintsSpreadChecksAndDuplicatesDoNotPostponeThem() {
+    AtomicLong clock = new AtomicLong(100000);
+    UpdateSchedule schedule = new UpdateSchedule(clock::get, () -> 1);
+    schedule.availability(true, false, true, false);
+    schedule.hint();
+    assertEquals(30000, schedule.delayMillis());
+    clock.addAndGet(1000);
+    schedule.hint(); schedule.request();
+    assertEquals(29000, schedule.delayMillis());
+    clock.addAndGet(29000);
+    assertTrue(schedule.beginIfDue());
+  }
+  @Test public void realtimeUsesTenMinuteFallbackOnlyAfterConfirmedSubscription() {
+    AtomicLong clock = new AtomicLong();
+    UpdateSchedule schedule = new UpdateSchedule(clock::get, () -> .5);
+    schedule.availability(true, false, true, false);
+    schedule.realtime(true);
+    assertTrue(schedule.beginIfDue());
+    schedule.finish(true, 0);
+    assertEquals(600000, schedule.delayMillis());
+    clock.set(1000);
+    schedule.realtime(false);
+    assertEquals(29000, schedule.delayMillis());
+    clock.set(30000);
+    assertTrue(schedule.beginIfDue());
+    schedule.finish(true, 0);
+    assertEquals(60000, schedule.delayMillis());
+  }
+
+  @Test public void repeatedHintsCoalesceAndCannotBypassRetryAfter() {
+    AtomicLong clock = new AtomicLong();
+    UpdateSchedule schedule = new UpdateSchedule(clock::get, () -> .5);
+    schedule.availability(true, false, true, false);
+    schedule.realtime(true);
+    assertTrue(schedule.beginIfDue());
+    schedule.finish(false, 120000);
+    schedule.realtime(false);
+    schedule.realtime(true);
+    for (int i = 0; i < 100; i++) schedule.request();
+    assertEquals(120000, schedule.delayMillis());
+    clock.set(120000);
+    assertTrue(schedule.beginIfDue());
+    schedule.request();
+    schedule.finish(true, 0);
+    assertEquals(30000, schedule.delayMillis());
+  }
   @Test
   public void foregroundNetworkAndPlaybackRequestsCoalesceWithoutPollingInBackground() {
     AtomicLong clock = new AtomicLong();

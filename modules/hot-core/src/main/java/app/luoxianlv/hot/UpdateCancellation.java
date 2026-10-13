@@ -122,7 +122,7 @@ public final class UpdateCancellation implements BooleanSupplier {
             }
           });
     } catch (java.util.concurrent.RejectedExecutionException saturated) {
-      // 收尾队列有界；请求自身500ms读取切片仍会察觉取消并在finally关闭连接。
+      // 收尾队列有界；响应体读取切片或响应头等待上限到达后，原请求在 finally 关闭连接。
     }
   }
 }

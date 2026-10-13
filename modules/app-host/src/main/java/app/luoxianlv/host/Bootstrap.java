@@ -46,6 +46,8 @@ public final class Bootstrap {
   private static boolean updateBlocked;
   private static HostStartup startup;
   private static HostUpdates updates;
+  private static app.luoxianlv.host.realtime.RealtimeApi realtimeApi;
+  private static app.luoxianlv.host.realtime.HostRealtime realtime;
   private static volatile boolean businessStopped, recoveryAvailable;
   private static final ArrayList<BusinessActivity> WINDOWS = new ArrayList<>();
 
@@ -95,7 +97,10 @@ public final class Bootstrap {
   public static void usageChanged() {
     if (activation != null) activation.usageChanged();
     if (updates != null) updates.usageChanged();
+    if (realtime != null) realtime.usage(inUse());
   }
+
+  static boolean ensembleBusy() { return realtime != null && realtime.performing(); }
 
   static boolean inUse() {
     return foregroundInUse() || playbackInUse();
@@ -156,6 +161,7 @@ public final class Bootstrap {
 
   static boolean canAutoActivate() {
     return source != null
+        && !ensembleBusy()
         && !app.luoxianlv.hot.ApkUpdateBridge.busy()
         && activation == null
         && (updates == null || !updates.coldPending())
@@ -169,6 +175,7 @@ public final class Bootstrap {
 
   public static boolean ordinaryUpdateIdle() {
     return !playbackInUse()
+        && !ensembleBusy()
         && !playbackPreparing()
         && activation == null
         && (updates == null || updates.apkWorkIdle());
@@ -523,6 +530,27 @@ public final class Bootstrap {
                   cold != null
                       ? startup.journal.state().attempt
                       : startup.journal.state().stableAttempt);
+            if (BuildConfig.REALTIME_ENABLED) {
+              try {
+                var config = startup == null ? null : startup.config;
+                String environment = config == null ? (BuildConfig.DEBUG ? "test" : "production") : config.environment;
+                String fingerprint;
+                try (var input = application.getAssets().open("hot/host-contract.sha256")) {
+                  byte[] bytes = new byte[256];
+                  int count = input.read(bytes);
+                  fingerprint = new String(bytes, 0, Math.max(0, count), java.nio.charset.StandardCharsets.UTF_8).trim();
+                }
+                var identity = app.luoxianlv.hot.InstallationIdentity.open(
+                    new File(root, "installation"), application.getPackageName(), environment);
+                var installed = application.getPackageManager().getPackageInfo(application.getPackageName(), 0);
+                long version = android.os.Build.VERSION.SDK_INT >= 28 ? installed.getLongVersionCode() : installed.versionCode;
+                realtimeApi = new app.luoxianlv.host.realtime.RealtimeApi(
+                    java.net.URI.create(BuildConfig.REALTIME_ORIGIN), identity,
+                    config == null ? 1 : config.hostContract, fingerprint, version, BuildConfig.DEBUG);
+              } catch (Exception unavailable) {
+                Log.w("实时连接", "安装授权准备失败，继续使用 HTTP 检查：" + unavailable.getClass().getSimpleName());
+              }
+            }
             MAIN.post(() -> initializePrepared(prepared, worker));
           } catch (Throwable error) {
             MAIN.post(
@@ -543,6 +571,18 @@ public final class Bootstrap {
               () -> {
                 try {
                   BusinessFactory factory = prepared.factory();
+                  if (realtimeApi != null && realtime == null) {
+                    try {
+                      realtime = new app.luoxianlv.host.realtime.HostRealtime(
+                          application, prepared.classLoader().getParent(), realtimeApi,
+                          (subscribed, revision, trust) -> {
+                            if (updates != null) updates.realtimeChanged(subscribed, revision, trust);
+                          }, Bootstrap::usageChanged);
+                      realtime.usage(inUse());
+                    } catch (Exception unavailable) {
+                      Log.w("实时连接", "共享连接不可用，继续使用 HTTP 检查：" + unavailable.getClass().getSimpleName());
+                    }
+                  }
                   process = factory.process(prepared.context(application));
                   process.initialize();
                   source = new Source(prepared, factory);

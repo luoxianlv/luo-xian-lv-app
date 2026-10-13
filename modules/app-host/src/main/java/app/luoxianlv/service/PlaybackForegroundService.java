@@ -78,6 +78,7 @@ public final class PlaybackForegroundService extends Service {
     // 停止命令、重启的绑定实例也先登记，不能只在 onCreate 中调用。
     promoteToForeground();
     foreground = true;
+    Bootstrap.usageChanged();
     lastStartId = startId;
     startPending = false;
     if (intent != null && START.equals(intent.getAction())) {
@@ -199,6 +200,7 @@ public final class PlaybackForegroundService extends Service {
         closePlayback();
         stopForeground(STOP_FOREGROUND_REMOVE);
         foreground = false;
+        Bootstrap.usageChanged();
         diagnostic("已停止：启动序号=" + startId);
       });
     }
@@ -247,6 +249,10 @@ public final class PlaybackForegroundService extends Service {
   }
 
   /** 与无障碍和 Activity 生命周期一样，仅在主线程调用。 */
+  public static boolean foregroundRegistered() {
+    return instance != null && instance.foreground;
+  }
+
   public static void start(Context context) {
     stopRequested = false;
     boolean restart = instance != null && instance.stopping != null && instance.stopping.cancel();

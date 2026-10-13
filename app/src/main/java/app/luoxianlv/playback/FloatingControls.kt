@@ -616,6 +616,10 @@ class FloatingControls(private val service: PlaybackSession) {
     private fun showPlaylist() {
         // 先停止按键和准备中的播放，再读取列表，避免自动触摸落到选歌窗口。
         service.pause()
+        if (app.luoxianlv.ensemble.EnsembleSession.current?.active == true) {
+            app.luoxianlv.ensemble.EnsembleNavigation.open(context)
+            return
+        }
         if (playlistJob?.isActive == true) return
         playlistJob = scope.launch {
             try {

@@ -243,7 +243,11 @@ internal class FloatingPanel(
         }
         refreshStatus()
         play?.apply {
-            val pending = service.playing || service.preparing || service.waitingToPlay
+            val pending =
+                service.playing ||
+                    service.preparing ||
+                    service.waitingToPlay ||
+                    service.ensembleWaitingToStart
             val description = if (pending) "暂停" else "播放"
             if (contentDescription?.toString() != description) {
                 setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)
@@ -259,6 +263,7 @@ internal class FloatingPanel(
                 "${timeLabel(it)}/${timeLabel(service.durationMs)}"
             }
                 ?: service.error
+                ?: service.ensembleStatus
                 ?: if (service.loadingSong) {
                     if (service.waitingToPlay) "准备完成后立即播放…" else "正在准备谱面…"
                 } else if (service.preparing) {

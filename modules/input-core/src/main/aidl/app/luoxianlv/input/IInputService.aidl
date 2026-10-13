@@ -16,5 +16,6 @@ interface IInputService {
     ParcelFileDescriptor screenshot(int displayId) = 7;
     ScreenshotPacket screenshotFrame(int displayId, boolean rawOnly) = 8;
     void routingHint(int deviceId, int displayId, String descriptor) = 9;
+    boolean prepare(int width, int height, int rotation, long token) = 10;
     void destroy() = 16777114;
 }

@@ -39,6 +39,10 @@ class AppProcess(private val context: Context) : ProcessHooks {
             )
         // Debug 实现为空；Release 正式统计仍须等用户同意协议后触发。
         Analytics.preInitialize(context)
+        app.luoxianlv.ensemble.EnsembleSession.open(context)
+        BusinessJobs.thread("realtime-account") {
+            app.luoxianlv.platform.SessionStore(context).publishRealtime()
+        }
     }
 
     override fun trimMemory(level: Int) {
@@ -55,8 +59,9 @@ class AppProcess(private val context: Context) : ProcessHooks {
     override fun close() {
         if (closed) return
         closed = true
+        app.luoxianlv.ensemble.EnsembleSession.close()
         OfficialRendererGate.retire()
-        BusinessJobs.gate.retire()
+        BusinessJobs.retire()
         diagnostics?.close()
         diagnostics = null
         PreparedWallpaper.clear()
@@ -65,14 +70,22 @@ class AppProcess(private val context: Context) : ProcessHooks {
         AppLog.retire()
     }
 
-    override fun canReplace() = !closed && BusinessJobs.gate.idle()
+    override fun canReplace() =
+        !closed &&
+            BusinessJobs.gate.idle() &&
+            app.luoxianlv.ensemble.EnsembleSession.current?.hasPriority != true
 
     override fun supportsRetirement() = true
 
-    override fun quiesce() = !closed && BusinessJobs.gate.freeze()
+    override fun quiesce(): Boolean {
+        if (!canReplace() || !BusinessJobs.gate.freeze()) return false
+        app.luoxianlv.ensemble.EnsembleSession.suspendWork()
+        return true
+    }
 
     override fun resumeWork() {
         BusinessJobs.gate.resume()
+        app.luoxianlv.ensemble.EnsembleSession.resumeWork()
     }
 
     override fun released() =

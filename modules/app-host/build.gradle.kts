@@ -1,5 +1,6 @@
 import app.luoxianlv.buildlogic.BundleBaseline
 import app.luoxianlv.buildlogic.CopyHotConfig
+import java.io.File
 
 plugins { id("com.android.application") }
 
@@ -34,7 +35,14 @@ android {
         versionCode = providers.gradleProperty("appVersionCode").get().toInt()
         versionName = providers.gradleProperty("appVersionName").get()
         testInstrumentationRunner = "app.luoxianlv.host.NativeAppInstrumentation"
+        val realtimeOrigin = providers.gradleProperty("updateBaseUrl").orElse("https://www.luoxianlv.cn").get()
+        require(realtimeOrigin.matches(Regex("https?://[A-Za-z0-9.:-]+")))
+        buildConfigField("String", "REALTIME_ORIGIN", "\"$realtimeOrigin\"")
+        val realtimeEnabled = providers.gradleProperty("realtimeEnabled").orElse("false").get()
+        require(realtimeEnabled in listOf("true", "false"))
+        buildConfigField("boolean", "REALTIME_ENABLED", realtimeEnabled)
     }
+    buildFeatures { buildConfig = true }
     sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("app/src/test/resources"))
     if (hasReleaseSigning) {
         signingConfigs.create("release") {
@@ -71,9 +79,33 @@ android {
 }
 
 dependencies {
+    testImplementation(libs.junit)
+    testImplementation(libs.json)
     implementation(project(":hot-core"))
     implementation(project(":input-core"))
 }
+
+// 证书仅供本机 TLS 对照测试，生成在忽略的 build 目录，不把测试私钥放入仓库。
+val tlsTestAssets = layout.buildDirectory.dir("generated/testTls")
+val tlsTestFixture = tasks.register<Exec>("generateTestTlsFixture") {
+    inputs.property("fixtureFormat", 1)
+    outputs.dir(tlsTestAssets)
+    doFirst {
+        val target = tlsTestAssets.get().file("tls-probe.p12").asFile
+        target.parentFile.mkdirs()
+        if (target.exists()) check(target.delete())
+        val name = if (System.getProperty("os.name").startsWith("Windows")) "keytool.exe" else "keytool"
+        executable = File(System.getProperty("java.home"), "bin/$name").path
+        args("-J-Dkeystore.pkcs12.legacy", "-J-Duser.language=en", "-genkeypair",
+            "-alias", "test-local", "-storetype", "PKCS12", "-keystore", target.path,
+            "-storepass", "public-test", "-keypass", "public-test", "-dname", "CN=localhost",
+            "-ext", "SAN=dns:localhost,ip:127.0.0.1", "-startdate", "-1d", "-validity", "36500",
+            "-keyalg", "RSA", "-keysize", "2048", "-sigalg", "SHA256withRSA")
+    }
+}
+android.sourceSets.getByName("androidTest").assets.directories.add(tlsTestAssets.get().asFile.path)
+tasks.matching { it.name in listOf("mergeDebugAndroidTestAssets", "mergeReleaseAndroidTestAssets") }
+    .configureEach { dependsOn(tlsTestFixture) }
 
 if (providers.gradleProperty("nativeReleaseProbe").orNull == "true") apply(from = rootProject.file("gradle/native-release-probe.gradle.kts"))
 

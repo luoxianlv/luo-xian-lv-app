@@ -50,6 +50,8 @@ final class HostUpdates {
   private final Runnable pulse = this::tick;
   private volatile boolean active, blocked, online, priorityWork;
   private boolean busy;
+  private boolean realtimeSubscribed;
+  private String realtimeRevision = "", realtimeTrust = "";
   private volatile Throwable stoppedCleanupFailure;
   private volatile UpdateCancellation requestCancellation;
   private volatile UpdateCancellation lastRequest;
@@ -490,6 +492,7 @@ final class HostUpdates {
     // 网络回调维护缓存，播放/生命周期边沿不得同步查询系统 Binder。
     priorityWork =
         Bootstrap.playbackPreparing()
+            || Bootstrap.ensembleBusy()
             || Bootstrap.businessWorking()
             || app.luoxianlv.hot.ApkUpdateBridge.busy();
     if (cancelled()) cancelRequest();
@@ -514,6 +517,18 @@ final class HostUpdates {
     }
     main.removeCallbacks(pulse);
     if (active && !blocked) main.post(pulse);
+  }
+
+  void realtimeChanged(boolean subscribed, String revision, String trust) {
+    requireMain();
+    boolean changed = subscribed && (!realtimeSubscribed
+        || !revision.equals(realtimeRevision) || !trust.equals(realtimeTrust));
+    realtimeSubscribed = subscribed;
+    realtimeRevision = revision;
+    realtimeTrust = trust;
+    schedule.realtime(subscribed);
+    if (changed) schedule.hint();
+    usageChanged();
   }
 
   private void recordUse(String route) {
@@ -810,7 +825,9 @@ final class HostUpdates {
               || failure instanceof ContentCollector.Deferred
               || failure instanceof PreparationSpace.Deferred) schedule.deferred();
           else schedule.finish(false, retryAfterMillis(failure));
-          Log.w("原生宿主", "自动热更暂缓，当前版本继续使用：" + failure.getClass().getSimpleName());
+          String reason = failure instanceof HotApiClient.Failure apiFailure
+              ? "HTTP " + apiFailure.status : failure.getClass().getSimpleName();
+          Log.w("原生宿主", "自动热更暂缓，当前版本继续使用：" + reason);
           usageChanged();
         });
   }

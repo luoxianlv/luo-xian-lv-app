@@ -35,6 +35,24 @@ public final class InstallationIdentity {
     return id + "." + secret;
   }
 
+  /** 凭据仅写入宿主已验证的请求，不通过业务桥返回长期秘密。 */
+  public void authorize(java.net.HttpURLConnection connection, String header) {
+    if (!header.equals("Authorization") && !header.equals("X-Installation-Authorization"))
+      throw new IllegalArgumentException("安装授权请求头无效");
+    connection.setRequestProperty(header,
+        header.equals("Authorization") ? "Bearer " + credential() : credential());
+  }
+
+  public byte[] registration(long hostContract, String hostIdentity, long versionCode) {
+    StrictJson.require(hostContract > 0 && hostContract <= Integer.MAX_VALUE
+        && versionCode > 0 && versionCode <= Integer.MAX_VALUE
+        && HotManifest.validHash(hostIdentity), "安装登记资料无效");
+    return JsonWire.encode(JsonWire.fields("installationId", id, "secret", secret,
+        "applicationId", applicationId, "environment", environment,
+        "hostContract", hostContract, "hostIdentity", hostIdentity,
+        "appVersionCode", versionCode, "deltaCapability", HotByteDeltaPlan.ALGORITHM));
+  }
+
   public static InstallationIdentity open(File directory, String app, String environment)
       throws Exception {
     StrictJson.require(

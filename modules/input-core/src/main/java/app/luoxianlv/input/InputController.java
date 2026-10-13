@@ -883,7 +883,10 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       }
       try {
         request.submitted = true;
-        if (!remote.begin(copy, durationMs, width, height, rotation, request.token)) {
+        boolean accepted = copy != null && copy.length == 0 && durationMs == 0
+            ? remote.prepare(width, height, rotation, request.token)
+            : remote.begin(copy, durationMs, width, height, rotation, request.token);
+        if (!accepted) {
           HostDiagnostics.log(Log.WARN, TAG, "助手拒绝按键：模式=" + mode + " 显示=" + width + "x" + height
               + " 方向=" + rotation + " 时长=" + durationMs + " 点数=" + (copy == null ? 0 : copy.length / 2), null);
           complete(request.token, false, "连接未接受本次按键");
@@ -1123,6 +1126,9 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     final AtomicBoolean closed = new AtomicBoolean();
     final AtomicBoolean releasing = new AtomicBoolean();
     Lease(long id) { this.id = id; }
+    @Override public AutoCloseable prepare(int width, int height, int rotation, SharedInput.Completion completion) {
+      return InputController.this.press(this, new float[0], 0, width, height, rotation, completion);
+    }
     @Override public AutoCloseable press(float[] points, int durationMs, int width, int height,
         int rotation, SharedInput.Completion completion) {
       return InputController.this.press(this, points, durationMs, width, height, rotation, completion);

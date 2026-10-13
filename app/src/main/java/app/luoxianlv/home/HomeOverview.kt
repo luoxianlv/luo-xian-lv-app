@@ -58,6 +58,7 @@ internal fun HomeOverview(
     starting: Boolean = false,
     onToggleFloating: () -> Unit,
     onPractice: (Boolean) -> Unit,
+    onEnsemble: () -> Unit = {},
     settingsButton: @Composable () -> Unit,
 ) {
     // heightIn(min) 保证信息区至少占满「整列高度 - 插画高度」，
@@ -92,6 +93,7 @@ internal fun HomeOverview(
         // 演练场入口：原来这里是状态胶囊（「无障碍未开启 · 点击去开启」），
         // 现在换成同款圆角按钮，幕布从按钮自身展开。
         HomeStagePill(onPractice = onPractice)
+        TextButton(onClick = onEnsemble, modifier = Modifier.align(Alignment.End)) { Text("多人合奏") }
 
         Spacer(modifier = Modifier.height(22.dp))
 

@@ -1,0 +1,4 @@
+tls-probe.p12 在构建测试 APK 时临时生成于 app-host/build/generated/testTls。
+它是公开用途的本机测试证书，密码 public-test，别名 test-local；私钥不入库。
+仅打入测试 APK，不能用于发布签名、线上 TLS 或系统信任库。
+测试将它作为回环服务证书，对照验证：指定测试根可连接，系统默认根拒绝，错误域名拒绝。

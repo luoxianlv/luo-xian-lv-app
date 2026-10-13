@@ -16,7 +16,14 @@ umengUyumao = "1.1.4"
 umengApm = "2.1.0"
 umengApmPlugin = "2.0.0"
 
+ktor = "3.6.0"
+javaWebSocket = "1.6.0"
+
 [libraries]
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
+java-websocket = { module = "org.java-websocket:Java-WebSocket", version.ref = "javaWebSocket" }
 kotlin-stdlib = { module = "org.jetbrains.kotlin:kotlin-stdlib", version.ref = "kotlin" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }

@@ -15,6 +15,7 @@ internal val overlayRoutes =
         Routes.ANALYTICS_DEBUG,
         Routes.EXPERIMENTAL,
         Routes.INPUT_MODE,
+        Routes.ENSEMBLE,
     )
 
 /** 导航用基础值跨页面代际保存，不能把 Pager/导航控制器对象带到另一套业务代码。 */
@@ -59,6 +60,7 @@ object Routes {
     const val DIAGNOSTICS = "diagnostics"
     const val EXPERIMENTAL = "experimental"
     const val INPUT_MODE = "inputMode"
+    const val ENSEMBLE = "ensemble"
 
     /** 统计诊断：友盟集成测试排障页（仅 debug 包可见入口）。 */
     const val ANALYTICS_DEBUG = "analyticsDebug"

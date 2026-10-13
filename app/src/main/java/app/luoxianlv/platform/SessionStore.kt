@@ -10,10 +10,29 @@ data class AccountSession(
     val expiresAt: Long = 0L,
 )
 
-class SessionStore(context: Context) {
+data class SessionSnapshot(val epoch: Long, val session: AccountSession?)
+
+interface SessionPersistence {
+    fun snapshot(): SessionSnapshot
+
+    fun replace(expected: SessionSnapshot, session: AccountSession?): Boolean
+
+    fun accepts(snapshot: SessionSnapshot, token: String?): Boolean =
+        snapshot.session?.accessToken == token
+}
+
+class SessionStore(context: Context) : SessionPersistence {
     private val prefs = Kv.of(context, "account_session")
 
-    fun current(): AccountSession? =
+    fun current(): AccountSession? = synchronized(lock) { read() }
+
+    fun publishRealtime() =
+        synchronized(lock) {
+            app.luoxianlv.hot.contract.SharedRealtime.current()
+                ?.account(read()?.accessToken.orEmpty())
+        }
+
+    private fun read(): AccountSession? =
         prefs
             .getString("access", null)
             ?.takeIf { it.isNotBlank() }
@@ -26,7 +45,22 @@ class SessionStore(context: Context) {
                 )
             }
 
+    override fun snapshot(): SessionSnapshot =
+        synchronized(lock) {
+            SessionSnapshot(prefs.getLong("session_epoch", 0L), read())
+        }
+
     fun save(session: AccountSession) =
+        synchronized(lock) {
+            // 显式登录/换号先撤销旧合奏身份；令牌刷新走 replace，不中断当前演奏。
+            app.luoxianlv.hot.contract.SharedRealtime.current()?.account("")
+            val epoch = prefs.getLong("session_epoch", 0L) + 1
+            previousTokens.clear()
+            write(session, epoch)
+            publishRealtime()
+        }
+
+    private fun write(session: AccountSession, epoch: Long = prefs.getLong("session_epoch", 0L)) =
         prefs
             .edit()
             .putString(
@@ -36,7 +70,38 @@ class SessionStore(context: Context) {
             .putString("refresh", session.refreshToken)
             .putString("nickname", session.nickname)
             .putLong("expires_at", session.expiresAt)
+            .putLong("session_epoch", epoch)
             .apply()
 
-    fun clear() = prefs.edit().clear().apply()
+    fun clear() =
+        synchronized(lock) {
+            val epoch = prefs.getLong("session_epoch", 0L) + 1
+            previousTokens.clear()
+            prefs.edit().clear().putLong("session_epoch", epoch).apply()
+            publishRealtime()
+        }
+
+    override fun replace(expected: SessionSnapshot, session: AccountSession?): Boolean =
+        synchronized(lock) {
+            if (snapshot() != expected) return@synchronized false
+            if (session == null) clear()
+            else {
+                expected.session?.accessToken?.let { previousTokens.addLast(it) }
+                while (previousTokens.size > 4) previousTokens.removeFirst()
+                write(session)
+                publishRealtime()
+            }
+            true
+        }
+
+    override fun accepts(snapshot: SessionSnapshot, token: String?): Boolean =
+        synchronized(lock) {
+            this.snapshot() == snapshot &&
+                (snapshot.session?.accessToken == token || token in previousTokens)
+        }
+
+    private companion object {
+        val lock = Any()
+        val previousTokens = java.util.ArrayDeque<String>()
+    }
 }

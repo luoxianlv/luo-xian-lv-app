@@ -4,12 +4,36 @@ import android.os.Handler
 import app.luoxianlv.hot.contract.WorkGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 业务加载器各持一份门禁；租约包含回调，避免入库尚未结束就切换界面来源。 */
 object BusinessJobs {
     val gate = WorkGate()
+    private val networkScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    fun launch(action: suspend CoroutineScope.() -> Unit): Boolean {
+        val lease = gate.acquire() ?: return false
+        try {
+            val job = networkScope.launch(start = CoroutineStart.LAZY, block = action)
+            job.invokeOnCompletion { lease.close() }
+            job.start()
+        } catch (failure: Throwable) {
+            lease.close()
+            throw failure
+        }
+        return true
+    }
+
+    fun retire() {
+        gate.retire()
+        networkScope.cancel()
+        app.luoxianlv.platform.BusinessNetwork.retire()
+    }
 
     /** 租约覆盖挂起和回到调用线程；取消后也须等阻塞 I/O 真正离开 finally。 */
     suspend fun <T> io(action: suspend CoroutineScope.() -> T): T {

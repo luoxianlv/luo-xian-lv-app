@@ -14,11 +14,13 @@ import app.luoxianlv.BuildConfig
 import app.luoxianlv.app.BusinessJobs
 import app.luoxianlv.hot.contract.SharedFiles
 import app.luoxianlv.hot.contract.SharedUpdate
+import app.luoxianlv.platform.BusinessNetwork
+import app.luoxianlv.platform.readLimited
 import app.luoxianlv.shared.AppStorage
 import app.luoxianlv.shared.Kv
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readAvailable
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Job
@@ -58,7 +60,6 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
     private var readyApk: File? = null
     @Volatile private var downloadGeneration = 0L
     @Volatile private var pauseRequested = false
-    @Volatile private var legacyConnection: HttpURLConnection? = null
     private var restoring = true
     private var pendingCheck: Pair<Boolean, Boolean>? = null
     private val installedVersionCode: Int
@@ -151,38 +152,22 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val release = BusinessJobs.io {
-                    val connection =
-                        open(
-                            "$baseUrl/api/update/stable?versionCode=$installedVersionCode" +
-                                if (SharedUpdate.current()?.supportsIncremental() == true)
-                                    "&deltaCapability=hdiff-w26-zstd-v1&installationId=${updateInstallationId()}"
-                                else ""
-                        )
-                    try {
-                        check(connection.responseCode == 200) {
-                            "更新服务暂时不可用 (${connection.responseCode})"
+                    val url =
+                        "$baseUrl/api/update/stable?versionCode=$installedVersionCode" +
+                            if (SharedUpdate.current()?.supportsIncremental() == true)
+                                "&deltaCapability=hdiff-w26-zstd-v1&installationId=${updateInstallationId()}"
+                            else ""
+                    BusinessNetwork.current().consume(url, followRedirects = false) { response ->
+                        check(response.status.value == 200) {
+                            "更新服务暂时不可用 (${response.status.value})"
                         }
-                        val text =
-                            connection.inputStream.use { input ->
-                                val output = java.io.ByteArrayOutputStream()
-                                val buffer = ByteArray(8192)
-                                while (output.size() <= 256 * 1024) {
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    output.write(buffer, 0, count)
-                                }
-                                output.toByteArray()
-                            }
-                        require(text.size <= 256 * 1024) { "更新信息过大" }
                         parseAppRelease(
-                            JSONObject(text.toString(Charsets.UTF_8)),
+                            JSONObject(response.readLimited(256 * 1024).toString(Charsets.UTF_8)),
                             installedVersionCode,
                             baseUrl,
                             BuildConfig.UPDATE_SOURCE,
                             BuildConfig.INTERNAL_BUILD,
                         )
-                    } finally {
-                        connection.disconnect()
                     }
                 }
                 prefs.edit().putLong("last_check", now).apply()
@@ -366,42 +351,25 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         source: UpdateSource,
     ) {
         val partial = File(cacheDir, target.name + ".part")
-        val savedPriority = android.os.Process.getThreadPriority(android.os.Process.myTid())
-        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
-        var connection: HttpURLConnection? = null
         try {
-            // 逐次校验重定向；GitHub 会跳至 release-assets.githubusercontent.com。
-            var next = url
-            for (redirect in 0..5) {
-                coroutineContext.ensureActive()
-                val opened = open(next)
-                connection = opened
-                legacyConnection = opened
-                if (pauseRequested) throw kotlinx.coroutines.CancellationException("下载已暂停")
-                coroutineContext.ensureActive()
-                val status = opened.responseCode
-                if (status in listOf(301, 302, 303, 307, 308)) {
-                    val location = opened.getHeaderField("Location") ?: error("下载地址无效")
-                    opened.disconnect()
-                    next = validatedUpdateUrl(location, next, BuildConfig.INTERNAL_BUILD)
-                } else {
-                    break
-                }
-            }
-            val active = requireNotNull(connection)
-            check(active.responseCode == 200) { "下载失败 (${active.responseCode})，请重试或切换下载源" }
-            val length =
-                source.size.takeIf { it > 0 }
-                    ?: release.size.takeIf { it > 0 }
-                    ?: active.contentLengthLong
-            val progress = DownloadProgressThrottle()
-            active.inputStream.use { input ->
+            BusinessNetwork.current().consume(
+                validatedUpdateUrl(url, baseUrl, BuildConfig.INTERNAL_BUILD),
+                streaming = true,
+                validateRedirect = { location, previous ->
+                    validatedUpdateUrl(location, previous, BuildConfig.INTERNAL_BUILD)
+                },
+            ) { response ->
+                check(response.status.value == 200) { "下载失败 (${response.status.value})，请重试或切换下载源" }
+                val length = response.headers["Content-Length"]?.toLongOrNull() ?: source.size
+                val input = response.bodyAsChannel()
+                val progress = DownloadProgressThrottle()
+                var total = 0L
                 partial.outputStream().use { output ->
-                    val bytes = ByteArray(64 * 1024)
-                    var total = 0L
+                    val bytes = ByteArray(65536)
                     while (true) {
                         coroutineContext.ensureActive()
-                        val count = input.read(bytes)
+                        if (pauseRequested) throw kotlinx.coroutines.CancellationException("下载已暂停")
+                        val count = input.readAvailable(bytes, 0, bytes.size)
                         if (count < 0) break
                         total += count
                         require(total <= 512L * 1024 * 1024) { "安装包大小超出限制" }
@@ -421,13 +389,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
             coroutineContext.ensureActive()
             check(partial.renameTo(target)) { "无法保存安装包" }
         } finally {
-            try {
-                connection?.disconnect()
-                if (legacyConnection === connection) legacyConnection = null
-                partial.delete()
-            } finally {
-                android.os.Process.setThreadPriority(savedPriority)
-            }
+            partial.delete()
         }
     }
 
@@ -583,16 +545,7 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         pauseRequested = true
         SharedUpdate.current()?.cancel()
         job?.cancel()
-        closeLegacyConnection()
         _state.update { it.copy(phase = "pausing", source = "正在暂停下载", error = null) }
-    }
-
-    /** 断开阻塞中的旧版整包连接，关闭操作不占主线程。 */
-    private fun closeLegacyConnection() {
-        val connection = legacyConnection ?: return
-        Thread({ runCatching { connection.disconnect() } }, "apk-download-cancel")
-            .apply { isDaemon = true }
-            .start()
     }
 
     private fun updateInstallationId(): String {
@@ -608,7 +561,6 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
         pauseRequested = true
         SharedUpdate.current()?.cancel()
         job?.cancel()
-        closeLegacyConnection()
         super.onCleared()
     }
 
@@ -639,15 +591,4 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
             )
         }
     }
-
-    private fun open(url: String): HttpURLConnection =
-        (URL(validatedUpdateUrl(url, baseUrl, BuildConfig.INTERNAL_BUILD)).openConnection()
-                as HttpURLConnection)
-            .apply {
-                ClientVersion.attach(this)
-                connectTimeout = 15_000
-                readTimeout = 30_000
-                instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Luoxianlv/${BuildConfig.VERSION_NAME}")
-            }
 }

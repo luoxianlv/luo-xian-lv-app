@@ -24,6 +24,7 @@ app/src/main/java/app/luoxianlv/
 ├── library/       曲库、MIDI 导入、谱面解析
 ├── discover/      发现、搜索和远端谱面列表
 ├── playback/      自动演奏、悬浮窗、进度与暂停保护
+├── ensemble/      合奏房间、选谱分轨和输入协调
 ├── recognition/   截图、按键识别、布局配置和校准
 ├── practice/      演练场、琴键、音源和转场
 ├── wallpaper/     壁纸选择、导入、下载、存储和渲染
@@ -45,6 +46,7 @@ app/src/main/java/app/luoxianlv/
 | 首页 | `home/HomeScreen.kt` → `HomeOverview.kt`、`HomeHero.kt` |
 | 曲库与导入 | `library/LibraryViewModel.kt`、`ImportViewModel.kt` → `SongRepository.kt`、`ScoreParser.kt` |
 | 自动演奏 | `playback/PlaybackSession.kt` → `PlaybackTimeline.kt`、`FloatingControls.kt` |
+| 多人合奏 | `ensemble/EnsembleScreen.kt` → `EnsembleSession.kt`、`EnsembleScore.kt` |
 | 按键识别 | `recognition/ScreenshotAnalyzer.kt` → `ScreenRecognizer.kt` |
 | 演练场 | `practice/PracticePage.kt` → `StageEntry.kt`、`PracticeKeyboard.kt` |
 | 壁纸 | `wallpaper/WallpaperPickerScreen.kt` → `WallpaperProjectStore.kt`、`PracticeBackdrop.kt` |
@@ -58,7 +60,7 @@ app/src/main/java/app/luoxianlv/
 | `modules/hot-core/` | 签名、下载、加载、激活与恢复 |
 | `modules/update-core/` | APK 下载、断点恢复、隔离差分合并与完整校验 |
 | `modules/hot-contract/` | 宿主与业务的稳定 Java 接口 |
-| `modules/app-runtime/` | Kotlin、Compose 和第三方依赖 |
+| `modules/app-runtime/` | Kotlin、Compose、第三方依赖及宿主级实时连接 |
 | `modules/app-business/` | 业务 APK，直接编译功能目录中的 Kotlin |
 | `modules/business-ui/` | 页面容器、状态交接、主题和资源基础 |
 | `app/` | 单 APK 构建及业务测试入口 |

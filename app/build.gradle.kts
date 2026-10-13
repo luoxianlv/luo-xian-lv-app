@@ -116,6 +116,9 @@ androidComponents {
 }
 
 dependencies {
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
+    testImplementation(libs.ktor.client.mock)
     implementation(libs.kotlin.stdlib)
     implementation(project(":hot-core"))
     implementation(project(":input-core"))

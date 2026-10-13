@@ -17,6 +17,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -147,6 +148,12 @@ fun AppNavHost(
     // U-App 页面统计：单 Activity + Compose 只能手动按页面名打点（U-APM 的页面维度是 Activity）。
     // 顶级 Tab 是跟手切换的 Pager、子页面是覆盖层，这里统一按当前页面名成对上报开始/结束。
     val currentPage = subPage ?: tabs.getOrNull(pagerState.settledPage) ?: Routes.HOME
+    LaunchedEffect(app.luoxianlv.ensemble.EnsembleNavigation.requested) {
+        if (app.luoxianlv.ensemble.EnsembleNavigation.requested) {
+            subPage = Routes.ENSEMBLE
+            app.luoxianlv.ensemble.EnsembleNavigation.requested = false
+        }
+    }
     androidx.compose.runtime.DisposableEffect(currentPage) {
         Analytics.pageStart(currentPage)
         onDispose { Analytics.pageEnd(currentPage) }
@@ -231,6 +238,7 @@ fun AppNavHost(
                                         )
                                     },
                                     onSettings = { goTab(Routes.SETTINGS) },
+                                    onEnsemble = { subPage = Routes.ENSEMBLE },
                                     onInputMode = {
                                         navigation.startFloatingAfterSetup = true
                                         subPage = Routes.INPUT_MODE
@@ -360,6 +368,16 @@ fun AppNavHost(
 
                                     Routes.EXPERIMENTAL -> {
                                         ExperimentalSettingsScreen(onBack = { subPage = null })
+                                    }
+                                    Routes.ENSEMBLE -> {
+                                        app.luoxianlv.ensemble.EnsembleScreen(
+                                            onBack = { subPage = null },
+                                            onLogin = { subPage = Routes.LOGIN },
+                                            onInputSetup = {
+                                                navigation.startFloatingAfterSetup = true
+                                                subPage = Routes.INPUT_MODE
+                                            },
+                                        )
                                     }
 
                                     Routes.INPUT_MODE -> {

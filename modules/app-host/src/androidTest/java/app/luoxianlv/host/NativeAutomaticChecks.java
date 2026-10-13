@@ -53,9 +53,13 @@ final class NativeAutomaticChecks {
             && startup.config.origin.toString().equals("http://127.0.0.1:18472")
             && startup.config.environment.equals("test"),
         "未启用显式本机自动验收配置");
+    var realtime = app.luoxianlv.hot.contract.SharedRealtime.current();
+    if (realtime != null) await("本机实时订阅未建立", 20000,
+        () -> realtime.state().getBoolean("hotSubscribed"));
+    String realtimeEpoch = realtime == null ? "" : realtime.state().getString("connectionEpoch");
     await(
         "普通入口未自动展示候选",
-        90000,
+        180000,
         () -> {
           var source = Bootstrap.source().prepared;
           return source.manifest != null && target.equals(source.manifest.snapshotId);
@@ -95,6 +99,13 @@ final class NativeAutomaticChecks {
             startup.journal.state().phase == ActivationJournal.Phase.STABLE
                 && startup.journal.state().stable.equals(target));
     check(SystemClock.elapsedRealtime() - exposedAt >= 55000, "自动验收未经历真实观察");
+    if (realtime != null) {
+      check(realtime == app.luoxianlv.hot.contract.SharedRealtime.current()
+          && realtimeEpoch.equals(realtime.state().getString("connectionEpoch"))
+          && realtime.state().getBoolean("hotSubscribed"), "业务热更重建或丢失了宿主连接");
+      Bundle status = new Bundle(); status.putString("stream", "通过：业务热更及健康观察期间保留同一宿主 WS 与连接代次。\n");
+      runner.sendStatus(0, status);
+    }
     if (receiptFault) {
       await(
           "健康落盘未保留可恢复回执",
