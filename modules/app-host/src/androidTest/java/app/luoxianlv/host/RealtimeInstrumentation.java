@@ -102,7 +102,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
           @Override public void message(String topic, String kind, String json) {
             backgroundThread.compareAndSet(true, android.os.Looper.myLooper() != android.os.Looper.getMainLooper());
             backgroundNotices.incrementAndGet();
-            if (topic.equals("business")) try { lastNotice.set(new JSONObject(json).getJSONObject("data").getInt("eventId")); } catch (Exception failure) { throw new AssertionError(failure); }
+            if (topic.equals("business")) try { lastNotice.set(new JSONObject(json).getJSONObject("data").getInt("revision")); } catch (Exception failure) { throw new AssertionError(failure); }
           }
         })) {
           new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
@@ -262,7 +262,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
           send(output, epoch, request.getString("messageId"), topic, "result", data);
           if (kind.equals("testNotices")) {
             for (int notice=1; notice<=300;notice++) {
-              send(output,epoch,"notice-"+notice,"business","changed",new JSONObject().put("kind","library").put("eventId",Integer.toString(notice)));
+              send(output,epoch,"notice-"+notice,"business","changed",new JSONObject().put("kind","library").put("revision",Integer.toString(notice)));
               if (notice % 8 == 0) Thread.sleep(10);
             }
             send(output,epoch,"catalog-notice","catalog","changed",new JSONObject().put("versions",new JSONObject().put("versionCode",12345).put("versionName","测试版本").put("updateEnabled",true).put("midiCoreVersion","test-core")));

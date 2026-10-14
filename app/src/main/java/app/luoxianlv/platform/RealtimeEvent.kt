@@ -105,7 +105,7 @@ internal sealed interface RealtimeEvent {
     data class ResourceChanged(
         val identity: RealtimeIdentity,
         val resource: RealtimeResource,
-        val eventId: Long,
+        val revision: Long,
     ) : RealtimeEvent
 }
 
@@ -131,7 +131,7 @@ internal object RealtimeEventFormat {
         val resource =
             RealtimeResource.entries.firstOrNull { it.wire == data.getString("kind") }
                 ?: return null
-        val id = data.getString("eventId").toLong().also { require(it > 0) }
-        return RealtimeEvent.ResourceChanged(state.identity, resource, id)
+        val revision = data.getString("revision").toLong().also { require(it > 0) }
+        return RealtimeEvent.ResourceChanged(state.identity, resource, revision)
     }
 }

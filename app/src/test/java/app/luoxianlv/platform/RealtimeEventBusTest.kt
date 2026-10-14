@@ -42,7 +42,7 @@ class RealtimeEventBusTest {
     private fun frame(
         topic: String = "business",
         epoch: String = "1",
-        data: JSONObject = JSONObject().put("kind", "library").put("eventId", "1"),
+        data: JSONObject = JSONObject().put("kind", "library").put("revision", "1"),
     ) =
         JSONObject()
             .put("protocolVersion", 1)
@@ -84,7 +84,7 @@ class RealtimeEventBusTest {
             RealtimeEventFormat.decode(
                 "business",
                 "changed",
-                frame(data = JSONObject().put("kind", "library").put("eventId", "-1")),
+                frame(data = JSONObject().put("kind", "library").put("revision", "-1")),
                 live,
             )
         }
@@ -149,11 +149,11 @@ class RealtimeEventBusTest {
                     bus.events.collect { event ->
                         if (event is RealtimeEvent.ResourceChanged) {
                             seen.add(event)
-                            if (event.eventId == 1L) {
+                            if (event.revision == 1L) {
                                 entered.complete(Unit)
                                 release.await()
                             }
-                            if (event.eventId == 3L) arrived.complete(Unit)
+                            if (event.revision == 3L) arrived.complete(Unit)
                         }
                     }
                 }
@@ -163,17 +163,17 @@ class RealtimeEventBusTest {
                 source.current.message(
                     "business",
                     "changed",
-                    frame(data = JSONObject().put("kind", "library").put("eventId", "2")),
+                    frame(data = JSONObject().put("kind", "library").put("revision", "2")),
                 )
                 source.current.state(state(account = "two", reset = 1))
                 source.current.message(
                     "business",
                     "changed",
-                    frame(data = JSONObject().put("kind", "library").put("eventId", "3")),
+                    frame(data = JSONObject().put("kind", "library").put("revision", "3")),
                 )
                 release.complete(Unit)
                 withTimeout(5000) { arrived.await() }
-                assertEquals(listOf(1L, 3L), seen.map { it.eventId })
+                assertEquals(listOf(1L, 3L), seen.map { it.revision })
                 assertEquals("two", seen.last().identity.accountId)
             } finally {
                 collector.cancelAndJoin()
@@ -209,7 +209,7 @@ class RealtimeEventBusTest {
                                     data =
                                         JSONObject()
                                             .put("kind", "library")
-                                            .put("eventId", (index + 2).toString())
+                                            .put("revision", (index + 2).toString())
                                 ),
                             )
                         }
@@ -232,5 +232,16 @@ class RealtimeEventBusTest {
                 collector.cancelAndJoin()
             }
         }
+    }
+
+    @Test
+    fun readsServerBusinessNotificationFormat() {
+        val raw =
+            """{"protocolVersion":1,"connectionEpoch":"1","messageId":"business","topic":"business","type":"changed","data":{"kind":"notifications","revision":"42"}}"""
+        val event =
+            RealtimeEventFormat.decode("business", "changed", raw, state())
+                as RealtimeEvent.ResourceChanged
+        assertEquals(RealtimeResource.NOTIFICATIONS, event.resource)
+        assertEquals(42L, event.revision)
     }
 }

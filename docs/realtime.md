@@ -52,6 +52,8 @@ Ktor 使用 CIO。按域名委托 Android `X509TrustManagerExtensions` 验证系
 
 每代业务共用 `RealtimeEvents.bus`，只处理连接状态、`catalog.changed` 和 `business.changed`。统一解析为不可变模型，页面不读取协议 JSON。普通通知通过 Java 桥 `observeEvents` 交付到独立的 `realtime-events` 线程；最多 32 个订阅，每个邮箱最多八个键，同类通知保留最新值。页面慢不会阻塞连接线程，也不会因通知积压断开 WS。
 
+`business.changed` 正文固定为 `{"kind":"library","revision":"42"}`，`revision` 是正整数的十进制字符串；账号身份不出现在正文中。
+
 | 入口 | 用途 |
 | --- | --- |
 | `state: StateFlow<RealtimeState>` | 当前连接、账号作用域和版本快照；晚订阅立即读取 |

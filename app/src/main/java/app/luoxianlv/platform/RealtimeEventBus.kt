@@ -48,7 +48,7 @@ internal class RealtimeEventBus(
                 }
             }
             .map { it.event }
-    private val eventIds = mutableMapOf<RealtimeResource, Long>()
+    private val eventRevisions = mutableMapOf<RealtimeResource, Long>()
     private var revision = 0L
     private var generation = 0L
     private var active = false
@@ -90,7 +90,7 @@ internal class RealtimeEventBus(
             val previous = mutableState.value
             if (previous.identity != next.identity || resynchronize) {
                 resynchronize = false
-                eventIds.clear()
+                eventRevisions.clear()
                 val changed = if (next.identity.accountId.isEmpty()) 0 else ++revision
                 mutableChanges.value =
                     RealtimeInvalidations(next.identity, changed, changed, changed, changed)
@@ -121,8 +121,8 @@ internal class RealtimeEventBus(
                 return
             when (event) {
                 is RealtimeEvent.ResourceChanged -> {
-                    if (event.eventId <= (eventIds[event.resource] ?: 0L)) return
-                    eventIds[event.resource] = event.eventId
+                    if (event.revision <= (eventRevisions[event.resource] ?: 0L)) return
+                    eventRevisions[event.resource] = event.revision
                     mutableChanges.value = mutableChanges.value.changed(event.resource, ++revision)
                 }
                 is RealtimeEvent.VersionsChanged -> {
@@ -153,7 +153,7 @@ internal class RealtimeEventBus(
         synchronized(lock) { closed = true }
         pause()
         synchronized(lock) {
-            eventIds.clear()
+            eventRevisions.clear()
             mutableState.value = RealtimeState()
             mutableChanges.value = RealtimeInvalidations()
         }
