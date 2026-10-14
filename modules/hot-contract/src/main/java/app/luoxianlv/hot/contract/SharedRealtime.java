@@ -43,7 +43,11 @@ public final class SharedRealtime {
     void prepareRun(String runId);
     void stopScheduled();
     AutoCloseable schedule(Bundle plan, Execution execute, Completion completion);
+    /** 主线程状态与合奏控制；普通通知通过 observeEvents 订阅。 */
     AutoCloseable observe(Listener listener);
+    /** 后台普通通知：状态、catalog.changed 和 business.changed；不传合奏控制或查询响应。
+     * 回调只更新内存、不能阻塞；关闭租约后不再交付。旧运行时保留原监听作为兼容入口。 */
+    default AutoCloseable observeEvents(Listener listener) { return observe(listener); }
     /** 同一命令 ID 只能对应同一内容；取消监听不能冒充取消已接受的远端操作。 */
     AutoCloseable send(String id, String topic, String type, String json, Completion completion);
     void account(String accessToken);

@@ -29,6 +29,7 @@ fun AboutContent(
     onCheckUpdate: () -> Unit,
     bottomClearance: Dp = 74.dp,
     scrollState: ScrollState = rememberScrollState(),
+    updateAvailable: Boolean = false,
 ) {
     Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(bottom = bottomClearance)) {
         Row(
@@ -84,7 +85,7 @@ fun AboutContent(
         ) {
             Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
             Text(
-                if (checkingUpdate) "正在检查…" else "检查新版本",
+                if (checkingUpdate) "正在检查…" else if (updateAvailable) "发现新版本" else "检查新版本",
                 modifier = Modifier.padding(start = 6.dp),
             )
         }

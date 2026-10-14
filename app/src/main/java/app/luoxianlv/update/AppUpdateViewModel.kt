@@ -15,6 +15,7 @@ import app.luoxianlv.app.BusinessJobs
 import app.luoxianlv.hot.contract.SharedFiles
 import app.luoxianlv.hot.contract.SharedUpdate
 import app.luoxianlv.platform.BusinessNetwork
+import app.luoxianlv.platform.RealtimeEvents
 import app.luoxianlv.platform.readLimited
 import app.luoxianlv.shared.AppStorage
 import app.luoxianlv.shared.Kv
@@ -27,6 +28,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -47,6 +50,7 @@ data class AppUpdateState(
     val downloadSize: Long = 0,
     val installing: Boolean = false,
     val installedVersionName: String = BuildConfig.VERSION_NAME,
+    val updateHint: Boolean = false,
 )
 
 /** Activity 级更新状态，由前台检查、关于页和唯一弹窗宿主共享。 */
@@ -69,6 +73,21 @@ class AppUpdateViewModel(private val app: Application) : AndroidViewModel(app) {
             }
 
     init {
+        viewModelScope.launch {
+            RealtimeEvents.bus.state
+                .map { it.versions }
+                .distinctUntilChanged()
+                .collect { versions ->
+                    if (versions != null)
+                        _state.update {
+                            it.copy(
+                                updateHint =
+                                    versions.updateEnabled &&
+                                        versions.versionCode > installedVersionCode
+                            )
+                        }
+                }
+        }
         _state.update {
             it.copy(
                 installedVersionName =

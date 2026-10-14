@@ -459,10 +459,14 @@ private fun UpdateAboutScreen(
     val checks =
         remember(appUpdates) { appUpdates.state.map { it.checking }.distinctUntilChanged() }
     val checking by checks.collectAsState(initial = appUpdates.state.value.checking)
+    val hints =
+        remember(appUpdates) { appUpdates.state.map { it.updateHint }.distinctUntilChanged() }
+    val hint by hints.collectAsState(initial = appUpdates.state.value.updateHint)
     AboutScreen(
         onBack = onBack,
         snackbarHostState = snackbarHostState,
         onCheckUpdate = { appUpdates.check(manual = true) },
         checkingUpdate = checking,
+        updateAvailable = hint,
     )
 }

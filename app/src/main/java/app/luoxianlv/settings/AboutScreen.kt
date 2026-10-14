@@ -17,9 +17,17 @@ fun AboutScreen(
     snackbarHostState: SnackbarHostState,
     onCheckUpdate: () -> Unit,
     checkingUpdate: Boolean,
+    updateAvailable: Boolean = false,
     vm: SettingsViewModel = viewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    AboutContent(BuildConfig.VERSION_NAME, checkingUpdate, onBack, onCheckUpdate, NavBarClearance)
+    AboutContent(
+        BuildConfig.VERSION_NAME,
+        checkingUpdate,
+        onBack,
+        onCheckUpdate,
+        NavBarClearance,
+        updateAvailable = updateAvailable,
+    )
     ErrorDialogHost(state.error, vm::dismissError)
 }

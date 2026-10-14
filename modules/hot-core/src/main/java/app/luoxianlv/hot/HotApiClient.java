@@ -16,6 +16,7 @@ public final class HotApiClient {
   public final long hostContract;
   public final long appVersionCode;
   public final String hostIdentity;
+  URI origin() { return origin; }
   private final URI origin;
   private final boolean localTest;
   private boolean registered;
@@ -212,6 +213,10 @@ public final class HotApiClient {
   public synchronized void register(UpdateCancellation cancellation) throws Exception {
     cancellation.check();
     if (registered) return;
+    if (HotRealtimeQueries.registered(this)) {
+      registered = true;
+      return;
+    }
     Map<String, Object> registration =
         JsonWire.fields(
             "installationId",
@@ -429,6 +434,11 @@ public final class HotApiClient {
       boolean authenticated,
       UpdateCancellation cancellation)
       throws Exception {
+    if (authenticated && (route.equals("/check") || route.endsWith("/byte-deltas")
+        || (route.startsWith("/objects/") && route.endsWith("/grant")))) {
+      Response realtime = HotRealtimeQueries.query(this, route, body, cancellation, readTimeout);
+      if (realtime != null) return realtime;
+    }
     // 响应头超时不能重发 POST：服务端可能已完成处理，重新发送还会消耗限频预算。
     return postOnce(route, body, idempotency, authenticated, cancellation);
   }

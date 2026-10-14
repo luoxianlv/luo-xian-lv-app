@@ -33,13 +33,13 @@ internal class BackendClient(
         val epoch = snapshot.epoch
         val token = authorizedToken()
         return try {
-                transport().bytes(url, token, body, limit = limit, readTimeoutMs = 30_000)
+                queryBytes(url, token, body, limit)
             } catch (failure: HttpFailure) {
                 // GET 可在刷新后重放；写请求由业务明确重试，避免重复编译或覆盖房间。
                 if (failure.status != 401) throw failure
                 val refreshed = refresh(snapshot, token)
                 if (body != null) throw HttpFailure(401, "登录已刷新，请重新操作")
-                transport().bytes(url, refreshed.accessToken, limit = limit, readTimeoutMs = 30_000)
+                queryBytes(url, refreshed.accessToken, null, limit)
             }
             .also {
                 if (sessionStore.snapshot().epoch != epoch) throw CancellationException("登录账号已改变")
@@ -63,16 +63,29 @@ internal class BackendClient(
         )
             token = refresh(snapshot).accessToken
         return try {
-                transport().bytes(url, token)
+                queryBytes(url, token)
             } catch (failure: HttpFailure) {
                 if (failure.status != 401 || !authenticated) throw failure
                 val refreshed = refresh(snapshot, token)
-                transport().bytes(url, refreshed.accessToken)
+                queryBytes(url, refreshed.accessToken)
             }
             .also {
                 if (authenticated && sessionStore.snapshot().epoch != snapshot.epoch)
                     throw CancellationException("登录账号已改变")
             }
+    }
+
+    private suspend fun queryBytes(
+        url: String,
+        token: String?,
+        body: String? = null,
+        limit: Int = 8 * 1024 * 1024,
+    ): ByteArray {
+        if (body == null)
+            RealtimeQueries.get(baseUrl, url, token, limit)?.let {
+                return it
+            }
+        return transport().bytes(url, token, body, limit = limit, readTimeoutMs = 30_000)
     }
 
     private suspend fun refresh(

@@ -7,9 +7,67 @@ import java.net.Socket
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 
 /** 仅 Debug：在真实 Android 引擎上验证回环 IO，不使用用户账号或外网。 */
 object NetworkProbe {
+    @JvmStatic
+    fun verifyRealtimeEvents(completion: SharedRealtime.Completion) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        scope.launch {
+            try {
+                val bridge = checkNotNull(SharedRealtime.current())
+                RealtimeEventBus.fromBridge(bridge).use { bus ->
+                    bus.resume()
+                    withTimeout(5000) {
+                        bus.state.first { it.connected && it.identity.accountId.isNotEmpty() }
+                    }
+                    val before = bus.invalidations.value.library
+                    bridge.send("bus-notices", "ensemble", "testNotices", "{}") { _, _ -> }
+                    withTimeout(5000) { bus.invalidations.first { it.library > before } }
+                    withTimeout(5000) { bus.state.first { it.versions?.versionCode == 12345L } }
+                    bus.pause()
+                    val paused = bus.state.value
+                    bridge.send("bus-notices-paused", "ensemble", "testNotices", "{}") { _, _ -> }
+                    delay(150)
+                    check(bus.state.value == paused)
+                    val pausedRevision = bus.invalidations.value.library
+                    bus.resume()
+                    withTimeout(5000) { bus.invalidations.first { it.library > pausedRevision } }
+                    withTimeout(5000) { bus.state.first { it.versions?.versionCode == 12345L } }
+                }
+                completion.complete(true, "后台 WS 通知、类型化版本快照、资源刷新与订阅交接通过")
+            } catch (failure: Throwable) {
+                completion.complete(false, failure.toString())
+            } finally {
+                scope.cancel()
+            }
+        }
+    }
+
+    @JvmStatic
+    fun verifyRealtime(origin: String, completion: SharedRealtime.Completion) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        scope.launch {
+            try {
+                val bytes =
+                    RealtimeQueries.get(origin, "$origin/api/scores/latest", null, 256 * 1024)
+                check(
+                    bytes != null &&
+                        org.json
+                            .JSONObject(bytes.toString(Charsets.UTF_8))
+                            .getString("说明")
+                            .length == 18000
+                )
+                completion.complete(true, "WS 查询分片 UTF-8 完整")
+            } catch (failure: Throwable) {
+                completion.complete(false, failure.toString())
+            } finally {
+                scope.cancel()
+            }
+        }
+    }
+
     /** 显式 opt-in：读取本项目公开健康接口，不发送账号、Cookie 或安装凭据。 */
     @JvmStatic
     fun verifyTls(fixture: ByteArray, completion: SharedRealtime.Completion) {

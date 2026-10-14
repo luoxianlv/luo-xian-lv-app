@@ -11,8 +11,10 @@ import android.os.SystemClock
 import app.luoxianlv.hot.contract.SharedRealtime
 import java.net.URI
 import java.nio.ByteBuffer
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -34,6 +36,16 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     private val transportCleanup = Executors.newSingleThreadExecutor { task ->
         Thread(task, "realtime-close").apply { isDaemon = true }
     }
+    private val eventDelivery =
+        ThreadPoolExecutor(
+                1,
+                1,
+                30,
+                TimeUnit.SECONDS,
+                ArrayBlockingQueue(32),
+                { task -> Thread(task, "realtime-events").apply { isDaemon = true } },
+            )
+            .apply { allowCoreThreadTimeOut(true) }
     private val policy = ConnectionPolicy()
     private val clock = EnsembleClock()
     private val timeline = EnsembleTimeline(clock)
@@ -68,6 +80,10 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     private var hotReady = false
     private var hasHot = false
     private var hasEnsemble = false
+    private var hasQueries = false
+    private var hasHotQueries = false
+    private var catalog = ""
+    private var installationId = ""
     private var accountRejected = false
     private var hotDeadline = 0L
     private var revision = "0"
@@ -98,6 +114,11 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         val ensemble: Boolean = false,
         val accountRejected: Boolean = false,
         val accountResetEpoch: Long = 0,
+        val queries: Boolean = false,
+        val hotQueries: Boolean = false,
+        val catalog: String = "",
+        val installationId: String = "",
+        val apiOrigin: String = "",
     ) {
         fun bundle() =
             Bundle().apply {
@@ -111,6 +132,11 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 putBoolean("accountRefreshRequired", accountRejected)
                 putLong("accountResetEpoch", accountResetEpoch)
                 putBoolean("clockReady", clockReady)
+                putBoolean("queriesReady", queries)
+                putBoolean("hotQueriesReady", hotQueries)
+                putString("catalog", catalog)
+                putString("installationId", installationId)
+                putString("apiOrigin", apiOrigin)
             }
     }
 
@@ -282,7 +308,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             }
             if (accountRequest.isNotEmpty() && now >= accountDeadline) clearAccountRequest(30_000)
             if (
-                hasEnsemble &&
+                (hasEnsemble || hasQueries) &&
                     !accountRejected &&
                     account.isNotEmpty() &&
                     accountRequest.isEmpty() &&
@@ -388,6 +414,12 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 (0 until capabilities.length()).any { capabilities.getString(it) == "hot-hints-v1" }
             hasEnsemble =
                 (0 until capabilities.length()).any { capabilities.getString(it) == "ensemble-v1" }
+            hasQueries =
+                (0 until capabilities.length()).any { capabilities.getString(it) == "queries-v1" }
+            hasHotQueries =
+                (0 until capabilities.length()).any {
+                    capabilities.getString(it) == "hot-queries-v1"
+                }
             policy.ready(attempt, now())
             lastMessage = now()
             nextPing = 0
@@ -413,6 +445,24 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                     RealtimeWire.positive(data.getString("sentUs")),
                     data.optBoolean("clockHealthy", false),
                 )
+            return
+        }
+        if (topic == "catalog" && type == "changed") {
+            data.optJSONObject("versions")?.let { catalog = it.toString() }
+            observers.toList().forEach { it.message(topic, type, text, "versions") }
+            publish()
+            return
+        }
+        if (topic == "query" && type == "chunk") {
+            val request =
+                pending[id]?.takeIf { it.topic == "query" && !it.cancelled.get() } ?: return
+            val chunks = request.chunks ?: QueryChunks().also { request.chunks = it }
+            val result = chunks.accept(data)
+            check(wire(id, "query", "continue", JSONObject().put("offset", chunks.offset)))
+            if (result != null) {
+                pending.remove(id)
+                complete(request, true, result)
+            }
             return
         }
         if (topic == "hot") {
@@ -449,7 +499,8 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                     .put("clientReceivedUs", receivedUs.toString())
                 complete(it, type == "result", data.toString())
             }
-        if (topic == "ensemble") observers.toList().forEach { it.message(topic, type, text) }
+        if (topic in setOf("ensemble", "business"))
+            observers.toList().forEach { it.message(topic, type, text, data.optString("kind")) }
         publish()
     }
 
@@ -480,6 +531,10 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         hotReady = false
         hasHot = false
         hasEnsemble = false
+        hasQueries = false
+        hasHotQueries = false
+        catalog = ""
+        installationId = ""
         epoch = ""
         accountId = ""
         ping = null
@@ -552,6 +607,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         val cancelled = AtomicBoolean()
         var sentUs = 0L
         var deadline = 0L
+        var chunks: QueryChunks? = null
     }
 
     override fun send(
@@ -570,12 +626,13 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                             !id.startsWith("ping:") &&
                             !id.startsWith("account:") &&
                             id != "subscribe-hot" &&
-                            topic == "ensemble" &&
+                            (topic == "ensemble" || (topic == "query" && type == "request")) &&
                             type.length in 1..64
                     )
                     require(
-                        hasEnsemble &&
-                            accountId.isNotEmpty() &&
+                        (if (topic == "query")
+                            hasQueries && pending.values.none { it.topic == "query" }
+                        else hasEnsemble && accountId.isNotEmpty()) &&
                             pending.size < 32 &&
                             !pending.containsKey(id)
                     )
@@ -594,7 +651,10 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             }
         )
             complete(request, false, "{\"message\":\"连接任务已停止\"}")
-        return AutoCloseable { request.cancelled.set(true) }
+        return AutoCloseable {
+            if (request.cancelled.compareAndSet(false, true) && topic == "query")
+                post { if (pending.remove(id) != null) wire(id, "query", "cancel", JSONObject()) }
+        }
     }
 
     private fun complete(request: Pending, success: Boolean, json: String) {
@@ -769,17 +829,34 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 hasEnsemble,
                 accountRejected,
                 accountResetEpoch,
+                policy.connected && hasQueries,
+                policy.connected && hasHotQueries,
+                catalog,
+                installationId,
+                (if (uri.scheme == "wss") "https" else "http") + "://" + uri.rawAuthority,
             )
         if (next == snapshot) return
         snapshot = next
         observers.toList().forEach { it.changed() }
     }
 
-    private inner class Observer(val listener: SharedRealtime.Listener) {
+    private inner class Observer(val listener: SharedRealtime.Listener, background: Boolean) {
         val closed = AtomicBoolean()
         val stateQueued = AtomicBoolean()
+        private val mailbox = if (background) NotificationMailbox(eventDelivery) else null
+        private var deliveredState: State? = null
+
+        private fun backgroundState(current: State) {
+            if (closed.get() || deliveredState == current) return
+            listener.changed(current.bundle())
+            deliveredState = current
+        }
 
         fun changed() {
+            mailbox?.let {
+                it.offer("state") { backgroundState(snapshot) }
+                return
+            }
             if (!stateQueued.compareAndSet(false, true)) return
             deliver {
                 stateQueued.set(false)
@@ -787,24 +864,60 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             }
         }
 
-        fun message(topic: String, type: String, json: String) {
+        fun message(topic: String, type: String, json: String, kind: String) {
+            mailbox?.let {
+                if (type != "changed" || topic !in setOf("catalog", "business")) return
+                if (
+                    topic == "business" &&
+                        kind !in setOf("library", "interactions", "notifications", "profile")
+                )
+                    return
+                val sourceEpoch = epoch
+                val sourceAccount = accountId
+                val sourceReset = accountResetEpoch
+                it.offer("$topic:$kind") {
+                    val current = snapshot
+                    if (
+                        !closed.get() &&
+                            current.epoch == sourceEpoch &&
+                            (topic != "business" ||
+                                (sourceAccount.isNotEmpty() &&
+                                    current.account == sourceAccount &&
+                                    current.accountResetEpoch == sourceReset))
+                    ) {
+                        backgroundState(current)
+                        listener.message(topic, type, json)
+                    }
+                }
+                return
+            }
+            if (topic != "ensemble") return
             deliver { if (!closed.get()) listener.message(topic, type, json) }
+        }
+
+        fun close() {
+            closed.set(true)
+            mailbox?.close()
         }
     }
 
-    override fun observe(listener: SharedRealtime.Listener): AutoCloseable {
-        val observer = Observer(listener)
+    override fun observe(listener: SharedRealtime.Listener) = observe(listener, false)
+
+    override fun observeEvents(listener: SharedRealtime.Listener) = observe(listener, true)
+
+    private fun observe(listener: SharedRealtime.Listener, background: Boolean): AutoCloseable {
+        val observer = Observer(listener, background)
         if (
             !post {
                 if (!observer.closed.get() && observers.size < 32) {
                     observers.add(observer)
                     observer.changed()
-                } else observer.closed.set(true)
+                } else observer.close()
             }
         )
-            observer.closed.set(true)
+            observer.close()
         return AutoCloseable {
-            observer.closed.set(true)
+            observer.close()
             post { observers.remove(observer) }
         }
     }
@@ -820,8 +933,9 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             disconnect()
             busy = false
             account = ""
-            observers.forEach { it.closed.set(true) }
+            observers.forEach { it.close() }
             observers.clear()
+            eventDelivery.shutdownNow()
             transportCleanup.shutdown()
             actor.shutdownNow()
         }

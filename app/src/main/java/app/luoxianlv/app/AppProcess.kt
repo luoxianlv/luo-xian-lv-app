@@ -10,6 +10,7 @@ import app.luoxianlv.hot.contract.HostDiagnostics
 import app.luoxianlv.hot.contract.ProcessHooks
 import app.luoxianlv.hot.contract.ProcessOnce
 import app.luoxianlv.library.ScoreWork
+import app.luoxianlv.platform.RealtimeEvents
 import app.luoxianlv.shared.AppStorage
 import app.luoxianlv.wallpaper.PreparedWallpaper
 import app.luoxianlv.wallpaper.WallpaperPreview
@@ -39,6 +40,7 @@ class AppProcess(private val context: Context) : ProcessHooks {
             )
         // Debug 实现为空；Release 正式统计仍须等用户同意协议后触发。
         Analytics.preInitialize(context)
+        RealtimeEvents.bus.resume()
         app.luoxianlv.ensemble.EnsembleSession.open(context)
         BusinessJobs.thread("realtime-account") {
             app.luoxianlv.platform.SessionStore(context).publishRealtime()
@@ -59,6 +61,7 @@ class AppProcess(private val context: Context) : ProcessHooks {
     override fun close() {
         if (closed) return
         closed = true
+        RealtimeEvents.bus.close()
         app.luoxianlv.ensemble.EnsembleSession.close()
         OfficialRendererGate.retire()
         BusinessJobs.retire()
@@ -79,12 +82,14 @@ class AppProcess(private val context: Context) : ProcessHooks {
 
     override fun quiesce(): Boolean {
         if (!canReplace() || !BusinessJobs.gate.freeze()) return false
+        RealtimeEvents.bus.pause()
         app.luoxianlv.ensemble.EnsembleSession.suspendWork()
         return true
     }
 
     override fun resumeWork() {
         BusinessJobs.gate.resume()
+        RealtimeEvents.bus.resume()
         app.luoxianlv.ensemble.EnsembleSession.resumeWork()
     }
 

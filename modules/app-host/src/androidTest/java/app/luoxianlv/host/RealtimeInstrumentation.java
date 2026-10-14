@@ -88,6 +88,58 @@ public final class RealtimeInstrumentation extends Instrumentation {
       var accepted = new AtomicBoolean();
       engine.send("test-command", "ensemble", "snapshot", "{}", (ok, json) -> { accepted.set(ok); result.countDown(); });
       require(result.await(10, TimeUnit.SECONDS) && accepted.get(), "命令确认失败");
+      await("WS 查询能力未协商", () -> selected.state().getBoolean("queriesReady") && selected.state().getBoolean("hotQueriesReady"));
+      try (AutoCloseable installed = SharedRealtime.connect(selected)) {
+        var backgroundNotices = new AtomicInteger();
+        var backgroundThread = new AtomicBoolean(true);
+        var lastNotice = new AtomicInteger();
+        var releaseMain = new CountDownLatch(1);
+        var mainBlocked = new CountDownLatch(1);
+        try (AutoCloseable background = selected.observeEvents(new SharedRealtime.Listener() {
+          @Override public void changed(Bundle value) {
+            backgroundThread.compareAndSet(true, android.os.Looper.myLooper() != android.os.Looper.getMainLooper());
+          }
+          @Override public void message(String topic, String kind, String json) {
+            backgroundThread.compareAndSet(true, android.os.Looper.myLooper() != android.os.Looper.getMainLooper());
+            backgroundNotices.incrementAndGet();
+            if (topic.equals("business")) try { lastNotice.set(new JSONObject(json).getJSONObject("data").getInt("eventId")); } catch (Exception failure) { throw new AssertionError(failure); }
+          }
+        })) {
+          new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            mainBlocked.countDown();
+            try { releaseMain.await(3, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+          });
+          require(mainBlocked.await(2,TimeUnit.SECONDS),"主线程阻塞夹具未启动");
+          selected.send("background-notices", "ensemble", "testNotices", "{}", (ok,json)->{});
+          long noticeDeadline=SystemClock.elapsedRealtime()+2000;
+          while(lastNotice.get()!=300 && SystemClock.elapsedRealtime()<noticeDeadline) SystemClock.sleep(10);
+          require(lastNotice.get()==300 && selected.state().getBoolean("connected"),"页面忙碌阻断后台通知或使 WS 断线");
+          require(backgroundThread.get(),"普通通知仍经主线程交付");
+          releaseMain.countDown();
+        } finally { releaseMain.countDown(); }
+        runOnMainSync(()->{});
+        int closedNotices=backgroundNotices.get();
+        selected.send("closed-background-notices", "ensemble", "testNotices", "{}", (ok,json)->{});
+        SystemClock.sleep(200);
+        require(backgroundNotices.get()==closedNotices,"关闭后台监听仍收到通知");
+        var busDone = new CountDownLatch(1);
+        var busOk = new AtomicBoolean();
+        Class.forName("app.luoxianlv.platform.NetworkProbe", true, Bootstrap.source().prepared.classLoader())
+            .getMethod("verifyRealtimeEvents",SharedRealtime.Completion.class)
+            .invoke(null,(SharedRealtime.Completion)(ok,json)->{busOk.set(ok);busDone.countDown();});
+        require(busDone.await(15,TimeUnit.SECONDS) && busOk.get(),"真实业务事件总线验证失败");
+        var queryDone = new CountDownLatch(1);
+        var queryOk = new AtomicBoolean();
+        Class.forName("app.luoxianlv.platform.NetworkProbe", true, Bootstrap.source().prepared.classLoader())
+            .getMethod("verifyRealtime",String.class,SharedRealtime.Completion.class)
+            .invoke(null,"http://127.0.0.1:"+peer.server.getLocalPort(),(SharedRealtime.Completion)(ok,json)->{queryOk.set(ok);queryDone.countDown();});
+        require(queryDone.await(15,TimeUnit.SECONDS) && queryOk.get(),"真实业务 WS 查询分片失败");
+        var identity = app.luoxianlv.hot.InstallationIdentity.open(new File(getTargetContext().getCacheDir(),"realtime-query-test-"+java.util.UUID.randomUUID()),"app.luoxianlv.debug","test");
+        var api = new app.luoxianlv.hot.HotApiClient(new URI("http://127.0.0.1:"+peer.server.getLocalPort()),identity,1,"b".repeat(64),true);
+        var registered = app.luoxianlv.hot.HotApiClient.class.getDeclaredField("registered");registered.setAccessible(true);registered.setBoolean(api,true);
+        var decision = api.check("",1);
+        require(decision.kind.equals("none") && peer.queries.get()>=2,"热更查询未经过共享 WS");
+      }
       String firstEpoch = engine.state().getString("connectionEpoch");
       peer.drop();
       await("断开后未恢复热更订阅", () -> hot.get() && selected.state().getBoolean("connected")
@@ -126,7 +178,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
       engine.close(); engine = null;
       await("关闭未释放 Socket", () -> peer.live.get() == 0);
       require(Bootstrap.source().prepared.classLoader().getParent() == runtime, "实时连接改变业务运行时");
-      report.putString("stream", "通过：纯 Java 宿主、Kotlin 运行时连接、热更订阅、校时、授权、命令确认、重连、维护错峰、空闲房间后台休眠及恢复、监听释放及 Socket 关闭。\n");
+      report.putString("stream", "通过：纯 Java 宿主、Kotlin 运行时连接、热更订阅、校时、授权、后台事件总线（主线程忙碌仍交付、不导致断线、关闭与交接）、业务查询分片、热更 WS 查询、命令确认、重连、维护错峰、空闲房间后台休眠及恢复、监听释放及 Socket 关闭。\n");
       success = true;
     } catch (Throwable failure) {
       report.putString("stream", "失败：" + android.util.Log.getStackTraceString(failure));
@@ -139,6 +191,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
 
   static final class Peer implements AutoCloseable {
     final ServerSocket server;
+    final AtomicInteger queries = new AtomicInteger();
     final AtomicInteger live = new AtomicInteger(), epochs = new AtomicInteger(), authorized = new AtomicInteger(), cleared = new AtomicInteger();
     final ExecutorService worker = Executors.newFixedThreadPool(3);
     volatile Socket active;
@@ -174,11 +227,32 @@ public final class RealtimeInstrumentation extends Instrumentation {
         output.flush();
         String epoch = Integer.toString(epochs.incrementAndGet());
         send(output, epoch, "hello", "system", "hello", new JSONObject().put("clockEpoch", "test-clock")
-            .put("capabilities", new org.json.JSONArray().put("hot-hints-v1").put("ensemble-v1")));
+            .put("capabilities", new org.json.JSONArray().put("hot-hints-v1").put("ensemble-v1").put("queries-v1").put("hot-queries-v1")));
+        byte[] queryBody=null;String queryId="";int querySent=0;long queryTime=0;
         while (true) {
           String text = read(input); if (text == null) return;
           JSONObject request = new JSONObject(text), data = new JSONObject();
           String topic = request.getString("topic"), kind = request.getString("type");
+          if (topic.equals("query")) {
+            if(kind.equals("cancel")){queryBody=null;continue;}
+            if(kind.equals("request")) {
+              queries.incrementAndGet();queryId=request.getString("messageId");querySent=0;queryTime=System.currentTimeMillis()/1000;
+              queryBody=(request.getJSONObject("data").getString("path").startsWith("/api/hot/")
+                  ? "{\"decision\":\"none\",\"channelRevision\":0}"
+                  : new JSONObject().put("说明","落弦律".repeat(6000)).toString()).getBytes(StandardCharsets.UTF_8);
+            }
+            if(queryBody==null)continue;
+            int ack=kind.equals("continue")?request.getJSONObject("data").getInt("offset"):0;
+            if(ack==queryBody.length){queryBody=null;continue;}
+            while(querySent<queryBody.length && querySent-ack<16384) {
+              int start=querySent;querySent=Math.min(querySent+8192,queryBody.length);
+              send(output,epoch,queryId,"query","chunk",new JSONObject().put("status",200)
+                  .put("time",Long.toString(queryTime)).put("retryAfterMillis",0)
+                  .put("offset",start).put("total",queryBody.length).put("done",querySent==queryBody.length)
+                  .put("bytes",Base64.getEncoder().encodeToString(java.util.Arrays.copyOfRange(queryBody,start,querySent))));
+            }
+            continue;
+          }
           if (topic.equals("system")) {
             String time = Long.toString(SystemClock.elapsedRealtimeNanos() / 1000 + 1_000_000);
             data.put("receivedUs", time).put("sentUs", time).put("clockEpoch", "test-clock").put("clockHealthy", true);
@@ -186,6 +260,13 @@ public final class RealtimeInstrumentation extends Instrumentation {
           else if (topic.equals("account") && kind.equals("authorize")) {authorized.incrementAndGet();data.put("accountId", "test-account");}
           else if (topic.equals("account") && kind.equals("clear")) cleared.incrementAndGet();
           send(output, epoch, request.getString("messageId"), topic, "result", data);
+          if (kind.equals("testNotices")) {
+            for (int notice=1; notice<=300;notice++) {
+              send(output,epoch,"notice-"+notice,"business","changed",new JSONObject().put("kind","library").put("eventId",Integer.toString(notice)));
+              if (notice % 8 == 0) Thread.sleep(10);
+            }
+            send(output,epoch,"catalog-notice","catalog","changed",new JSONObject().put("versions",new JSONObject().put("versionCode",12345).put("versionName","测试版本").put("updateEnabled",true).put("midiCoreVersion","test-core")));
+          }
           if (kind.equals("testMaintenance")) {
             send(output, epoch, "maintenance", "system", "maintenance", new JSONObject().put("retryAfterMs", 5000));
             return;

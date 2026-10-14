@@ -26,6 +26,11 @@ public final class StrictJson {
     return parse(raw, 5 * MAX_BYTES);
   }
 
+  /** WS 信封多一层字符串转义；内层热更正文仍使用原来的 5 MiB 限制。 */
+  static Obj queryEnvelope(byte[] raw) {
+    return parse(raw, 10 * MAX_BYTES + 1024);
+  }
+
   private static Obj parse(byte[] raw, int limit) {
     require(raw.length > 0 && raw.length <= limit, "JSON 大小超限");
     String text;
