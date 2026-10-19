@@ -11,11 +11,26 @@ import org.json.JSONObject;
 
 /** 宿主独立鉴权通道；业务运行时不可用时仍能恢复热更订阅。 */
 public final class RealtimeApi {
+  enum Stage {
+    REGISTER("register"), TICKET("ticket"), ACCOUNT_GRANT("account-grant");
+    final String label;
+    Stage(String label) { this.label = label; }
+  }
+  enum FailureKind {
+    HTTP("http"), TRANSPORT("transport"), PARSE("parse"), VALIDATION("validation");
+    final String label;
+    FailureKind(String label) { this.label = label; }
+  }
   public static final class Failure extends IOException {
+    final Stage stage;
+    final FailureKind kind;
+    /** 实际收到的 HTTP 状态；尚未收到响应时为 0。 */
     public final int status;
     public final long retryAfter;
-    Failure(int status, long retryAfter) {
-      super("实时请求失败（HTTP " + status + "）");
+    Failure(Stage stage, FailureKind kind, int status, long retryAfter, Exception cause) {
+      super("实时授权请求失败", cause);
+      this.stage = stage;
+      this.kind = kind;
       this.status = status;
       this.retryAfter = retryAfter;
     }
@@ -71,13 +86,23 @@ public final class RealtimeApi {
   }
   private String ticket(Request request, boolean retried) throws Exception {
     if (!registered) {
-      JSONObject response = post(request, "/installations", identity.registration(hostContract, hostIdentity, versionCode), null, false);
-      if (!identity.id.equals(response.getString("installationId")))
-        throw new IOException("安装登记身份不一致");
+      byte[] body;
+      try {
+        body = identity.registration(hostContract, hostIdentity, versionCode);
+      } catch (Exception invalid) {
+        throw new Failure(Stage.REGISTER, FailureKind.VALIDATION, 0, 1000, invalid);
+      }
+      JSONObject response = post(request, "/installations", body, null, false);
+      try {
+        if (!identity.id.equals(response.getString("installationId")))
+          throw new IOException("安装登记身份不一致");
+      } catch (Exception invalid) {
+        throw new Failure(Stage.REGISTER, FailureKind.VALIDATION, 200, 1000, invalid);
+      }
       registered = true;
     }
     try {
-      return checkedSecret(post(request, "/tickets", "{}".getBytes(StandardCharsets.UTF_8), null, true), "ticket");
+      return checkedSecret(post(request, "/tickets", "{}".getBytes(StandardCharsets.UTF_8), null, true), "ticket", Stage.TICKET);
     } catch (Failure denied) {
       if (denied.status == 401 && !retried) {
         registered = false;
@@ -90,19 +115,35 @@ public final class RealtimeApi {
   public String accountGrant(Request request, String accessToken, String epoch) throws Exception {
     byte[] body = new JSONObject().put("installationId", identity.id)
         .put("connectionEpoch", epoch).toString().getBytes(StandardCharsets.UTF_8);
-    return checkedSecret(post(request, "/account-grants", body, accessToken, true), "grant");
+    return checkedSecret(post(request, "/account-grants", body, accessToken, true), "grant", Stage.ACCOUNT_GRANT);
   }
 
-  private String checkedSecret(JSONObject value, String name) throws Exception {
-    String secret = value.getString(name);
-    if (!secret.matches("[0-9a-f]{64}")) throw new IOException("连接授权资料无效");
-    return secret;
+  private String checkedSecret(JSONObject value, String name, Stage stage) throws Exception {
+    try {
+      String secret = value.getString(name);
+      if (!secret.matches("[0-9a-f]{64}")) throw new IOException("连接授权资料无效");
+      return secret;
+    } catch (Exception invalid) {
+      throw new Failure(stage, FailureKind.VALIDATION, 200, 1000, invalid);
+    }
+  }
+
+  private Stage stage(String path) {
+    return switch (path) {
+      case "/installations" -> Stage.REGISTER;
+      case "/tickets" -> Stage.TICKET;
+      case "/account-grants" -> Stage.ACCOUNT_GRANT;
+      default -> throw new IllegalArgumentException("实时授权路径无效");
+    };
   }
 
   private JSONObject post(Request request, String path, byte[] body, String account, boolean authorize) throws Exception {
-    if (Thread.currentThread().isInterrupted()) throw new IOException("实时请求已取消");
-    HttpURLConnection connection = (HttpURLConnection) origin.resolve("/api/realtime/v1" + path).toURL().openConnection();
+    Stage stage = stage(path);
+    int status = 0;
+    HttpURLConnection connection = null;
     try {
+      if (Thread.currentThread().isInterrupted()) throw new IOException("实时请求已取消");
+      connection = (HttpURLConnection) origin.resolve("/api/realtime/v1" + path).toURL().openConnection();
       request.attach(connection);
       connection.setInstanceFollowRedirects(false);
       connection.setConnectTimeout(8000);
@@ -115,13 +156,13 @@ public final class RealtimeApi {
       if (account != null) connection.setRequestProperty("Authorization", "Bearer " + account);
       connection.setFixedLengthStreamingMode(body.length);
       try (var output = connection.getOutputStream()) { output.write(body); }
-      int status = connection.getResponseCode();
+      status = connection.getResponseCode();
       if (status != 200) {
         long retry = 0;
         try { retry = Math.min(3600, Math.max(0, Long.parseLong(connection.getHeaderField("Retry-After")))) * 1000; }
         catch (RuntimeException ignored) {}
         if (status == 404 || status == 503) retry = Math.max(retry, 60_000);
-        throw new Failure(status, retry);
+        throw new Failure(stage, FailureKind.HTTP, status, retry, null);
       }
       try (InputStream input = connection.getInputStream()) {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -131,11 +172,21 @@ public final class RealtimeApi {
           if (Thread.currentThread().isInterrupted()) throw new IOException("实时请求已取消");
           output.write(buffer, 0, count);
         }
-        return new JSONObject(output.toString(StandardCharsets.UTF_8.name()));
+        try {
+          return new JSONObject(output.toString(StandardCharsets.UTF_8.name()));
+        } catch (Exception invalid) {
+          throw new Failure(stage, FailureKind.PARSE, status, 1000, invalid);
+        }
       }
+    } catch (Failure failure) {
+      throw failure;
+    } catch (Exception failure) {
+      throw new Failure(stage, FailureKind.TRANSPORT, status, 1000, failure);
     } finally {
-      connection.disconnect();
-      request.detach(connection);
+      if (connection != null) {
+        connection.disconnect();
+        request.detach(connection);
+      }
     }
   }
 

@@ -85,6 +85,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     private var catalog = ""
     private var installationId = ""
     private var accountRejected = false
+    private var serviceUnavailable = false
     private var hotDeadline = 0L
     private var revision = "0"
     private var trust = "0"
@@ -119,6 +120,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         val catalog: String = "",
         val installationId: String = "",
         val apiOrigin: String = "",
+        val serviceUnavailable: Boolean = false,
     ) {
         fun bundle() =
             Bundle().apply {
@@ -137,6 +139,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 putString("catalog", catalog)
                 putString("installationId", installationId)
                 putString("apiOrigin", apiOrigin)
+                putBoolean("serviceUnavailable", serviceUnavailable)
             }
     }
 
@@ -219,9 +222,19 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     private fun guarded(work: () -> Unit) {
         try {
             work()
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
+            logFailure("protocol", failure)
             fail(policy.generation, 30_000)
         }
+    }
+
+    private fun logFailure(stage: String, failure: Exception) {
+        // 只保留异常类型，不输出服务端正文、URL、票据或异常消息。
+        val categories =
+            generateSequence<Throwable>(failure) { it.cause }
+                .take(4)
+                .joinToString("/") { it.javaClass.simpleName }
+        android.util.Log.w("LuoxianlvRealtime", "stage=$stage category=$categories")
     }
 
     private fun deliver(work: () -> Unit) {
@@ -276,6 +289,8 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 post {
                     if (policy.current(attempt)) {
                         ticket = null
+                        if (status == 404) serviceUnavailable = true
+                        else if (status in setOf(401, 403, 409)) serviceUnavailable = false
                         if (status != 0 || secret.isEmpty())
                             fail(attempt, retry, status in setOf(401, 403, 409))
                         else connect(attempt, secret)
@@ -381,10 +396,15 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 }
 
                 override fun onClose(code: Int, reason: String, remote: Boolean) {
+                    android.util.Log.w(
+                        "LuoxianlvRealtime",
+                        "stage=websocket-close code=$code remote=$remote",
+                    )
                     post { fail(attempt) }
                 }
 
                 override fun onError(error: Exception) {
+                    logFailure("websocket", error)
                     closeTransport(this)
                     post { fail(attempt) }
                 }
@@ -421,6 +441,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                     capabilities.getString(it) == "hot-queries-v1"
                 }
             policy.ready(attempt, now())
+            serviceUnavailable = false
             lastMessage = now()
             nextPing = 0
             hotDeadline = 0
@@ -834,6 +855,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 catalog,
                 installationId,
                 (if (uri.scheme == "wss") "https" else "http") + "://" + uri.rawAuthority,
+                serviceUnavailable,
             )
         if (next == snapshot) return
         snapshot = next
