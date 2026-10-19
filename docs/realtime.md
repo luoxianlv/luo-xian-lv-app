@@ -2,6 +2,8 @@
 
 实时功能默认关闭。开发构建使用 `-PrealtimeEnabled=true`，本机联调另指定 `-PupdateBaseUrl=http://127.0.0.1:18474`。生产必须使用 HTTPS/WSS，并在服务端独立开放。演练场不参与合奏。
 
+客户端开关不会启动后端服务。目标源站必须将 `/api/realtime/v1/`（含 WebSocket Upgrade）与 `/api/ensemble/v1/` 转发到独立实时实例；普通 API 进程不提供这些路由。后端实例配置和部署步骤见[实时部署说明](https://github.com/luoxianlv/luo-xian-lv-server/tree/main/deploy/realtime)。调试包应用 ID 为 `app.luoxianlv.debug`，后端安装范围及环境须与构建配置一致，不能借用生产安装身份。
+
 ## 代码入口
 
 | 位置 | 负责的内容 |
@@ -9,6 +11,9 @@
 | `modules/app-host/.../host/realtime/` | 安装凭据、HTTP 授权与生命周期 |
 | `modules/app-runtime/.../realtime/` | 唯一 WS、重连、校时和预约执行 |
 | `modules/hot-contract/.../SharedRealtime.java` | 业务监听、命令与取消租约 |
+| `app/.../ensemble/EnsembleScreen.kt`、`EnsembleRoom.kt` | 合奏大厅、房间、成员与演奏控制 |
+| `app/.../ensemble/EnsembleScorePicker.kt` | 本地曲目搜索、速度和 MIDI 移调 |
+| `app/.../ensemble/EnsembleRoomUiState.kt` | 快照展示模型、操作权限与准备条件 |
 | `app/.../ensemble/EnsembleSession.kt` | 房间状态、选谱、准备、确认与本机停止 |
 | `app/.../playback/PlaybackSession.kt` | 输入预热、绝对时间线和触点释放 |
 | `app/.../platform/` | Ktor CIO 请求、登录刷新、下载和业务退役 |
@@ -17,6 +22,20 @@
 房间中的每个成员先下载并验证同一谱包，再准备本机输入。主控发起未来的开始时间；参与者确认后服务端提交计划。客户端只执行当前连接、演奏代次及准备令牌对应的计划。取消先释放本机触点，网络确认随后完成。中途断线需要重新准备，不重放旧开始指令。
 
 新导入 MIDI 保留原始文件，可按共用移调和时间原点编译多轨。没有原始 MIDI 时全员使用同一份时间线，不猜测声部。谱包走 HTTP，WS 只传控制消息。
+
+## 页面使用
+
+从首页「多人合奏」进入。登录并建立实时连接后，可创建房间或输入六位数字房间码加入；房间码旁的复制按钮便于分享。连接中断时保留房间展示，远程操作等待连接恢复。
+
+安装登记接口返回 404 时，页面显示「合奏服务尚未开放」，保留后台退避检查，不以重连动画或重新登录掩盖服务缺失；收到有效实时握手后清除此状态。
+
+主控从本地曲库搜索并选择曲目，设置共同速度与 MIDI 移调，再为成员分配声部。成员菜单支持移出成员，以及演奏中重新接入已准备的成员；主控本人也可重新接入。选谱和分配声部仅在等待或暂停时开放。
+
+每位成员先通过「启动悬浮窗」配置真实输入，再点「准备演奏」；从登录和输入设置返回时会回到合奏页。准备过程可以取消，本机演奏可以随时停止。至少两位成员在线且全部准备后，主控才能开始或继续；全员暂停先停止本机输入，不受断线或其他操作占用影响。结束房间和移出成员会先显示确认。
+
+曲目自然结束后显示「已结束」，所有成员需要重新准备，再由主控点「重新开始」。预约开始尚未执行时显示「等待同步开始」，预约接入中的成员显示「等待接入」，不把它们提前显示成演奏中；主控本人中途恢复后可直接使用「重新接入合奏」。
+
+选谱时，已选曲目和共同速度、音高设置持续显示在弹窗顶部，搜索不会丢失选择。只有保留本地 MIDI 源或可从平台取得 MIDI 的曲目可以设置移调；其他谱子使用原谱音高。
 
 ## 网络与热更边界
 
@@ -37,6 +56,23 @@ Ktor 使用 CIO。按域名委托 Android `X509TrustManagerExtensions` 验证系
 `RealtimeInstrumentation` 验证真实运行时 WS、授权刷新、重连及监听释放；`BusinessHttpInstrumentation` 验证 Ktor，显式 `-e tls true` 只读公开 HTTPS 健康接口。`HostHttpInstrumentation` 验证系统 HTTP 慢响应头和取消。
 
 显式本机协调器夹具配合 `-e coordinator true` 验证 Android 与 Rust 的选谱及开始流程。夹具使用测试账号、受控时钟和模拟输入，不证明游戏内同步精度。热更沿用 `tools/test-native-automatic.ps1` 和 `tools/test-native-host.ps1` 的签名、健康及故障回退验证。
+
+`EnsembleRoomUiStateTest` 覆盖角色权限、有效曲目与声部、全员准备、本机准备和断线暂停；`MainNavigationStateTest` 覆盖合奏设置页面的返回路径。安装 Debug 和 `:app-host:assembleDebugAndroidTest` 生成的测试 APK 后，可运行界面检查：
+
+```bash
+adb shell am instrument -w -e screenshots true app.luoxianlv.debug.test/app.luoxianlv.host.EnsembleUiInstrumentation
+```
+
+界面检查在独立测试页面注入房间快照，覆盖明暗主题下的大厅、房主、成员、断线、准备、暂停、开始确认和演奏状态，以及真实选谱弹窗；不修改账号或真实房间。它验证展示和动作绑定，不代表多设备同步验收。
+
+排查真实连接可使用只读探针，它采样宿主现有连接，不替换安装身份或请求测试账号：
+
+```bash
+adb shell am instrument -w -e durationMs 20000 app.luoxianlv.debug.test/app.luoxianlv.host.RealtimeDiagnosticsInstrumentation
+adb logcat -d -s LuoxianlvRealtime:W
+```
+
+诊断只输出连接状态、服务能力、失败阶段、实际 HTTP 状态与异常类型，不输出授权资料、请求头或响应正文。授权回调的本地传输/解析失败仍沿用内部 503 退避信号；日志中的 `httpStatus` 单独表示实际收到的 HTTP 状态，尚未收到时为 0。
 
 ## 查询和通知
 

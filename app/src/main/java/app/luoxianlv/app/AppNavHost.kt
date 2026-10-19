@@ -113,8 +113,7 @@ fun AppNavHost(
 
     // 子页面打开时拦截返回键：先退回主页面
     androidx.activity.compose.BackHandler(enabled = subPage != null) {
-        navigation.startFloatingAfterSetup = false
-        subPage = null
+        navigation.dismissOverlay()
     }
 
     // 仅窗口宽度变化后修正停在半页的位置；普通切页交给 Pager，避免额外动画争抢滚动。
@@ -150,7 +149,7 @@ fun AppNavHost(
     val currentPage = subPage ?: tabs.getOrNull(pagerState.settledPage) ?: Routes.HOME
     LaunchedEffect(app.luoxianlv.ensemble.EnsembleNavigation.requested) {
         if (app.luoxianlv.ensemble.EnsembleNavigation.requested) {
-            subPage = Routes.ENSEMBLE
+            navigation.openEnsemble()
             app.luoxianlv.ensemble.EnsembleNavigation.requested = false
         }
     }
@@ -238,7 +237,7 @@ fun AppNavHost(
                                         )
                                     },
                                     onSettings = { goTab(Routes.SETTINGS) },
-                                    onEnsemble = { subPage = Routes.ENSEMBLE },
+                                    onEnsemble = navigation::openEnsemble,
                                     onInputMode = {
                                         navigation.startFloatingAfterSetup = true
                                         subPage = Routes.INPUT_MODE
@@ -314,7 +313,7 @@ fun AppNavHost(
 
                                     Routes.LOGIN -> {
                                         LoginScreen(
-                                            onBack = { subPage = null },
+                                            onBack = navigation::dismissOverlay,
                                             onShushuLogin = { updater.startShushuLogin(activity) },
                                             onRegister = {
                                                 runCatching {
@@ -371,11 +370,12 @@ fun AppNavHost(
                                     }
                                     Routes.ENSEMBLE -> {
                                         app.luoxianlv.ensemble.EnsembleScreen(
-                                            onBack = { subPage = null },
-                                            onLogin = { subPage = Routes.LOGIN },
+                                            onBack = navigation::dismissOverlay,
+                                            onLogin = {
+                                                navigation.openEnsembleSetup(Routes.LOGIN)
+                                            },
                                             onInputSetup = {
-                                                navigation.startFloatingAfterSetup = true
-                                                subPage = Routes.INPUT_MODE
+                                                navigation.openEnsembleSetup(Routes.INPUT_MODE)
                                             },
                                         )
                                     }
@@ -383,10 +383,7 @@ fun AppNavHost(
                                     Routes.INPUT_MODE -> {
                                         InputModeScreen(
                                             startAfterSetup = navigation.startFloatingAfterSetup,
-                                            onBack = {
-                                                navigation.startFloatingAfterSetup = false
-                                                subPage = null
-                                            },
+                                            onBack = navigation::dismissOverlay,
                                         )
                                     }
 
