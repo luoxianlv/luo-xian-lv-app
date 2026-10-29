@@ -10,8 +10,31 @@ internal object RealtimeWire {
 
     fun validId(value: String) = id.matches(value)
 
+    /** 与 UTF-8 编码长度一致但不分配字节数组；孤立代理项按 3 字节保守计算。 */
+    fun utf8Size(text: String): Int {
+        var size = 0
+        var index = 0
+        while (index < text.length) {
+            val c = text[index]
+            size +=
+                when {
+                    c.code < 0x80 -> 1
+                    c.code < 0x800 -> 2
+                    c.isHighSurrogate() &&
+                        index + 1 < text.length &&
+                        text[index + 1].isLowSurrogate() -> {
+                        index++
+                        4
+                    }
+                    else -> 3
+                }
+            index++
+        }
+        return size
+    }
+
     fun objectValue(text: String): JSONObject {
-        require(text.length <= MAX_BYTES && text.toByteArray(Charsets.UTF_8).size <= MAX_BYTES)
+        require(text.length <= MAX_BYTES && utf8Size(text) <= MAX_BYTES)
         var depth = 0
         var quoted = false
         var escaped = false

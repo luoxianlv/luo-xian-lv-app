@@ -32,7 +32,9 @@ internal class ConnectionPolicy(private val random: () -> Double = Math::random)
     }
 
     fun begin(now: Long): Long {
-        if (!wanted || !online || running || rejected || now < due) return -1
+        if (!wanted || !online || running || now < due) return -1
+        // 身份被拒只做长间隔复查：宿主可能已重新登记，不能永久停在未授权直到进程重启。
+        rejected = false
         running = true
         connected = false
         deadline = now + 15_000
@@ -60,8 +62,8 @@ internal class ConnectionPolicy(private val random: () -> Double = Math::random)
         failures = (failures + 1).coerceAtMost(6)
         val sample = random().takeIf { it.isFinite() && it in 0.0..1.0 } ?: .5
         val backoff = (1000L shl (failures - 1)).coerceAtMost(30_000)
-        due =
-            now + maxOf(retryAfter.coerceIn(0, 3_600_000), (backoff * (.5 + sample * .5)).toLong())
+        val wait = if (rejected) REJECTED_RETRY else (backoff * (.5 + sample * .5)).toLong()
+        due = now + maxOf(retryAfter.coerceIn(0, 3_600_000), wait)
         return true
     }
 
@@ -73,7 +75,13 @@ internal class ConnectionPolicy(private val random: () -> Double = Math::random)
     }
 
     fun authorizedAgain() {
+        if (!rejected) return
         rejected = false
+        due = 0
+    }
+
+    private companion object {
+        const val REJECTED_RETRY = 30 * 60_000L
     }
 
     val state: String

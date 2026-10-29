@@ -57,4 +57,15 @@ class ConnectionPolicyTest {
         assertEquals(-1L, policy.begin(121_000))
         assertTrue(policy.begin(121_001) > 0)
     }
+
+    @Test
+    fun identityRejectionRetriesAfterLongCooldown() {
+        val policy = ConnectionPolicy { 1.0 }
+        policy.availability(true, true, "wifi")
+        policy.failed(policy.begin(0), 0, rejected = true)
+        assertEquals("unauthorized", policy.state)
+        assertEquals(-1L, policy.begin(30 * 60_000L - 1))
+        assertTrue(policy.begin(30 * 60_000L) > 0)
+        assertEquals("connecting", policy.state)
+    }
 }

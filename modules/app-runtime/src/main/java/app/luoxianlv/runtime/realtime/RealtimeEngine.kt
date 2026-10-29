@@ -350,8 +350,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 override fun onMessage(message: String) {
                     val receivedUs = micros()
                     val size =
-                        if (message.length <= RealtimeWire.MAX_BYTES)
-                            message.toByteArray(Charsets.UTF_8).size
+                        if (message.length <= RealtimeWire.MAX_BYTES) RealtimeWire.utf8Size(message)
                         else Int.MAX_VALUE
                     if (size > RealtimeWire.MAX_BYTES) {
                         closeConnection(1009, "message limit")
@@ -408,18 +407,18 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         if (topic == "system" && type == "hello" && !policy.connected) {
             epoch = value.getString("connectionEpoch").also { RealtimeWire.positive(it) }
             clock.reset(data.getString("clockEpoch").also { require(it.length in 1..128) })
-            val capabilities = data.getJSONArray("capabilities")
-            require(capabilities.length() <= 16)
-            hasHot =
-                (0 until capabilities.length()).any { capabilities.getString(it) == "hot-hints-v1" }
-            hasEnsemble =
-                (0 until capabilities.length()).any { capabilities.getString(it) == "ensemble-v1" }
-            hasQueries =
-                (0 until capabilities.length()).any { capabilities.getString(it) == "queries-v1" }
-            hasHotQueries =
-                (0 until capabilities.length()).any {
-                    capabilities.getString(it) == "hot-queries-v1"
-                }
+            val list = data.getJSONArray("capabilities")
+            require(list.length() <= 16)
+            val capabilities = (0 until list.length()).mapTo(HashSet()) { list.getString(it) }
+            hasHot = "hot-hints-v1" in capabilities
+            hasEnsemble = "ensemble-v1" in capabilities
+            hasQueries = "queries-v1" in capabilities
+            hasHotQueries = "hot-queries-v1" in capabilities
+            // 热更查询按服务端确认的安装身份校验归属；缺失或格式无效时保持空值并回落 HTTP。
+            installationId =
+                data.optString("installationId").takeIf {
+                    it.length == 36 && runCatching { java.util.UUID.fromString(it) }.isSuccess
+                } ?: ""
             policy.ready(attempt, now())
             lastMessage = now()
             nextPing = 0
@@ -567,7 +566,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         val client = socket ?: return false
         if (!policy.connected || !client.isOpen) return false
         val text = RealtimeWire.encode(epoch, id, topic, type, data)
-        val bytes = text.toByteArray(Charsets.UTF_8).size
+        val bytes = RealtimeWire.utf8Size(text)
         if (bytes > RealtimeWire.MAX_BYTES || outbound.size >= 64 || outboundBytes + bytes > 49_152)
             return false
         outbound.addLast(Outbound(text, bytes, now(), sent))

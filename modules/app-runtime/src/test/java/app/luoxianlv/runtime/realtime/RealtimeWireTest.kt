@@ -25,4 +25,11 @@ class RealtimeWireTest {
         assertThrows(IllegalArgumentException::class.java) { RealtimeWire.positive("1e3") }
         assertThrows(IllegalArgumentException::class.java) { RealtimeWire.positive("-1") }
     }
+
+    @Test
+    fun utf8SizeMatchesEncoder() {
+        for (text in listOf("", "abc", "落弦律", "é", "🎹x🎵", "a\u0000z")) {
+            assertEquals(text.toByteArray(Charsets.UTF_8).size, RealtimeWire.utf8Size(text))
+        }
+    }
 }
