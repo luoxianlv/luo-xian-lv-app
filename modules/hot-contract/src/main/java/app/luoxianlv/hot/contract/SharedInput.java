@@ -9,6 +9,7 @@ public final class SharedInput {
   public static final String ACCESSIBILITY = "accessibility";
   public static final String SHIZUKU = "shizuku";
   public static final String WIRELESS = "wireless";
+  public static final String ROOT = "root";
   private static final AtomicReference<Bridge> CURRENT = new AtomicReference<>();
 
   private SharedInput() {}

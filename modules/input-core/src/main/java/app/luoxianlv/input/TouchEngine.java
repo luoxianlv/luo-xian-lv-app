@@ -10,7 +10,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Objects;
 
-/** 只在 shell 助手运行的触点合流内核；预检不接管设备。 */
+/** 只在特权助手运行的触点合流内核；预检不接管设备。 */
 public final class TouchEngine implements AutoCloseable {
     public interface Listener {
         boolean frame(int[] ids, float[] xy, boolean cancel);

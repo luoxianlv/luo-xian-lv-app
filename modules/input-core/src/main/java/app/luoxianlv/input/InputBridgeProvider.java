@@ -11,15 +11,16 @@ import android.os.Parcel;
 import android.os.RemoteException;
 import android.util.Log;
 
-/** shell 向宿主交付 Binder 的一次性入口；DUMP 权限、UID 与随机令牌三重检查。 */
+/** 特权助手向宿主交付 Binder；DUMP 权限、指定 UID 与一次性令牌三重检查。 */
 public final class InputBridgeProvider extends ContentProvider {
   @Override public boolean onCreate() { return true; }
 
   @Override public Bundle call(String method, String argument, Bundle extras) {
     Log.i("落弦律输入桥接", "连接交付：阶段=进入受保护入口");
-    if (Binder.getCallingUid() != 2000 || getContext() == null) {
+    int caller = Binder.getCallingUid();
+    if (!InputIdentity.privileged(caller) || getContext() == null) {
       rejected("调用身份校验", "SecurityException");
-      throw new SecurityException("仅允许已授权的 shell 输入助手");
+      throw new SecurityException("仅允许已授权的输入助手");
     }
     try { getContext().enforceCallingPermission("android.permission.DUMP", "缺少 shell 输入身份"); }
     catch (SecurityException failure) { rejected("系统授权校验", "SecurityException"); throw failure; }
@@ -34,6 +35,13 @@ public final class InputBridgeProvider extends ContentProvider {
     }
     IInputService remote = IInputService.Stub.asInterface(binder);
     InputController controller = InputController.current();
+    if (caller == 0) {
+      IBinder rootLease = controller == null ? null : controller.offerRootHelper(argument, remote);
+      if (rootLease == null) throw new SecurityException("Root 输入连接未发起或已过期");
+      Bundle response = new Bundle();
+      response.putBinder("lease", rootLease);
+      return response;
+    }
     IBinder shizukuLease = controller == null ? null : controller.offerShizukuHelper(argument, remote);
     if (shizukuLease != null) {
       Bundle response = new Bundle();
@@ -57,11 +65,17 @@ public final class InputBridgeProvider extends ContentProvider {
   }
 
   static final class Lease extends Binder {
+    private final int expectedUid;
     private volatile boolean alive = true;
+    Lease() { this(2000); }
+    Lease(int expectedUid) {
+      if (!InputIdentity.privileged(expectedUid)) throw new IllegalArgumentException("租约身份无效");
+      this.expectedUid = expectedUid;
+    }
     void revoke() { alive = false; }
     @Override protected boolean onTransact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
       if (code != IBinder.FIRST_CALL_TRANSACTION) return super.onTransact(code, data, reply, flags);
-      if (Binder.getCallingUid() != 2000) throw new SecurityException("租约调用者无效");
+      if (!InputIdentity.matches(expectedUid, Binder.getCallingUid())) throw new SecurityException("租约调用者无效");
       reply.writeNoException();
       reply.writeInt(alive ? 1 : 0);
       return true;
