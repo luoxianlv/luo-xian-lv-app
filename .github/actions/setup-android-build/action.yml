@@ -62,4 +62,5 @@ runs:
     - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
       with:
         # User Home 只由上面的缓存步骤管理，避免恢复/保存两遍。
-        cache-provider: external
+        cache-provider: basic
+        cache-disabled: true
