@@ -32,6 +32,40 @@ defaults:
     shell: bash
 
 jobs:
+  tests:
+    if: >-
+      github.repository == 'luoxianlv/luo-xian-lv-app' &&
+      (github.event_name == 'push' || github.ref == 'refs/heads/main') &&
+      !(github.event_name == 'workflow_dispatch' && inputs.skip_tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: '[[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
+          path: source
+          persist-credentials: false
+      - uses: ./.github/actions/setup-android-build
+        with:
+          source_dir: source
+          profile: native-tests
+      - name: Run unit tests
+        working-directory: source
+        env:
+          NATIVE_RELEASE_PACKAGE: ${{ github.event_name == 'workflow_dispatch' && (inputs.native_package && 'true' || 'false') || vars.NATIVE_RELEASE_DEFAULT || 'false' }}
+        run: |
+          if [[ ! -f modules/app-host/build.gradle.kts && ! -f app-host/build.gradle.kts ]]; then
+            export NATIVE_RELEASE_PACKAGE=false
+          fi
+          bash "$GITHUB_WORKSPACE/.github/scripts/release-tests.sh"
+
   package:
     if: github.repository == 'luoxianlv/luo-xian-lv-app' && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-24.04
@@ -64,14 +98,10 @@ jobs:
             native=true
           fi
           echo "native=$native" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - uses: ./.github/actions/setup-android-build
         with:
-          distribution: temurin
-          java-version: ${{ steps.package_route.outputs.native == 'true' && '21' || '17' }}
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-        with:
-          cache-provider: basic
-          cache-read-only: true
+          source_dir: source
+          profile: ${{ steps.package_route.outputs.native == 'true' && 'native' || 'legacy' }}
       - name: Build and verify signed APK
         working-directory: source
         env:
@@ -81,6 +111,7 @@ jobs:
           ORG_GRADLE_PROJECT_releaseKeyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
           UPDATE_BASE_URL: ${{ vars.UPDATE_BASE_URL }}
           ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+          RELEASE_TESTS_EXTERNAL: 'true'
           RELEASE_SKIP_TESTS: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_tests && 'true' || 'false' }}
           NATIVE_RELEASE_PACKAGE: ${{ steps.package_route.outputs.native }}
           NATIVE_HOT_CONFIG_JSON: ${{ vars.NATIVE_HOT_CONFIG_JSON }}
@@ -101,7 +132,12 @@ jobs:
           retention-days: 90
 
   publish:
-    needs: package
+    needs: [tests, package]
+    # 只有显式手动跳过才允许 tests=skipped；失败和取消不能发布。
+    if: >-
+      !cancelled() && needs.package.result == 'success' &&
+      (needs.tests.result == 'success' ||
+       (needs.tests.result == 'skipped' && github.event_name == 'workflow_dispatch' && inputs.skip_tests))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

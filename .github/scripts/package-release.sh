@@ -2,7 +2,15 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/release-build-tasks.sh"
 native_package="${NATIVE_RELEASE_PACKAGE:-false}"
-select_release_tasks "$native_package" "${RELEASE_SKIP_TESTS:-false}"
+external_tests="${RELEASE_TESTS_EXTERNAL:-false}"
+[[ "$external_tests" == true || "$external_tests" == false ]] || { echo 'Invalid external test switch' >&2; exit 1; }
+if [[ "$external_tests" == true ]]; then
+  select_release_tasks "$native_package" true
+else
+  select_release_tasks "$native_package" "${RELEASE_SKIP_TESTS:-false}"
+fi
+source "$(dirname "${BASH_SOURCE[0]}")/gradle-ci-args.sh"
+configure_ci_gradle
 if [[ "${RELEASE_SKIP_TESTS:-false}" == true ]]; then
   printf '手动发版：跳过单元测试，保留构建、版本、签名和产物校验。\n'
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -41,8 +49,7 @@ if [[ "$native_package" == true ]]; then
   hot_config="$RUNNER_TEMP/native-hot-config.json"
   printf '%s' "$NATIVE_HOT_CONFIG_JSON" > "$hot_config"
   build_args+=("-PhotUpdateConfig=$hot_config" '-PnativeOptimize=true' '-PnativeRequireReleaseSigning=true')
-  build_args+=('-Dorg.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8' '--max-workers=2' '--parallel' '--build-cache')
-  bash ./gradlew "${release_tasks[@]}" --no-daemon "${build_args[@]}"
+  bash ./gradlew "${release_tasks[@]}" "${ci_gradle_args[@]}" "${build_args[@]}"
   apk="${native_root}app-host/build/outputs/apk/release/app-host-release.apk"
   pwsh -NoProfile -File tools/verify-native-release.ps1 -ExpectOptimized \
     -HostApk "$apk" -ExpectedCertificateSha256 "$ANDROID_SIGNING_CERT_SHA256"
@@ -56,7 +63,7 @@ if [[ "$native_package" == true ]]; then
   cp "${native_root}app-runtime/build/native-link/release/runtime.apk" native-release-artifacts/runtime/
   cp "${native_root}app-business/build/native-link/release/business.apk" native-release-artifacts/business/
 else
-  bash ./gradlew "${release_tasks[@]}" --build-cache --parallel --no-daemon "${build_args[@]}"
+  bash ./gradlew "${release_tasks[@]}" "${ci_gradle_args[@]}" "${build_args[@]}"
   apk=app/build/outputs/apk/release/app-release.apk
 fi
 apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)

@@ -13,7 +13,9 @@
 | [Upload Release to official storage](../.github/workflows/oss.yml) | 在 `main` 手动填写已发布标签 | 上传、完整回读校验及 `verified-stable`；保留 30 天 |
 | [Deploy stable update](../.github/workflows/deploy-update.yml) | 在 `main` 手动填写成功上传的运行 ID | 原子更新 APP 下载清单 |
 
-常规 CI 的构建任务使用 JDK 17，三层核验使用 JDK 21。候选工作流只生成编译产物；正式签名准备也不会创建标签、发布 Release 或更新下载清单。
+CI 统一使用 JDK 21。测试与正式打包并行运行，两者都通过后才发布。候选工作流只生成编译产物；正式签名准备也不会创建标签、发布 Release 或更新下载清单。
+
+签名准备工作流可填写 `source_tag`，使用指定正式标签的源码生成候选包。重复构建同一标签可比较缓存命中前后的耗时，不会替换已发布 APK 或更新下载清单。
 
 ## 签名与配置
 
@@ -35,7 +37,7 @@
 
 手动 Release 的 `native_package` 默认开启。标签触发时，仅当 `NATIVE_RELEASE_DEFAULT=true` 且标签源码支持原生宿主才走原生路线；重建不支持该架构的旧标签时关闭此参数。工作流脚本与标签源码分别检出，已有标签不必移动。
 
-手动 Release 和签名包准备提供 `skip_tests`，默认关闭。本地已验证时可开启；标签自动发布仍执行测试，版本、签名、APK 结构和存储回读校验不能跳过。Gradle 使用任务缓存和并行构建。
+手动 Release 和签名包准备提供 `skip_tests`，默认关闭。本地已验证时可开启；标签自动发布仍执行测试，版本、签名、APK 结构和存储回读校验不能跳过。Gradle 缓存按真实源码、工具链和构建类型区分，发布任务可复用 main 已生成的缓存；只有 main 写入缓存，PR 与标签发布只读。构建按 Runner 资源使用最多 4 个并行任务。
 
 ## 发布顺序
 

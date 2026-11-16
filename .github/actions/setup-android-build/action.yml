@@ -1,0 +1,65 @@
+name: Android build environment
+description: 统一 JDK、Gradle 环境与分任务缓存；发布复用 main 的构建缓存。
+inputs:
+  source_dir:
+    description: 实际参与构建的源码目录
+    default: '.'
+  profile:
+    description: 构建类型，防止不同任务争用同一个不可变缓存
+    default: native
+  java_version:
+    description: JDK 版本
+    default: '21'
+  read_only:
+    description: 非 main 与发布任务只读缓存
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java_version }}
+    - name: Resolve source identity
+      id: source
+      shell: bash
+      env:
+        SOURCE_DIR: ${{ inputs.source_dir }}
+        JAVA_VERSION: ${{ inputs.java_version }}
+        TOOLCHAIN_HASH: ${{ hashFiles(format('{0}/gradle/wrapper/gradle-wrapper.properties', inputs.source_dir), format('{0}/gradle/libs.versions.toml', inputs.source_dir)) }}
+      run: |
+        sha=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "prefix=$RUNNER_OS-$RUNNER_ARCH-android-v2-jdk$JAVA_VERSION-$TOOLCHAIN_HASH" >> "$GITHUB_OUTPUT"
+    - name: Restore Gradle cache
+      if: inputs.read_only != 'false' || github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          !~/.gradle/caches/**/*.lock
+          !~/.gradle/caches/**/gc.properties
+        key: ${{ steps.source.outputs.prefix }}-${{ inputs.profile }}-${{ steps.source.outputs.sha }}
+        restore-keys: |
+          ${{ steps.source.outputs.prefix }}-${{ inputs.profile }}-
+          ${{ steps.source.outputs.prefix }}-
+          ${{ runner.os }}-${{ runner.arch }}-android-v2-jdk${{ inputs.java_version }}-
+    - name: Restore and save main Gradle cache
+      if: inputs.read_only == 'false' && github.ref == 'refs/heads/main'
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          !~/.gradle/caches/**/*.lock
+          !~/.gradle/caches/**/gc.properties
+        key: ${{ steps.source.outputs.prefix }}-${{ inputs.profile }}-${{ steps.source.outputs.sha }}
+        restore-keys: |
+          ${{ steps.source.outputs.prefix }}-${{ inputs.profile }}-
+          ${{ steps.source.outputs.prefix }}-
+          ${{ runner.os }}-${{ runner.arch }}-android-v2-jdk${{ inputs.java_version }}-
+    - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      with:
+        # User Home 只由上面的缓存步骤管理，避免恢复/保存两遍。
+        cache-provider: external

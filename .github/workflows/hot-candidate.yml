@@ -25,14 +25,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - uses: ./.github/actions/setup-android-build
         with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
-        with:
-          cache-provider: basic
-          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          profile: ${{ inputs.variant == 'release' && 'native' || 'native-debug' }}
+          read_only: ${{ github.ref != 'refs/heads/main' }}
       - name: 检查核心并导出实际三层产物
         shell: bash
         env:
@@ -48,8 +44,10 @@ jobs:
           if [[ "$NATIVE_VARIANT" == release ]]; then
             native_args+=('-PnativeOptimize=true')
           fi
+          source .github/scripts/gradle-ci-args.sh
+          configure_ci_gradle
           bash ./gradlew :buildSrc:test :hot-core:testDebugUnitTest \
-            ":app-host:export${variant_name}NativeBuildReport" "${native_args[@]}" --no-daemon --console=plain
+            ":app-host:export${variant_name}NativeBuildReport" "${native_args[@]}" "${ci_gradle_args[@]}"
       - name: 核验优化 Release 三层 SDK 与映射
         if: inputs.variant == 'release'
         shell: pwsh

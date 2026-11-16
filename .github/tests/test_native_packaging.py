@@ -32,11 +32,11 @@ class NativePackagingGuards(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture", encoding="utf-8")
 
-    def rejected(self, flag, message, config=""):
+    def rejected(self, flag, message, config="", external="false"):
         # 不继承任何签名/服务环境，只传测试工具路径和新建临时目录。
         env = {"PATH": str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
                "RUNNER_TEMP": str(self.runner), "NATIVE_RELEASE_PACKAGE": flag,
-               "NATIVE_HOT_CONFIG_JSON": config}
+               "NATIVE_HOT_CONFIG_JSON": config, "RELEASE_TESTS_EXTERNAL": external}
         for name in ("SYSTEMROOT", "WINDIR"):
             if name in os.environ:
                 env[name] = os.environ[name]
@@ -46,6 +46,9 @@ class NativePackagingGuards(unittest.TestCase):
         self.assertIn(message, result.stderr)
         self.assertFalse((self.root / "dist").exists())
         self.assertEqual(list(self.runner.iterdir()), [])
+
+    def test_invalid_external_test_switch_is_rejected(self):
+        self.rejected("false", "Invalid external test switch", external="yes")
 
     def test_unknown_switch_rejected_before_credentials(self):
         self.rejected("maybe", "Invalid native package switch")
@@ -76,9 +79,9 @@ class NativePackagingGuards(unittest.TestCase):
             path.chmod(0o755)
         return path
 
-    def packaged(self, prefix):
+    def packaged(self, prefix, external=False):
         self.source(prefix)
-        self.fixture("gradlew", "exit 0\n")
+        self.fixture("gradlew", 'printf "%s\\n" "$@" > gradle-args\nexit 0\n')
         self.fixture("bin/jq", '#!/bin/sh\nif [ "$1" = "-n" ]; then printf "{}\\n"; else cat >/dev/null; fi\n', True)
         self.fixture("bin/pwsh", """#!/bin/sh
 while [ "$#" -gt 0 ]; do
@@ -111,7 +114,7 @@ exit 1
                "RUNNER_TEMP": self.runner.as_posix(), "ANDROID_HOME": (self.root / "sdk").as_posix(),
                "GITHUB_STEP_SUMMARY": (self.root / "summary").as_posix(), "RELEASE_TAG": "v1.1.0",
                "NATIVE_RELEASE_PACKAGE": "true", "NATIVE_HOT_CONFIG_JSON": '{"fixture":true}',
-               "FIXTURE_NATIVE_PREFIX": prefix, "ANDROID_KEYSTORE_BASE64": "Zml4dHVyZQ==",
+               "FIXTURE_NATIVE_PREFIX": prefix, "RELEASE_TESTS_EXTERNAL": "true" if external else "false", "ANDROID_KEYSTORE_BASE64": "Zml4dHVyZQ==",
                "ANDROID_SIGNING_CERT_SHA256": certificate,
                "ORG_GRADLE_PROJECT_releaseStorePassword": "fixture",
                "ORG_GRADLE_PROJECT_releaseKeyAlias": "fixture",
@@ -133,9 +136,22 @@ exit 1
         self.assertEqual((self.root / "native-release-artifacts/host-contract-sdk.jar").read_text(), "host-sdk")
         self.assertEqual((self.root / "native-release-artifacts/runtime-sdk.jar").read_text(), "runtime-sdk")
         self.assertFalse((self.runner / "release.jks").exists())
+        arguments = (self.root / "gradle-args").read_text().splitlines()
+        self.assertIn(":app-host:exportReleaseNativeBuildReport", arguments)
+        self.assertIn("--build-cache", arguments)
+        self.assertIn("--parallel", arguments)
+        self.assertIn("--configure-on-demand", arguments)
+        if external:
+            self.assertFalse(any("testDebugUnitTest" in value for value in arguments))
+        else:
+            self.assertIn(":app:testDebugUnitTest", arguments)
+        self.assertNotIn(":app-business:testDebugUnitTest", arguments)
 
     def test_native_packaging_uses_grouped_module_outputs(self):
         self.packaged("modules/")
+
+    def test_external_tests_only_remove_duplicate_test_execution(self):
+        self.packaged("modules/", external=True)
 
     def test_native_packaging_uses_old_tag_module_outputs(self):
         self.packaged("")

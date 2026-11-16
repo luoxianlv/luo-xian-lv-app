@@ -10,7 +10,7 @@
 | Android SDK | Platform 37；构建时按 AGP 提示安装所需 Build Tools |
 | Gradle | 使用仓库 Wrapper，当前为 9.7.1 |
 | Android Gradle Plugin | 9.1.1，版本由仓库配置管理 |
-| Kotlin | 2.4.20，随构建插件解析 |
+| Kotlin | 以 `gradle/libs.versions.toml` 为准 |
 | Python | 格式化脚本需要 Python 3；自动化脚本 CI 使用 Python 3.12 |
 
 在 Android Studio 中设置 SDK，或通过 `ANDROID_HOME`、本地 `local.properties` 的 `sdk.dir` 指定 SDK。首次构建需要下载 Wrapper 和 Maven 依赖。

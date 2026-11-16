@@ -18,7 +18,8 @@ class ReleaseTasksTest(unittest.TestCase):
         result = self.tasks("true", "false")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(":hot-core:testDebugUnitTest", result.stdout.splitlines())
-        self.assertIn(":app-business:testDebugUnitTest", result.stdout.splitlines())
+        self.assertIn(":app:testDebugUnitTest", result.stdout.splitlines())
+        self.assertNotIn(":app-business:testDebugUnitTest", result.stdout.splitlines())
         self.assertIn(":app-host:exportReleaseNativeBuildReport", result.stdout.splitlines())
 
     def test_manual_skip_keeps_native_build(self):

@@ -3,6 +3,11 @@ name: 原生签名包准备
 on:
   workflow_dispatch:
     inputs:
+      source_tag:
+        description: 可选正式源码标签（如 v1.3.0）；留空构建当前 main，仅生成候选包
+        required: false
+        default: ''
+        type: string
       skip_tests:
         description: 本地已测过，跳过单元测试（保留打包和校验）
         required: true
@@ -35,15 +40,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - name: Validate selected source
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+        run: '[[ -z "$SOURCE_TAG" || "$SOURCE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+          ref: ${{ inputs.source_tag || github.sha }}
+          path: source
+          persist-credentials: false
+      - uses: ./.github/actions/setup-android-build
         with:
-          cache-provider: basic
-          cache-read-only: true
+          source_dir: source
+          profile: native
+          read_only: 'false'
       - name: 检查候选版本
+        working-directory: source
         env:
           CANDIDATE_VERSION: ${{ inputs.version_name }}
           CANDIDATE_CODE: ${{ inputs.version_code }}
@@ -55,6 +67,7 @@ jobs:
           [[ "$base_code" =~ ^[1-9][0-9]*$ ]]
           (( CANDIDATE_CODE >= base_code && CANDIDATE_CODE <= 2100000000 ))
       - name: 生成正式签名的原生验收包
+        working-directory: source
         env:
           RELEASE_TAG: v${{ inputs.version_name }}
           ORG_GRADLE_PROJECT_appVersionName: ${{ inputs.version_name }}
@@ -68,14 +81,14 @@ jobs:
           RELEASE_SKIP_TESTS: ${{ inputs.skip_tests && 'true' || 'false' }}
           NATIVE_RELEASE_PACKAGE: 'true'
           NATIVE_HOT_CONFIG_JSON: ${{ vars.NATIVE_HOT_CONFIG_JSON }}
-        run: bash .github/scripts/package-release.sh
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/package-release.sh"
       - name: 保存签名验收包与公开核验资料
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-signed-candidate-${{ inputs.version_name }}
           path: |
-            dist/
+            source/dist/
           if-no-files-found: warn
           retention-days: 30
       - name: 保存三层 SDK、映射与失败诊断
@@ -84,8 +97,8 @@ jobs:
         with:
           name: native-signed-evidence-${{ inputs.version_name }}
           path: |
-            native-release-artifacts/
-            modules/app-host/build/outputs/apk/release/*.apk
-            modules/app-host/build/native-release-verification.json
+            source/native-release-artifacts/
+            source/modules/app-host/build/outputs/apk/release/*.apk
+            source/modules/app-host/build/native-release-verification.json
           if-no-files-found: warn
           retention-days: 30
