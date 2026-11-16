@@ -13,7 +13,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-/** 仅运行于 shell 助手。读取、合流与清理由同一控制线程安排，不加载业务或统计。 */
+/** 仅运行于特权助手；读取、合流与清理由同一控制线程安排，不加载业务或统计。 */
 public final class InputUserService extends IInputService.Stub {
   private final int ownerUid;
   private final String nativeLibraryDir;
@@ -96,7 +96,7 @@ public final class InputUserService extends IInputService.Stub {
       if (closed) return;
       Bundle state;
       if (!InputIdentity.privileged(Process.myUid())) {
-        state = unavailable("输入服务缺少系统触控权限，请重新连接 Shizuku 或无线调试");
+        state = unavailable("输入服务缺少系统触控权限，请重新连接所选输入模式");
       } else {
         String probeStage = "native-load";
         try {
@@ -533,7 +533,7 @@ public final class InputUserService extends IInputService.Stub {
 
   /** 自有无线引导器的宿主租约失效时正常清理，不开放新的远程入口。 */
   public void shutdownFromHelper() {
-    if (Process.myUid() != 2000 || Binder.getCallingUid() != Process.myUid())
+    if (!InputIdentity.privileged(Process.myUid()) || Binder.getCallingUid() != Process.myUid())
       throw new SecurityException("仅允许助手自身清理");
     worker.execute(this::shutdown);
   }

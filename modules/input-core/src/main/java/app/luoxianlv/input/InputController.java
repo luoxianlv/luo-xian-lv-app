@@ -80,12 +80,13 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private ServiceConnection connection;
   private Shizuku.UserServiceArgs serviceArgs;
   private volatile ShizukuShellSession shellSession;
+  private volatile RootShellSession rootSession;
   private final ShizukuConnectionPolicy shizukuConnection = new ShizukuConnectionPolicy();
   private IBinder shizukuSource;
   private boolean shizukuReady;
   private WirelessBackend wireless;
   private Bundle wirelessState = new Bundle();
-  private final Shizuku.OnBinderReceivedListener received = () -> enqueueShizukuCallback(() -> {
+  private final Shizuku.OnBinderReceivedListener received = () -> enqueueConnection(() -> {
     if (closed) return;
     IBinder source = Shizuku.getBinder();
     if (source == null || !source.pingBinder()) return;
@@ -98,7 +99,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     shizukuReady = true;
     refreshNow();
   });
-  private final Shizuku.OnBinderDeadListener died = () -> enqueueShizukuCallback(() -> {
+  private final Shizuku.OnBinderDeadListener died = () -> enqueueConnection(() -> {
     if (closed) return;
     if (Shizuku.pingBinder()) { refreshNow(); return; } // 旧死亡通知不能断开已到达的新 Binder。
     shizukuReady = false;
@@ -109,7 +110,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   });
   private final Shizuku.OnRequestPermissionResultListener permission = (request, result) -> {
     if (request != REQUEST_PERMISSION) return;
-    enqueueShizukuCallback(() -> {
+    enqueueConnection(() -> {
       if (!SharedInput.SHIZUKU.equals(mode) || !wantConnection) return;
       wantConnection = result == PackageManager.PERMISSION_GRANTED;
       if (wantConnection && service == null && !binding) shizukuConnection.reset();
@@ -119,7 +120,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     });
   };
 
-  private void enqueueShizukuCallback(Runnable task) {
+  private void enqueueConnection(Runnable task) {
     if (closed) return;
     try { worker.execute(() -> { if (!closed) task.run(); }); }
     catch (RejectedExecutionException ignored) { }
@@ -160,7 +161,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     if (InputIdentity.privileged(Process.myUid())) return true;
     if (Build.VERSION.SDK_INT < 28) return false;
     String name = Application.getProcessName();
-    return name != null && (name.endsWith(":touch_shell") || name.endsWith(":wireless_shell"));
+    return name != null && (name.endsWith(":touch_shell") || name.endsWith(":wireless_shell") || name.endsWith(":root_shell"));
   }
 
   private InputController(Context context) {
@@ -174,6 +175,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       mode = validMode(selected) ? selected : SharedInput.ACCESSIBILITY;
       if (SharedInput.WIRELESS.equals(mode)) wantConnection =
           context.getSharedPreferences("input-wireless", Context.MODE_PRIVATE).getBoolean("wantConnection", true);
+      if (SharedInput.ROOT.equals(mode)) wantConnection =
+          context.getSharedPreferences("input-mode", Context.MODE_PRIVATE).getBoolean("rootReconnect", true);
       initialized = true;
       refreshNow();
     });
@@ -196,6 +199,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
         rpc.call(() -> { current.heartbeat(); return null; });
         if (SharedInput.SHIZUKU.equals(mode)) shizukuConnection.stable(SystemClock.elapsedRealtime());
       } catch (Exception error) {
+        if (SharedInput.ROOT.equals(mode)) { failRoot("维持 Root 连接", error); return; }
         if (SharedInput.SHIZUKU.equals(mode)) {
           failShizuku("维持连接", error);
           return;
@@ -265,7 +269,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       wantConnection = true;
       shizukuConnection.reset();
       context.getSharedPreferences("input-mode", Context.MODE_PRIVATE)
-          .edit().putString("mode", selected).apply();
+          .edit().putString("mode", selected).putBoolean("rootReconnect", true).apply();
       publish(defaults(mode));
       refreshNow();
       if (SharedInput.WIRELESS.equals(mode) && wireless != null) {
@@ -292,6 +296,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
         case "installShizuku" -> installShizuku();
         case "disconnect" -> {
           wantConnection = false;
+          if (SharedInput.ROOT.equals(mode)) context.getSharedPreferences("input-mode", Context.MODE_PRIVATE)
+              .edit().putBoolean("rootReconnect", false).apply();
           shizukuConnection.cancel();
           disconnectService("输入连接已断开");
           if (SharedInput.WIRELESS.equals(mode) && wireless != null)
@@ -309,6 +315,11 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
           if (SharedInput.WIRELESS.equals(mode)) {
             if (wireless == null) message("无线连接尚未准备好");
             else wireless.command(action, copy);
+          } else if (SharedInput.ROOT.equals(mode)) {
+            context.getSharedPreferences("input-mode", Context.MODE_PRIVATE)
+                .edit().putBoolean("rootReconnect", true).apply();
+            if (service != null || binding) disconnectService("正在重新建立 Root 连接");
+            refreshNow();
           } else if (SharedInput.SHIZUKU.equals(mode)) {
             if (service == null && !binding) shizukuConnection.reset();
             if (!Shizuku.pingBinder()) { message("请先启动 Shizuku"); return; }
@@ -415,6 +426,18 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
         }
         value.putBoolean("busy", shizukuConnection.waitingToRetry(SystemClock.elapsedRealtime()));
       }
+    } else if (SharedInput.ROOT.equals(mode)) {
+      value.putBoolean("installed", true);
+      value.putBoolean("connected", service != null);
+      value.putBoolean("permissionGranted", service != null);
+      value.putString("permissionState", service != null ? "granted" : "unavailable");
+      value.putBoolean("busy", binding);
+      if (service == null) value.putBoolean("touchReady", false);
+      if (service == null && !binding && wantConnection) {
+        publish(value);
+        bindRoot();
+        return;
+      }
     } else {
       value.putAll(wirelessState);
       value.putString("wirelessMessage", wirelessState.getString("message", ""));
@@ -439,6 +462,49 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private boolean freshPermission() throws Exception {
     IBinder binder = Shizuku.getBinder();
     return binder != null && shizukuRpc.call(() -> IShizukuService.Stub.asInterface(binder).checkSelfPermission());
+  }
+
+  private void bindRoot() {
+    long epoch = ++generation;
+    try {
+      long installedAt = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).lastUpdateTime;
+      RootShellSession pending = new RootShellSession((session, remote) -> enqueueConnection(() -> {
+        if (closed || rootSession != session || generation != epoch || !binding
+            || !wantConnection || !SharedInput.ROOT.equals(mode)) return;
+        try {
+          if (context.getPackageManager().getPackageInfo(context.getPackageName(), 0).lastUpdateTime != installedAt)
+            throw new SecurityException("连接期间安装修订发生变化");
+          binding = false;
+          attach(remote);
+        } catch (Exception error) { failRoot("核对 Root 连接", error); }
+      }), (session, error) -> enqueueConnection(() -> {
+        if (rootSession == session && generation == epoch && SharedInput.ROOT.equals(mode))
+          failRoot("启动 Root 输入进程", error);
+      }));
+      rootSession = pending;
+      binding = true;
+      message("请在 Root 管理器中允许落弦律，正在建立连接");
+      pending.start(context);
+      worker.schedule(() -> {
+        if (!closed && binding && rootSession == pending && generation == epoch && pending.expired())
+          failRoot("等待 Root 授权和连接", new java.util.concurrent.TimeoutException());
+      }, RootShellSession.START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+    } catch (Exception error) { failRoot("请求 Root 授权", error); }
+  }
+
+  android.os.IBinder offerRootHelper(String token, IInputService remote) {
+    RootShellSession pending = rootSession;
+    return pending == null ? null : pending.offer(token, remote);
+  }
+
+  private void failRoot(String stage, Throwable error) {
+    // 拒绝或失败后只由用户重试，避免页面刷新反复弹 Root 授权。
+    wantConnection = false;
+    context.getSharedPreferences("input-mode", Context.MODE_PRIVATE)
+        .edit().putBoolean("rootReconnect", false).apply();
+    disconnectService("Root 输入连接已断开");
+    diagnose(stage, error, "Root 连接未建立，请在 Root 管理器中允许落弦律后重试");
+    refreshNow();
   }
 
   private void bindShizuku() {
@@ -488,7 +554,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
           .processNameSuffix("touch_shell");
       connection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName name, IBinder binder) {
-          enqueueShizukuCallback(() -> {
+          enqueueConnection(() -> {
             if (closed || selectedGeneration != generation || !binding || connection != this
                 || !wantConnection || !SharedInput.SHIZUKU.equals(mode)
                 || source != shizukuSource || source != Shizuku.getBinder()) return;
@@ -517,7 +583,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
           });
         }
         @Override public void onServiceDisconnected(ComponentName name) {
-          enqueueShizukuCallback(() -> {
+          enqueueConnection(() -> {
             if (selectedGeneration != generation || connection != this || closed) return;
             failShizuku("Shizuku 触控连接已断开", null);
           });
@@ -547,7 +613,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private void bindShizukuShell(long attempt, long epoch, IBinder source, int version,
       long installedAt, int revision) throws Exception {
     ShizukuShellSession pending = new ShizukuShellSession(shizukuRpc, (session, remote) ->
-        enqueueShizukuCallback(() -> {
+        enqueueConnection(() -> {
           if (closed || shellSession != session || epoch != generation || !binding
               || !wantConnection || !SharedInput.SHIZUKU.equals(mode)
               || source != shizukuSource || source != Shizuku.getBinder()) return;
@@ -621,7 +687,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
   private void attach(IInputService remote, boolean recheck) {
     if (remote == null) { message("连接不可用，请重试"); return; }
     if (!recheck && service != null && serviceDeath != null && service.asBinder().equals(remote.asBinder())) return;
-    final int expectedUid = SharedInput.SHIZUKU.equals(mode) ? snapshot.getInt("shizukuUid", -1) : 2000;
+    final int expectedUid = SharedInput.ROOT.equals(mode) ? 0
+        : SharedInput.SHIZUKU.equals(mode) ? snapshot.getInt("shizukuUid", -1) : 2000;
     String stage = "关联助手死亡监听";
     try {
       if (service != null && service != remote) disconnectService("输入连接已重连");
@@ -629,8 +696,9 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
         remote.asBinder().unlinkToDeath(serviceDeath, 0);
       service = remote;
       long epoch = generation;
-      serviceDeath = () -> enqueueShizukuCallback(() -> {
+      serviceDeath = () -> enqueueConnection(() -> {
         if (service != remote || closed) return;
+        if (SharedInput.ROOT.equals(mode)) { failRoot("Root 输入连接已停止", null); return; }
         if (SharedInput.SHIZUKU.equals(mode)) {
           failShizuku("Shizuku 触控连接已停止", null);
           return;
@@ -714,6 +782,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
       publish(value);
       HostDiagnostics.log(Log.INFO, TAG, "已关联输入助手：模式=" + mode + " 宿主UID=" + Process.myUid(), null);
     } catch (Exception error) {
+      if (SharedInput.ROOT.equals(mode)) { failRoot(stage, error); return; }
       if (SharedInput.SHIZUKU.equals(mode)) {
         failShizuku(stage, error);
         return;
@@ -968,6 +1037,8 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     shizukuConnection.invalidate();
     ShizukuShellSession previousShell = shellSession;
     shellSession = null;
+    RootShellSession previousRoot = rootSession;
+    rootSession = null;
     IInputService old = service;
     if (old != null && ownership.owner() != null) releaseOwner(ownership.owner());
     service = null;
@@ -978,6 +1049,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
     }
     serviceDeath = null;
     if (previousShell != null) previousShell.close();
+    if (previousRoot != null) previousRoot.close();
     Shizuku.UserServiceArgs previousArgs = serviceArgs;
     ServiceConnection previousConnection = connection;
     serviceArgs = null;
@@ -1101,7 +1173,7 @@ public final class InputController implements SharedInput.Bridge, AutoCloseable 
 
   private static boolean validMode(String value) {
     return SharedInput.ACCESSIBILITY.equals(value) || SharedInput.SHIZUKU.equals(value)
-        || SharedInput.WIRELESS.equals(value);
+        || SharedInput.WIRELESS.equals(value) || SharedInput.ROOT.equals(value);
   }
 
   private static final class Request {

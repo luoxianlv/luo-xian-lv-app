@@ -242,6 +242,7 @@ fun InputModeScreen(onBack: () -> Unit, startAfterSetup: Boolean = false) {
                     InputModeOption("无障碍", "直接使用，手动触摸可能中断演奏", "accessibility", state)
                     InputModeOption("Shizuku", "通过 Shizuku 连接，可边操作边演奏", "shizuku", state)
                     InputModeOption("无线调试（内置）", "使用手机的无线调试，无需额外应用", "wireless", state)
+                    InputModeOption("Root", "已 Root 的手机可直接连接，可边操作边演奏", "root", state)
                 }
             }
             item(key = "status") {
@@ -291,14 +292,14 @@ fun InputModeScreen(onBack: () -> Unit, startAfterSetup: Boolean = false) {
             item(key = "hint") {
                 Text(
                     if (android.os.Build.VERSION.SDK_INT < 30)
-                        "Android 8–10 自动识别需使用 Shizuku，可按其指引通过电脑启动。无障碍可使用已保存的按键位置或实验性设置中的固定按键。"
-                    else "无障碍、Shizuku 和无线调试均可识别琴键；后两种模式连接后可边操作边演奏。切换模式会暂停演奏。",
+                        "Android 8–10 自动识别需使用 Shizuku 或 Root。无障碍可使用已保存的按键位置或实验性设置中的固定按键。"
+                    else "各模式均可识别琴键；Shizuku、无线调试和 Root 连接后可边操作边演奏。切换模式会暂停演奏。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 6.dp),
                 )
             }
-            if (state.mode != "accessibility") {
+            if (state.mode == "shizuku" || state.mode == "wireless") {
                 item(key = "security-setting") {
                     InputSecurityHint(Modifier.padding(horizontal = 6.dp))
                 }

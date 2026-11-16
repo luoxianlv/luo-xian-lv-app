@@ -1,6 +1,6 @@
 package app.luoxianlv.input;
 
-/** 两种授权通道启动同一个已安装 APK；变量始终按 shell 字面量引用。 */
+/** 特权通道启动同一个已安装 APK；变量始终按 shell 字面量引用。 */
 final class ShellHelperCommand {
   private ShellHelperCommand() {}
 

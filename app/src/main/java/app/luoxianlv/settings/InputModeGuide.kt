@@ -46,6 +46,7 @@ internal fun InputModeGuide(
     onOpenDocumentation: (String) -> Unit,
 ) {
     val wireless = mode == "wireless"
+    val root = mode == "root"
     var showLicenses by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -53,12 +54,19 @@ internal fun InputModeGuide(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item(key = "title") {
-            InputModeTitle(if (wireless) "无线调试使用帮助" else "Shizuku 使用帮助", onBack)
+            InputModeTitle(
+                if (root) "Root 使用帮助" else if (wireless) "无线调试使用帮助" else "Shizuku 使用帮助",
+                onBack,
+            )
         }
         item(key = "steps") {
             SettingsCard {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    if (wireless) {
+                    if (root) {
+                        GuideStep("1", "确认手机已 Root", "支持已安装的 Root 管理器，无需开启无线调试或启动 Shizuku。")
+                        GuideStep("2", "允许落弦律", "点“授权并连接”，在 Root 管理器的授权窗口中选择允许。")
+                        GuideStep("3", "开始演奏", "触控检查完成后即可使用；断开连接会释放触屏。")
+                    } else if (wireless) {
                         GuideStep("1", "准备 Wi-Fi 和通知", "连接 Wi-Fi，并允许落弦律显示通知。")
                         GuideStep("2", "开启无线调试", "点下方按钮，在系统设置中开启“无线调试”。")
                         GuideStep("3", "显示配对码", "选择“使用配对码配对设备”，保持这个窗口打开。")
@@ -137,18 +145,20 @@ internal fun InputModeGuide(
                 modifier = Modifier.padding(horizontal = 6.dp),
             ) {
                 Text(
-                    if (wireless) "配对通常只需一次。手机重启或连接中断后，回来点“连接”即可。"
+                    if (root) "拒绝授权后不会反复弹窗，可在 Root 管理器中改为允许，再回来重新连接。"
+                    else if (wireless) "配对通常只需一次。手机重启或连接中断后，回来点“连接”即可。"
                     else "手机重启后，请先在 Shizuku 中重新启动服务。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(
-                    "找不到开发者选项时，可在“关于手机”里连续点按版本号，按系统提示开启。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                InputSecurityHint()
-                if (!wireless) {
+                if (!root)
+                    Text(
+                        "找不到开发者选项时，可在“关于手机”里连续点按版本号，按系统提示开启。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                if (!root) InputSecurityHint()
+                if (!wireless && !root) {
                     Text(
                         "后台连接仍失败时，请在系统应用管理或电池设置中允许 Shizuku 后台运行。",
                         style = MaterialTheme.typography.bodySmall,
@@ -156,7 +166,8 @@ internal fun InputModeGuide(
                     )
                     TextButton(onClick = onShizukuSettings) { Text("打开 Shizuku 应用设置") }
                 }
-                TextButton(onClick = { inputCommand("openSettings") }) { Text("打开开发者选项") }
+                if (!root)
+                    TextButton(onClick = { inputCommand("openSettings") }) { Text("打开开发者选项") }
                 if (wireless && !state.usable) {
                     TextButton(
                         onClick = onManualPairing,
@@ -167,19 +178,22 @@ internal fun InputModeGuide(
                 }
             }
         }
-        item(key = "sources") {
-            Column(Modifier.padding(horizontal = 6.dp)) {
-                Text(
-                    "无线调试的配对通知与服务发现移植自 Shizuku v13.6.0（Apache-2.0）。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TextButton(onClick = { onOpenDocumentation(SHIZUKU_GUIDE) }) { Text("官方使用说明") }
-                    TextButton(onClick = { showLicenses = true }) { Text("开源许可") }
+        if (!root)
+            item(key = "sources") {
+                Column(Modifier.padding(horizontal = 6.dp)) {
+                    Text(
+                        "无线调试的配对通知与服务发现移植自 Shizuku v13.6.0（Apache-2.0）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = { onOpenDocumentation(SHIZUKU_GUIDE) }) {
+                            Text("官方使用说明")
+                        }
+                        TextButton(onClick = { showLicenses = true }) { Text("开源许可") }
+                    }
                 }
             }
-        }
     }
     if (showLicenses) {
         InputLicenseDialog(

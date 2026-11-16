@@ -793,7 +793,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         val mode = input?.state()?.getString("mode")
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ||
             mode == app.luoxianlv.hot.contract.SharedInput.SHIZUKU ||
-            mode == app.luoxianlv.hot.contract.SharedInput.WIRELESS
+            mode == app.luoxianlv.hot.contract.SharedInput.WIRELESS ||
+            mode == app.luoxianlv.hot.contract.SharedInput.ROOT
     }
 
     /** 截图识别后保存布局并同步音区；回调在主线程执行。 */
