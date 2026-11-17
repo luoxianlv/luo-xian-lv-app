@@ -39,7 +39,34 @@ public final class RealtimeApi {
   private final InstallationIdentity identity;
   private final long hostContract, versionCode;
   private final String hostIdentity;
-  private volatile boolean registered;
+  private final android.content.SharedPreferences cache;
+  private final Object issuance = new Object();
+  private String accessToken = "";
+  private String scope = "";
+  private long generation;
+
+  /** 返回账号边界是否变化；刷新同账号的登录 token 不打断当前演奏。 */
+  public synchronized boolean login(String token) {
+    String subject = "";
+    if (!token.isEmpty()) {
+      try {
+        String[] parts = token.split("\\.", -1);
+        if (parts.length == 3) {
+          subject = new JSONObject(new String(android.util.Base64.decode(parts[1],
+              android.util.Base64.URL_SAFE), StandardCharsets.UTF_8)).getString("sub");
+        }
+      } catch (Exception invalid) { /* 只有服务端验签成功才能签发。 */ }
+    }
+    String next = subject.isEmpty() ? "" : origin + "|" + identity.id + "|" + subject;
+    boolean changed = !next.equals(scope);
+    if (changed) generation++;
+    scope = next;
+    accessToken = subject.isEmpty() ? "" : token;
+    if (!next.equals(cache.getString("scope", ""))) {
+      cache.edit().clear().putString("scope", next).apply();
+    }
+    return changed;
+  }
 
   public static final class Request {
     private HttpURLConnection connection;
@@ -60,7 +87,7 @@ public final class RealtimeApi {
     }
   }
 
-  public RealtimeApi(URI origin, InstallationIdentity identity, long hostContract,
+  public RealtimeApi(android.content.SharedPreferences cache, URI origin, InstallationIdentity identity, long hostContract,
       String hostIdentity, long versionCode, boolean localTest) {
     boolean local = localTest && "http".equals(origin.getScheme())
         && java.util.Set.of("127.0.0.1", "localhost", "[::1]").contains(origin.getHost());
@@ -68,6 +95,7 @@ public final class RealtimeApi {
         || origin.getRawUserInfo() != null || origin.getRawQuery() != null
         || origin.getRawFragment() != null || !java.util.Set.of("", "/").contains(origin.getPath()))
       throw new IllegalArgumentException("实时服务地址无效");
+    this.cache = cache;
     this.origin = origin;
     this.identity = identity;
     this.hostContract = hostContract;
@@ -81,41 +109,97 @@ public final class RealtimeApi {
         + "://" + origin.getRawAuthority() + "/api/realtime/v1/connect");
   }
 
-  public String ticket(Request request) throws Exception {
-    return ticket(request, false);
+  private static Failure noLogin() {
+    return new Failure(Stage.REGISTER, FailureKind.HTTP, 401, 0, null);
   }
-  private String ticket(Request request, boolean retried) throws Exception {
-    if (!registered) {
-      byte[] body;
+
+  private String credential(Request request, long expected) throws Exception {
+    synchronized (issuance) {
+      String pending, token, expectedScope;
+      long now = System.currentTimeMillis();
+      synchronized (this) {
+        if (generation != expected || accessToken.isEmpty()) throw noLogin();
+        String current = cache.getString("credential", "");
+        long expiry = cache.getLong("expires", 0);
+        long retry = cache.getLong("retry", 0) - now;
+        if (!current.isEmpty() && expiry > now && (expiry - now > 600_000 || retry > 0))
+          return current;
+        if (retry > 0) throw new Failure(Stage.REGISTER, FailureKind.HTTP, 429, retry, null);
+        token = accessToken;
+        expectedScope = scope;
+        pending = cache.getString("pending", "");
+        if (pending.isEmpty()) {
+          pending = java.util.UUID.randomUUID().toString();
+          if (!cache.edit().putString("pending", pending).commit())
+            throw new IOException("无法保存 WS 申请编号");
+        }
+      }
       try {
-        body = identity.registration(hostContract, hostIdentity, versionCode);
-      } catch (Exception invalid) {
-        throw new Failure(Stage.REGISTER, FailureKind.VALIDATION, 0, 1000, invalid);
+        JSONObject result = post(request, "/installations",
+            identity.registration(hostContract, hostIdentity, versionCode), token, false,
+            "Idempotency-Key", pending);
+        String value = checkedSecret(result, "credential", Stage.REGISTER);
+        long seconds = result.getLong("expiresIn");
+        if (seconds < 1 || seconds > 3600 || !identity.id.equals(result.getString("installationId"))
+            || !expectedScope.equals(origin + "|" + identity.id + "|" + result.getString("accountId")))
+          throw new Failure(Stage.REGISTER, FailureKind.VALIDATION, 200, 1000, null);
+        synchronized (this) {
+          if (generation != expected) throw noLogin();
+          if (!cache.edit().putString("credential", value).putLong("expires", now + seconds * 1000)
+              .remove("pending").remove("retry").commit()) throw new IOException("无法保存 WS 凭证");
+        }
+        return value;
+      } catch (Failure failure) {
+        synchronized (this) {
+          if (generation != expected) throw noLogin();
+          if (failure.status == 429)
+            cache.edit().putLong("retry", System.currentTimeMillis() + failure.retryAfter).apply();
+          if ((failure.status == 429 || failure.status >= 500 || failure.kind == FailureKind.TRANSPORT)
+              && cache.getLong("expires", 0) > System.currentTimeMillis()) {
+            String valid = cache.getString("credential", "");
+            if (!valid.isEmpty()) return valid;
+          }
+        }
+        throw failure;
       }
-      JSONObject response = post(request, "/installations", body, null, false);
-      try {
-        if (!identity.id.equals(response.getString("installationId")))
-          throw new IOException("安装登记身份不一致");
-      } catch (Exception invalid) {
-        throw new Failure(Stage.REGISTER, FailureKind.VALIDATION, 200, 1000, invalid);
-      }
-      registered = true;
-    }
-    try {
-      return checkedSecret(post(request, "/tickets", "{}".getBytes(StandardCharsets.UTF_8), null, true), "ticket", Stage.TICKET);
-    } catch (Failure denied) {
-      if (denied.status == 401 && !retried) {
-        registered = false;
-        return ticket(request, true);
-      }
-      throw denied;
     }
   }
 
-  public String accountGrant(Request request, String accessToken, String epoch) throws Exception {
-    byte[] body = new JSONObject().put("installationId", identity.id)
-        .put("connectionEpoch", epoch).toString().getBytes(StandardCharsets.UTF_8);
-    return checkedSecret(post(request, "/account-grants", body, accessToken, true), "grant", Stage.ACCOUNT_GRANT);
+  private synchronized long loginGeneration() throws Failure {
+    if (accessToken.isEmpty()) throw noLogin();
+    return generation;
+  }
+
+  public String ticket(Request request) throws Exception {
+    long expected = loginGeneration();
+    for (int attempt = 0; ; attempt++) {
+      String value = credential(request, expected);
+      String login;
+      synchronized (this) {
+        if (expected != generation || accessToken.isEmpty()) throw noLogin();
+        login = accessToken;
+      }
+      try {
+        return checkedSecret(post(request, "/tickets", "{}".getBytes(StandardCharsets.UTF_8),
+            login, true, "X-WS-Credential", value), "ticket", Stage.TICKET);
+      } catch (Failure failure) {
+        if (failure.status != 410 || attempt != 0) throw failure;
+        synchronized (this) {
+          if (expected != generation) throw noLogin();
+          if (value.equals(cache.getString("credential", "")))
+            cache.edit().remove("credential").remove("expires").apply();
+        }
+      }
+    }
+  }
+
+  public String accountGrant(Request request, String token, String epoch) throws Exception {
+    long expected = loginGeneration();
+    credential(request, expected); // 活跃连接也续期；无需重新握手。
+    JSONObject body = new JSONObject().put("installationId", identity.id)
+        .put("connectionEpoch", epoch);
+    return checkedSecret(post(request, "/account-grants", body.toString().getBytes(StandardCharsets.UTF_8),
+        token, true, null, null), "grant", Stage.ACCOUNT_GRANT);
   }
 
   private String checkedSecret(JSONObject value, String name, Stage stage) throws Exception {
@@ -137,7 +221,7 @@ public final class RealtimeApi {
     };
   }
 
-  private JSONObject post(Request request, String path, byte[] body, String account, boolean authorize) throws Exception {
+  private JSONObject post(Request request, String path, byte[] body, String account, boolean authorize, String header, String value) throws Exception {
     Stage stage = stage(path);
     int status = 0;
     HttpURLConnection connection = null;
@@ -152,6 +236,7 @@ public final class RealtimeApi {
       connection.setDoOutput(true);
       connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
       connection.setRequestProperty("User-Agent", "Luoxianlv/" + versionCode);
+      if (header != null) connection.setRequestProperty(header, value);
       if (authorize) identity.authorize(connection, account == null ? "Authorization" : "X-Installation-Authorization");
       if (account != null) connection.setRequestProperty("Authorization", "Bearer " + account);
       connection.setFixedLengthStreamingMode(body.length);

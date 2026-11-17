@@ -282,7 +282,14 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
 
     private fun tick() {
         val now = now()
-        if (policy.availability(active || now < idleUntil, online, network)) disconnect()
+        if (
+            policy.availability(
+                account.isNotEmpty() && (active || now < idleUntil),
+                online,
+                network,
+            )
+        )
+            disconnect()
         if (policy.timedOut(now)) fail(policy.generation)
         val attempt = policy.begin(now)
         if (attempt >= 0) {
@@ -292,6 +299,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                         ticket = null
                         if (status == 404) serviceUnavailable = true
                         else if (status in setOf(401, 403, 409)) serviceUnavailable = false
+                        if (status == 401) accountRejected = true
                         if (status != 0 || secret.isEmpty())
                             fail(attempt, retry, status in setOf(401, 403, 409))
                         else connect(attempt, secret)
@@ -324,8 +332,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             }
             if (accountRequest.isNotEmpty() && now >= accountDeadline) clearAccountRequest(30_000)
             if (
-                (hasEnsemble || hasQueries) &&
-                    !accountRejected &&
+                !accountRejected &&
                     account.isNotEmpty() &&
                     accountRequest.isEmpty() &&
                     now >= accountRefresh
@@ -692,9 +699,15 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     override fun account(accessToken: String) {
         if (accessToken.length > 8192) return
         post {
+            val changedUser = host.login(accessToken)
             if (account != accessToken) {
+                if (changedUser || account.isEmpty() != accessToken.isEmpty()) {
+                    policy.loginChanged()
+                    disconnect()
+                }
                 account = accessToken
                 accountRejected = false
+                policy.authorizedAgain()
                 if (accessToken.isEmpty()) {
                     accountResetEpoch++
                     stopScheduled()
@@ -703,12 +716,6 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 }
                 accountGeneration++
                 clearAccountRequest(0)
-                if (
-                    accessToken.isEmpty() &&
-                        policy.connected &&
-                        !wire("clear-account", "account", "clear", JSONObject())
-                )
-                    fail(policy.generation)
                 tick()
             }
         }
@@ -737,6 +744,10 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                     ) {
                         grant = null
                         accountRejected = status == 401
+                        if (accountRejected) {
+                            fail(policy.generation, rejected = true)
+                            return@post
+                        }
                         if (
                             status != 0 ||
                                 secret.isEmpty() ||

@@ -177,7 +177,8 @@ internal class EnsembleController(context: Context) : AutoCloseable {
                 if (
                     sessions.current() != null &&
                         bridge != null &&
-                        mutable.value.connection == "connected"
+                        (mutable.value.connection == "connected" ||
+                            bridge.state().getBoolean("accountRefreshRequired"))
                 )
                     runCatching {
                         BusinessJobs.io {

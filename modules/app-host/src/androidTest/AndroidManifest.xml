@@ -8,6 +8,8 @@
     <instrumentation android:name="app.luoxianlv.host.HostHttpInstrumentation" android:targetPackage="app.luoxianlv.debug" />
     <instrumentation android:name="app.luoxianlv.host.RealtimeInstrumentation"
         android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.WsCredentialInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
     <instrumentation android:name="app.luoxianlv.host.RealtimeTlsInstrumentation"
         android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
     <instrumentation android:name="app.luoxianlv.host.RealtimeDiagnosticsInstrumentation"

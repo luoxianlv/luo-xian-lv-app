@@ -74,6 +74,13 @@ internal class ConnectionPolicy(private val random: () -> Double = Math::random)
         connected = false
     }
 
+    fun loginChanged() {
+        stop()
+        due = 0
+        rejected = false
+        failures = 0
+    }
+
     fun authorizedAgain() {
         if (!rejected) return
         rejected = false

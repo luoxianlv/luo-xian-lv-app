@@ -87,6 +87,7 @@ public final class RealtimeTlsInstrumentation extends Instrumentation {
         var type = Class.forName("app.luoxianlv.runtime.realtime.RealtimeEngine", true, loader);
         engine = (SharedRealtime.Engine) type.getConstructor(Context.class, SharedRealtime.Host.class, String.class)
             .newInstance(getTargetContext(), host, "wss://" + address + ":" + peer.server.getLocalPort());
+        engine.account("fixture-login");
         engine.usage(true);
         until = SystemClock.elapsedRealtime() + 12_000;
         if (mode.equals("valid")) {

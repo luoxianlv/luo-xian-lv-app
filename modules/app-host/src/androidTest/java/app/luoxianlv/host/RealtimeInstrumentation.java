@@ -71,11 +71,13 @@ public final class RealtimeInstrumentation extends Instrumentation {
         @Override public void message(String topic, String kind, String json) { observed.incrementAndGet(); }
       });
       engine.usage(true);
+      SystemClock.sleep(1200);
+      require(tickets.get() == 0 && peer.live.get() == 0, "未登录时申请了 WS 票据");
+      engine.account("local-test-token");
       await("WS 或热更订阅未完成", () -> selected.state().getBoolean("connected") && hot.get());
       require(peer.live.get() == 1 && tickets.get() == 1, "初始化重复创建连接");
       engine.room(true, false);
       await("四时间戳校时未完成", () -> selected.state().getBoolean("clockReady"));
-      engine.account("local-test-token");
       await("账号未授权", () -> "test-account".equals(selected.state().getString("accountId")));
       holdRefresh.set(true);
       engine.account("refreshed-local-token");
@@ -171,7 +173,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
       runOnMainSync(() -> {});
       int before = observed.get();
       engine.account("");
-      await("退出后授权未清理", () -> selected.state().getString("accountId", "").isEmpty());
+      await("退出后实时连接未关闭", () -> !selected.state().getBoolean("connected") && peer.live.get() == 0);
       SystemClock.sleep(300);
       require(observed.get() == before, "已关闭监听仍回调旧业务");
       require(callbackThread.get(), "宿主事件没有切回主线程");

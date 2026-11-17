@@ -26,6 +26,8 @@ public final class SharedRealtime {
     void complete(String secret, int status, long retryAfterMillis);
   }
   public interface Host {
+    /** 登录会话变化；用于签发或清理本机 WS 凭证。 */
+    default boolean login(String accessToken) { return false; }
     AutoCloseable ticket(Authorization callback);
     AutoCloseable accountGrant(String token, String epoch, Authorization callback);
     void hotChanged(boolean subscribed, String revision, String trustVersion);

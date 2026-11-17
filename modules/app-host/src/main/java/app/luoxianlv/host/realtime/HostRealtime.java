@@ -116,6 +116,7 @@ public final class HostRealtime implements SharedRealtime.Host, AutoCloseable {
   @Override public AutoCloseable ticket(SharedRealtime.Authorization callback) {
     return request(RealtimeApi.Stage.TICKET, api::ticket, callback);
   }
+  @Override public boolean login(String token) { return api.login(token); }
   @Override public AutoCloseable accountGrant(String token, String epoch, SharedRealtime.Authorization callback) {
     return request(RealtimeApi.Stage.ACCOUNT_GRANT,
         request -> api.accountGrant(request, token, epoch), callback);

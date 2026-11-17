@@ -545,6 +545,7 @@ public final class Bootstrap {
                 var installed = application.getPackageManager().getPackageInfo(application.getPackageName(), 0);
                 long version = android.os.Build.VERSION.SDK_INT >= 28 ? installed.getLongVersionCode() : installed.versionCode;
                 realtimeApi = new app.luoxianlv.host.realtime.RealtimeApi(
+                    application.getSharedPreferences("ws_login_credential", android.content.Context.MODE_PRIVATE),
                     java.net.URI.create(BuildConfig.REALTIME_ORIGIN), identity,
                     config == null ? 1 : config.hostContract, fingerprint, version, BuildConfig.DEBUG);
               } catch (Exception unavailable) {
