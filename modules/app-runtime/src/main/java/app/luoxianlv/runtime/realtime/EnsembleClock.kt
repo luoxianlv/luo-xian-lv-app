@@ -4,9 +4,19 @@ import kotlin.math.abs
 
 /** 四时间戳校时；只用单调时钟，不随用户修改手机时间跳变。 */
 internal class EnsembleClock {
-    data class Estimate(val offsetUs: Long, val uncertaintyUs: Long, val sampledAtUs: Long)
+    data class Estimate(
+        val offsetUs: Long,
+        val uncertaintyUs: Long,
+        val sampledAtUs: Long,
+        val roundTripUs: Long,
+    )
 
-    private data class Sample(val offset: Long, val delay: Long, val received: Long)
+    private data class Sample(
+        val offset: Long,
+        val delay: Long,
+        val received: Long,
+        val roundTrip: Long,
+    )
 
     private val samples = ArrayDeque<Sample>()
     var epoch = ""
@@ -48,7 +58,7 @@ internal class EnsembleClock {
         estimate(receivedUs)?.let { if (abs(offset - it.offsetUs) > 250_000) samples.clear() }
         samples.removeAll { receivedUs - it.received > 30_000_000 }
         if (samples.size == 12) samples.removeFirst()
-        samples.addLast(Sample(offset, delay, receivedUs))
+        samples.addLast(Sample(offset, delay, receivedUs, roundTrip))
         return true
     }
 
@@ -60,7 +70,13 @@ internal class EnsembleClock {
         val offset = best.map { it.offset }.sorted()[1]
         val uncertainty = best.maxOf { abs(it.offset - offset) + it.delay / 2 } + 1000
         if (uncertainty > 50_000) return null
-        return Estimate(offset, uncertainty, recent.maxOf { it.received })
+        // 校时选低延迟样本，开始确认的预算则要覆盖近期最慢的一次完整往返。
+        return Estimate(
+            offset,
+            uncertainty,
+            recent.maxOf { it.received },
+            recent.maxOf { it.roundTrip },
+        )
     }
 
     @Synchronized fun view(nowUs: Long) = epoch to estimate(nowUs)

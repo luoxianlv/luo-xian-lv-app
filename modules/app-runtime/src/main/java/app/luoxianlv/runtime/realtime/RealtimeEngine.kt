@@ -91,6 +91,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     private var trust = "0"
     private var lastMessage = 0L
     private var nextPing = 0L
+    private var heartbeat = DEFAULT_HEARTBEAT
     private var calibrationAttempts = 0
     private var ping: Pair<String, Long>? = null
     private var sequence = 0L
@@ -300,7 +301,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         }
         if (policy.connected) {
             if (accountId.isNotEmpty() && now >= accountExpiresAt) accountId = ""
-            if (now - lastMessage >= (if (room) 15_000 else 135_000)) {
+            if (now - lastMessage >= (if (room) 15_000 else heartbeat * 3)) {
                 fail(policy.generation)
                 return
             }
@@ -314,7 +315,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                         now +
                             if (room && calibrationAttempts < 5 && clock.estimate(micros()) == null)
                                 1000
-                            else if (room) 5000 else 45_000
+                            else if (room) 5000 else heartbeat
                 } else ping = null
             }
             if (hasHot && !hotReady && now >= hotDeadline) {
@@ -371,7 +372,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                         closeConnection(1009, "message limit")
                         return
                     }
-                    if (inbound.addAndGet(size) > 65_536) {
+                    if (inbound.addAndGet(size) > INBOUND_BYTES) {
                         inbound.addAndGet(-size)
                         closeConnection(1009, "queue limit")
                         return
@@ -439,6 +440,9 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 data.optString("installationId").takeIf {
                     it.length == 36 && runCatching { java.util.UUID.fromString(it) }.isSuccess
                 } ?: ""
+            // 心跳由服务端统一调节；缺失用默认值，越界夹到 15–120 秒，不让异常值拖垮存活检测。
+            heartbeat =
+                data.optLong("heartbeatSeconds", DEFAULT_HEARTBEAT / 1000).coerceIn(15, 120) * 1000
             policy.ready(attempt, now())
             serviceUnavailable = false
             lastMessage = now()
@@ -478,6 +482,8 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 pending[id]?.takeIf { it.topic == "query" && !it.cancelled.get() } ?: return
             val chunks = request.chunks ?: QueryChunks().also { request.chunks = it }
             val result = chunks.accept(data)
+            // 期限只约束无进展的等待；持续收到分片的大结果不因总耗时超过 15 秒而失败。
+            request.deadline = now() + REQUEST_TIMEOUT
             check(wire(id, "query", "continue", JSONObject().put("offset", chunks.offset)))
             if (result != null) {
                 pending.remove(id)
@@ -558,6 +564,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         epoch = ""
         accountId = ""
         ping = null
+        heartbeat = DEFAULT_HEARTBEAT
         clock.reset()
         calibrationAttempts = 0
         pending.values.forEach {
@@ -651,13 +658,14 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                     )
                     require(
                         (if (topic == "query")
-                            hasQueries && pending.values.none { it.topic == "query" }
+                            hasQueries &&
+                                pending.values.count { it.topic == "query" } < CONCURRENT_QUERIES
                         else hasEnsemble && accountId.isNotEmpty()) &&
                             pending.size < 32 &&
                             !pending.containsKey(id)
                     )
                     if (!request.cancelled.get()) {
-                        request.deadline = now() + 15_000
+                        request.deadline = now() + REQUEST_TIMEOUT
                         check(
                             wire(id, topic, type, RealtimeWire.objectValue(json)) {
                                 request.sentUs = micros()
@@ -757,6 +765,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             estimate?.let {
                 putLong("offsetUs", it.offsetUs)
                 putLong("uncertaintyUs", it.uncertaintyUs)
+                putLong("roundTripUs", it.roundTripUs)
                 putLong("sampledAtUs", it.sampledAtUs)
             }
         }
@@ -960,5 +969,14 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             transportCleanup.shutdown()
             actor.shutdownNow()
         }
+    }
+
+    private companion object {
+        const val DEFAULT_HEARTBEAT = 45_000L
+        const val REQUEST_TIMEOUT = 15_000L
+        /** 与服务端每连接并发查询上限一致；超出由服务端回 429。 */
+        const val CONCURRENT_QUERIES = 3
+        /** 容纳三个查询各自四片的确认窗口及控制消息，超过即视为页面消费过慢。 */
+        const val INBOUND_BYTES = 196_608
     }
 }

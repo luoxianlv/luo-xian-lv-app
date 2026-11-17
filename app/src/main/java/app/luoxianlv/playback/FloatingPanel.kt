@@ -90,10 +90,8 @@ internal class FloatingPanel(
         // 保留圆钮尺寸，把首行留白也用于点击，避免暂停必须点中小圆圈。
         val playBounds = Rect()
         row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            play?.let { button ->
-                playBounds.set(0, 0, button.right + context.dp(7), row.height)
-                row.touchDelegate = TouchDelegate(playBounds, button)
-            }
+            playBounds.set(0, 0, checkNotNull(play).right + context.dp(7), row.height)
+            row.touchDelegate = TouchDelegate(playBounds, play)
         }
         // 曲名 + 状态（拖动把手）
         val info =
@@ -134,13 +132,7 @@ internal class FloatingPanel(
         row.addView(speedToggle, LinearLayout.LayoutParams(context.dp(28), context.dp(32)))
         // 收起
         val collapse =
-            PlayerUi.button(context, "收起", iconOnly = true).apply {
-                text = "×"
-                backgroundTintList = ColorStateList.valueOf(0x00000000)
-                setTextColor(palette.muted)
-                textSize = 16f
-                cornerRadius = context.dp(14)
-                setPadding(0, 0, 0, 0)
+            PlayerUi.closeButton(context, "收起", palette).apply {
                 setOnClickListener { onCollapse() }
             }
         row.addView(collapse, LinearLayout.LayoutParams(context.dp(28), context.dp(32)))
@@ -236,18 +228,17 @@ internal class FloatingPanel(
     }
 
     fun refresh() {
-        title?.let { if (it.text.toString() != service.song.title) it.text = service.song.title }
+        title?.let {
+            val name = service.song.title
+            if (it.text.toString() != name) it.text = name
+        }
         if (!speedTracking) {
             val speed = ((service.speed.coerceIn(.5f, 2f) - .5f) * 20).roundToInt()
             speedSlider?.let { if (it.progress != speed) it.progress = speed }
         }
         refreshStatus()
         play?.apply {
-            val pending =
-                service.playing ||
-                    service.preparing ||
-                    service.waitingToPlay ||
-                    service.ensembleWaitingToStart
+            val pending = service.playing || service.preparing || service.waitingToPlay
             val description = if (pending) "暂停" else "播放"
             if (contentDescription?.toString() != description) {
                 setImageResource(if (pending) R.drawable.ic_pause else R.drawable.ic_play)
@@ -263,7 +254,6 @@ internal class FloatingPanel(
                 "${timeLabel(it)}/${timeLabel(service.durationMs)}"
             }
                 ?: service.error
-                ?: service.ensembleStatus
                 ?: if (service.loadingSong) {
                     if (service.waitingToPlay) "准备完成后立即播放…" else "正在准备谱面…"
                 } else if (service.preparing) {

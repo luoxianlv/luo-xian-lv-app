@@ -166,6 +166,16 @@ object PlayerUi {
             stateListAnimator = null
         }
 
+    fun closeButton(context: Context, label: String, palette: PlayerUiPalette) =
+        button(context, label, androidx.appcompat.R.drawable.abc_ic_clear_material, iconOnly = true)
+            .apply {
+                backgroundTintList = ColorStateList.valueOf(0x00000000)
+                iconTint = ColorStateList.valueOf(palette.muted)
+                iconSize = context.dp(16)
+                cornerRadius = context.dp(14)
+                setPadding(0, 0, 0, 0)
+            }
+
     fun divider(context: Context) =
         View(context).apply {
             setBackgroundColor(LINE)

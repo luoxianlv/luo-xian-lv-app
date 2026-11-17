@@ -17,12 +17,12 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** app_process 入口只启动 shell 输入服务；宿主租约失效时归还触屏并退出。 */
+/** 特权 app_process 入口；宿主租约失效时归还触屏并退出。 */
 public final class InputHelperMain {
   private InputHelperMain() { }
 
   public static void main(String[] arguments) {
-    if (Process.myUid() != 2000 || arguments.length != 3
+    if (!InputIdentity.privileged(Process.myUid()) || arguments.length != 3
         || !arguments[0].matches("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z0-9_]+)+")
         || !arguments[1].matches("[0-9a-f]{64}") || !arguments[2].matches("[0-9]{5,10}")) {
       Log.e("落弦律输入助手", "助手启动失败：阶段=入口身份；类型=SecurityException");
@@ -39,7 +39,7 @@ public final class InputHelperMain {
       Context system = (Context) activityThread.getDeclaredMethod("getSystemContext").invoke(thread);
       stage = "创建 shell 上下文";
       Context shellPackage = system.createPackageContext("com.android.shell", Context.CONTEXT_IGNORE_SECURITY);
-      if (shellPackage.getApplicationInfo().uid != Process.myUid())
+      if (shellPackage.getApplicationInfo().uid != 2000)
         throw new SecurityException("系统 shell 身份不匹配");
       // createPackageContext 继承调用者的 AppOps 归属；正式 AppContext 才按真实 LoadedApk 建立归属。
       stage = "构造 shell 调用上下文";

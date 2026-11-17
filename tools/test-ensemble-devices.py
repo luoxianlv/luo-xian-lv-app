@@ -1,4 +1,4 @@
-"""六个临时只读模拟器的真实合奏联调；保留原始日志，末端触摸由仪器记录。"""
+"""三台或六台临时只读模拟器的真实合奏联调；保留原始日志，末端触摸由仪器记录。"""
 import argparse
 import concurrent.futures
 import hashlib
@@ -113,6 +113,10 @@ def setup(index):
         raise RuntimeError(f"{serials[index]} 未启动")
     # 这六个固定端口只供本轮以 -read-only 启动的临时实例；原有 5554 不参与。
     assert serials[index] != "emulator-5554"
+    # 固定默认网络，避免移动数据在长演奏期间切到刚通过系统验证的 Wi-Fi。
+    if adb(index, "shell", "settings", "get", "global", "wifi_on").strip() != b"1":
+        adb(index, "shell", "svc", "wifi", "enable")
+    adb(index, "shell", "svc", "data", "disable")
     adb(index, "install", "-r", args.apk)
     adb(index, "install", "-r", args.test_apk)
     installed = adb(index, "shell", "pm", "path", package).decode().strip().removeprefix("package:")
@@ -136,7 +140,6 @@ def setup(index):
 def network(index, enabled):
     action = "enable" if enabled else "disable"
     adb(index, "shell", "svc", "wifi", action)
-    adb(index, "shell", "svc", "data", action)
 
 
 def all_(values, predicate):
@@ -152,7 +155,7 @@ try:
         logs.append(stream)
         processes.append(subprocess.Popen([args.adb, "-s", serials[index], "shell", "am", "instrument", "-w",
             f"{package}.test/app.luoxianlv.host.EnsembleMultiInstrumentation"], stdout=stream, stderr=subprocess.STDOUT))
-    await_state("六机登录授权", lambda all: all_(all, lambda state, i: state.get("account") == f"emulator-{i}"), 100)
+    await_state("全员登录授权", lambda all: all_(all, lambda state, i: state.get("account") == f"emulator-{i}"), 100)
     command(0, "create")
     result = await_state("主控建房", lambda all: bool(all[0].get("room")) and not all[0].get("working"))
     code = result[0]["room"]["code"]
@@ -161,7 +164,7 @@ try:
     command(0, "choose")
     await_state("同谱下载描述", lambda all: all_(all, lambda state, i: bool((state.get("room") or {}).get("score")) and not state.get("working")))
     each(lambda index: command(index, "prepare"))
-    await_state("六机输入和校时就绪", lambda all: all_(all, lambda state, i: state.get("ready") and state.get("inputReady")))
+    await_state("全员输入和校时就绪", lambda all: all_(all, lambda state, i: state.get("ready") and state.get("inputReady")))
     assert all(value.get("noteCount", 0) == 0 for value in inputs()), "准备阶段提前演奏"
     # 在真实应用内观察全员确认后立即取消；ADB 的六机回读不能占用两秒倒计时。
     command(0, "startAndCancel")
@@ -171,7 +174,7 @@ try:
     each(lambda index: command(index, "prepare"))
     await_state("取消后重新准备", lambda all: all_(all, lambda state, i: state.get("ready")))
     command(0, "resume")
-    await_state("六机同步起奏", lambda all: all_(all, lambda state, i: state.get("playing")), 20)
+    await_state("全员同步起奏", lambda all: all_(all, lambda state, i: state.get("playing")), 20)
     time.sleep(2)
     initial = inputs()
     assert all(value.get("noteCount", 0) > 0 for value in initial), "有设备未提交首音"
@@ -210,8 +213,29 @@ try:
         current = states()
         assert all_(current, lambda state, i: state.get("playing")), "十分钟期间出现非预期停止"
         time.sleep(min(10, max(0, until-time.monotonic())))
-    command(0, "pause")
+    command(0, "openFloatingPicker")
     await_state("长时间线暂停", lambda all: all_(all, lambda state, i: not state.get("playing")))
+    paused = await_state("悬浮选曲已暂停全员", lambda all: all_(all, lambda s, i:
+        (s.get("room") or {}).get("phase") == "paused" and not s.get("ready")))
+    old_hash = paused[0]["room"]["score"]["sha256"]
+    command(0, "chooseReplacement")
+    replacement = await_state("新谱同步且全员未准备", lambda all: all_(all, lambda s, i:
+        (s.get("room") or {}).get("phase") == "idle" and s["room"]["score"]["title"] == "换曲联调" and
+        not s["ready"] and not s["playing"] and not s["working"]))
+    hashes = {s["room"]["score"]["sha256"] for s in replacement}
+    assert len(hashes) == 1 and old_hash not in hashes, "换曲后谱包没有一致更新"
+    each(lambda index: command(index, "prepare"), range(member))
+    await_state("新谱等待最后一人", lambda all: all_(all, lambda s, i:
+        s.get("ready") == (i != member) and not s["playing"]))
+    command(0, "start")
+    await_state("未全员准备拒绝开始", lambda all:
+        "请等待参与者完成准备" in all[0].get("message", "") and all_(all, lambda s, i:
+            (s.get("room") or {}).get("phase") == "idle" and not s["playing"]))
+    command(member, "prepare")
+    await_state("新谱全员就绪", lambda all: all_(all, lambda s, i: s.get("ready")))
+    command(0, "start")
+    new_start = await_state("新谱共同起奏", lambda all: all_(all, lambda s, i: s.get("playing")))
+    assert all(int(s["room"]["plan"]["positionUs"]) == 0 for s in new_start), "换曲未从头开始"
     command(0, "leave")
     await_state("退房清理", lambda all: all_(all, lambda state, i: state.get("room") is None and not state.get("working")))
     each(lambda index: command(index, "finish"))

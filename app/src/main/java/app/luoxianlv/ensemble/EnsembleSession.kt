@@ -49,7 +49,19 @@ internal class EnsembleController(context: Context) : AutoCloseable {
         val message: String = "",
         val supported: Boolean = true,
         val serviceUnavailable: Boolean = false,
-    )
+    ) {
+        fun canChoosePausedScore(paused: JSONObject): Boolean =
+            connection == "connected" &&
+                !working &&
+                !preparing &&
+                !ready &&
+                account.isNotEmpty() &&
+                room != null &&
+                room.optString("owner") == account &&
+                room.optString("phase") == "paused" &&
+                room.getString("id") == paused.getString("id") &&
+                room.getString("run") == paused.getString("run")
+    }
 
     private val app = context.applicationContext
     private val sessions = SessionStore(app)
@@ -378,10 +390,37 @@ internal class EnsembleController(context: Context) : AutoCloseable {
         }
     }
 
+    /** 新谱只能用于打开选曲窗时已确认暂停的那一轮合奏。 */
+    suspend fun pauseForFloatingScorePicker(): (Song) -> Unit {
+        check(owner && active && !closed && !suspended) { "只有当前房主可以换曲" }
+        stopLocal(false)
+        val generation = roomGeneration
+        val epoch = connectionEpoch
+        val paused = command("pause")
+        applyRoom(paused)
+        fun checkSelection() {
+            check(
+                !closed &&
+                    !suspended &&
+                    generation == roomGeneration &&
+                    epoch == connectionEpoch &&
+                    mutable.value.canChoosePausedScore(paused)
+            ) {
+                "房间状态已变化，请重新打开选曲"
+            }
+        }
+        checkSelection()
+        return { song ->
+            checkSelection()
+            choose(song)
+        }
+    }
+
     fun choose(song: Song, speed: Float = 1f, transpose: Int? = null) = work {
         val generation = roomGeneration
         val room = mutable.value.room ?: error("请先创建房间")
         check(owner) { "只有主控可以选谱" }
+        val epoch = connectionEpoch
         val body = BusinessJobs.io {
             val midi =
                 EnsembleSources(app).read(song.id)
@@ -408,6 +447,15 @@ internal class EnsembleController(context: Context) : AutoCloseable {
         }
         val hash = BusinessJobs.io { digest(body.toByteArray(Charsets.UTF_8)) }
         if (generation != roomGeneration) throw CancellationException("房间已改变")
+        val current = mutable.value.room
+        check(
+            epoch == connectionEpoch &&
+                current != null &&
+                current.optString("run") == room.getString("run") &&
+                current.optString("phase") in setOf("paused", "idle")
+        ) {
+            "房间状态已变化，请重新选曲"
+        }
         val permit = command("scoreAuthorize", JSONObject().put("sha256", hash)).getString("permit")
         val response = BusinessJobs.io {
             api.authenticatedBytes(
@@ -517,7 +565,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
     }
 
     fun prepare() {
-        if (closed || suspended || preparingJob?.isActive == true) return
+        if (closed || suspended || mutable.value.working || preparingJob?.isActive == true) return
         val generation = ++preparationGeneration
         mutable.value = mutable.value.copy(preparing = true, message = "")
         preparingJob = scope.launch {
@@ -555,26 +603,33 @@ internal class EnsembleController(context: Context) : AutoCloseable {
                     },
                 )
                 val deadline = SystemClock.elapsedRealtime() + 20_000
+                var clock: Bundle?
                 while (true) {
                     val input = playback.query("ensemble")
+                    clock = bridge?.clock()
                     if (
                         input.getString("token") == token &&
                             input.getBoolean("ready") &&
-                            bridge?.clock()?.getBoolean("ready") == true
+                            clock?.getBoolean("ready") == true
                     )
                         break
                     input.getString("error")?.takeIf { it.isNotBlank() }?.let { error(it) }
-                    check(SystemClock.elapsedRealtime() < deadline) { "输入或校时未就绪，请重试" }
+                    check(SystemClock.elapsedRealtime() < deadline) {
+                        if (input.getString("token") == token && input.getBoolean("ready"))
+                            "网络校时超时，请重新准备"
+                        else "本机输入准备超时，请检查悬浮窗和输入权限后重试"
+                    }
                     delay(50)
                 }
-                val clock = checkNotNull(bridge).clock()
+                val uncertaintyUs = checkNotNull(clock).getLong("uncertaintyUs")
                 val ready =
                     JSONObject()
                         .put("token", token)
                         .put("scoreHash", hash)
                         .put("trackHash", part.hash)
-                        .put("uncertaintyUs", clock.getLong("uncertaintyUs"))
-                        .put("roundTripUs", clock.getLong("uncertaintyUs") * 2)
+                        .put("uncertaintyUs", uncertaintyUs)
+                        // 业务热更先于运行时生效时，旧运行时沿用原有倒计时。
+                        .put("roundTripUs", clock.getLong("roundTripUs", uncertaintyUs * 2))
                 val response = command("ready", JSONObject().put("ready", ready))
                 prepared = token
                 preparedHash = "$hash:${part.hash}"

@@ -1,7 +1,6 @@
 package app.luoxianlv.playback
 
 import android.content.Context
-import android.content.res.ColorStateList
 import android.text.InputType
 import android.view.Gravity
 import android.view.inputmethod.EditorInfo
@@ -32,19 +31,16 @@ internal fun createPlaylistContent(
             elevation = context.dp(6).toFloat()
             setPadding(context.dp(14), context.dp(10), context.dp(14), context.dp(10))
         }
-    val header = PlayerUi.row(context)
+    val textInset = context.dp(10)
+    val header = PlayerUi.row(context).apply { isBaselineAligned = false }
     header.addView(
-        PlayerUi.text(context, "选择谱子", 14f, palette.text, bold = true),
+        PlayerUi.text(context, "选择谱子", 14f, palette.text, bold = true).apply {
+            setPaddingRelative(textInset, 0, 0, 0)
+        },
         LinearLayout.LayoutParams(0, -2, 1f),
     )
     val close =
-        PlayerUi.button(context, "关闭", iconOnly = true).apply {
-            text = "×"
-            backgroundTintList = ColorStateList.valueOf(0x00000000)
-            setTextColor(palette.muted)
-            textSize = 16f
-            cornerRadius = context.dp(14)
-            setPadding(0, 0, 0, 0)
+        PlayerUi.closeButton(context, "关闭", palette).apply {
             setOnClickListener { onDismiss() }
         }
     header.addView(close, LinearLayout.LayoutParams(context.dp(28), context.dp(28)))
@@ -62,12 +58,13 @@ internal fun createPlaylistContent(
             imeOptions = EditorInfo.IME_ACTION_SEARCH
             includeFontPadding = false
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            setPadding(context.dp(10), 0, context.dp(10), 0)
             background = PlayerUi.background(context, 0x00000000, 10, true, palette.line)
+            setPaddingRelative(textInset, 0, textInset, 0)
+            minimumHeight = context.dp(34)
         }
     card.addView(
         search,
-        LinearLayout.LayoutParams(-1, context.dp(34)).apply { topMargin = context.dp(6) },
+        LinearLayout.LayoutParams(-1, -2).apply { topMargin = context.dp(6) },
     )
 
     val list = PlayerUi.column(context)
@@ -91,8 +88,8 @@ internal fun createPlaylistContent(
                         palette.muted,
                     )
                     .apply {
-                        setPadding(0, context.dp(16), 0, context.dp(16))
-                        gravity = Gravity.CENTER
+                        setPaddingRelative(textInset, context.dp(16), textInset, context.dp(16))
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
                     },
                 LinearLayout.LayoutParams(-1, -2),
             )
@@ -109,8 +106,7 @@ internal fun createPlaylistContent(
                         bold = current,
                     )
                     .apply {
-                        setPadding(context.dp(12), 0, context.dp(12), 0)
-                        gravity = Gravity.CENTER_VERTICAL
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
                         maxLines = 1
                         ellipsize = android.text.TextUtils.TruncateAt.END
                         background =
@@ -120,11 +116,13 @@ internal fun createPlaylistContent(
                                 10,
                                 false,
                             )
+                        setPaddingRelative(textInset, 0, textInset, 0)
+                        minimumHeight = context.dp(40)
                         setOnClickListener {
                             onSelect(song)
                         }
                     }
-            list.addView(row, LinearLayout.LayoutParams(-1, context.dp(40)))
+            list.addView(row, LinearLayout.LayoutParams(-1, -2))
         }
     }
     fillList("")

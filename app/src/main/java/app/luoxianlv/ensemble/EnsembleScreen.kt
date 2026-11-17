@@ -16,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
@@ -52,8 +51,6 @@ internal data class EnsembleActions(
     val selectScore: () -> Unit,
     val assign: (String, Int) -> Unit,
     val control: (String, String?) -> Unit,
-    val prepare: () -> Unit,
-    val stop: () -> Unit,
     val synchronize: () -> Unit,
     val leave: () -> Unit,
 )
@@ -99,8 +96,6 @@ fun EnsembleScreen(onBack: () -> Unit, onLogin: () -> Unit, onInputSetup: () -> 
                 selectScore = { choosing = true },
                 assign = { account, track -> controller?.assign(account, track) },
                 control = { action, account -> controller?.control(action, account) },
-                prepare = { controller?.prepare() },
-                stop = { controller?.stopLocal(true) },
                 synchronize = { controller?.synchronize() },
                 leave = { controller?.leave() },
             ),
@@ -142,7 +137,7 @@ internal fun EnsemblePage(
     LazyColumn(
         modifier = Modifier.fillMaxSize().imePadding(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item(key = "title") {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -189,7 +184,6 @@ internal fun EnsemblePage(
             item(key = "join") { JoinRoomCard(connected && !state.working, actions.join) }
         } else {
             item(key = "room") { EnsembleRoomHeader(room, connected, state.working, actions) }
-            item(key = "score") { EnsembleRoomScore(room, actions.selectScore) }
             item(key = "controls") { EnsembleRoomControls(room, state, actions) }
             item(key = "members") { EnsembleMembersCard(room, actions) }
             item(key = "leave") { EnsembleLeaveRoom(room, state.working, connected, actions.leave) }
@@ -253,34 +247,24 @@ private fun EnsembleConnectionCard(
 @Composable
 private fun CreateRoomCard(enabled: Boolean, onCreate: () -> Unit) {
     SettingsCard {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                EnsembleIcon(Icons.Filled.Groups)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        "发起一场合奏",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Text(
-                        "2–6 人 · 同谱演奏或分配声部",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "好友合奏",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "2–6 人 · 支持分声部",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            Button(
-                onClick = onCreate,
-                enabled = enabled,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
-            ) {
-                Icon(Icons.Filled.Add, null, Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("创建房间")
-            }
+            Button(onClick = onCreate, enabled = enabled) { Text("创建房间") }
         }
     }
 }
@@ -296,7 +280,7 @@ private fun JoinRoomCard(enabled: Boolean, onJoin: (String) -> Unit) {
         }
     }
     SettingsCard {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
                 "加入朋友的房间",
                 style = MaterialTheme.typography.titleMedium,
@@ -306,7 +290,6 @@ private fun JoinRoomCard(enabled: Boolean, onJoin: (String) -> Unit) {
                 value = code,
                 onValueChange = { value -> code = value.filter { it in '0'..'9' }.take(6) },
                 label = { Text("六位房间码") },
-                leadingIcon = { Icon(Icons.Filled.Tag, null) },
                 trailingIcon = {
                     if (code.isNotEmpty())
                         IconButton(onClick = { code = "" }) { Icon(Icons.Filled.Close, "清空房间码") }
@@ -324,28 +307,10 @@ private fun JoinRoomCard(enabled: Boolean, onJoin: (String) -> Unit) {
             OutlinedButton(
                 onClick = ::join,
                 enabled = enabled && code.length == 6,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("加入房间")
             }
-        }
-    }
-}
-
-@Composable
-internal fun EnsembleIcon(icon: ImageVector, modifier: Modifier = Modifier) {
-    Surface(
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        modifier = modifier.size(48.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                icon,
-                null,
-                Modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-            )
         }
     }
 }

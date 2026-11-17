@@ -125,19 +125,6 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private val interruptionGuard = PlaybackInterruptionGuard()
     private val input = PlaybackInput()
     private val ensemble = EnsemblePlayback()
-    val ensembleWaitingToStart: Boolean
-        get() = app.luoxianlv.ensemble.EnsembleSession.current?.waitingToStart == true
-
-    val ensembleStatus: String?
-        get() =
-            if (app.luoxianlv.ensemble.EnsembleSession.current?.active != true) null
-            else if (playing) "合奏演奏中"
-            else if (preparing || ensemble.preparing) "合奏准备中…"
-            else if (ensembleWaitingToStart)
-                app.luoxianlv.ensemble.EnsembleSession.current?.pendingStatus
-            else if (ensemble.ready)
-                "已就绪 · ${if (app.luoxianlv.ensemble.EnsembleSession.current?.owner == true) "点击开始" else "等待主控"}"
-            else "合奏 · 点击准备"
 
     internal fun canStartPlayback() =
         input.merged || interruptionGuard.canStart(SystemClock.uptimeMillis())
@@ -993,7 +980,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         val mode = input?.state()?.getString("mode")
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ||
             mode == app.luoxianlv.hot.contract.SharedInput.SHIZUKU ||
-            mode == app.luoxianlv.hot.contract.SharedInput.WIRELESS
+            mode == app.luoxianlv.hot.contract.SharedInput.WIRELESS ||
+            mode == app.luoxianlv.hot.contract.SharedInput.ROOT
     }
 
     /** 截图识别后保存布局并同步音区；回调在主线程执行。 */
@@ -1067,7 +1055,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             ?.let { it.stopLocal(true, it.owner) }
     }
 
-    private fun pauseNow() {
+    internal fun pauseNow() {
         val pausedPosition = positionMs
         ensemble.clear()
         val wasPlaying = playing

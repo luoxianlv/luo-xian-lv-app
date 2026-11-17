@@ -26,9 +26,11 @@ object EnsembleMultiProbe {
             val controller = EnsembleSession.current
             var signedIn = false
             var lastCommand = ""
+            var lastCommandLocalUs = 0L
             var failure = ""
             var success = false
             var cancelOnCommit = false
+            var selectFromFloating: ((Song) -> Unit)? = null
             var cancelledPlan: JSONObject? = null
             var cancelledAtUs = 0L
             val history = org.json.JSONArray()
@@ -60,6 +62,7 @@ object EnsembleMultiProbe {
                         }
                     if (command != null && command.optString("id") != lastCommand) {
                         lastCommand = command.getString("id")
+                        lastCommandLocalUs = android.os.SystemClock.elapsedRealtimeNanos() / 1000
                         when (command.getString("action")) {
                             "create" -> controller.create()
                             "join" -> controller.join(command.getString("code"))
@@ -74,6 +77,14 @@ object EnsembleMultiProbe {
                                     )
                                 )
                             "prepare" -> controller.prepare()
+                            "openFloatingPicker" ->
+                                selectFromFloating = controller.pauseForFloatingScorePicker()
+                            "chooseReplacement" -> {
+                                checkNotNull(selectFromFloating)(
+                                    Song("replacement", "换曲联调", "1 2 3 4 ".repeat(32), 120, "本机测试")
+                                )
+                                selectFromFloating = null
+                            }
                             "start",
                             "pause",
                             "resume",
@@ -126,6 +137,7 @@ object EnsembleMultiProbe {
                             .put("room", state.room ?: JSONObject.NULL)
                             .put("waiting", controller.waitingToStart)
                             .put("lastCommand", lastCommand)
+                            .put("lastCommandLocalUs", lastCommandLocalUs)
                             .put("playing", input?.getBoolean("playing") ?: false)
                             .put("inputReady", input?.getBoolean("ready") ?: false)
                             .put("inputError", input?.getString("error").orEmpty())

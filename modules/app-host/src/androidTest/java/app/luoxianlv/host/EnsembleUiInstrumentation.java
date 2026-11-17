@@ -98,6 +98,15 @@ public final class EnsembleUiInstrumentation extends Instrumentation {
             waitForUiFrames(100);
             onMain(() -> verifyInput.invoke(null, mounted[0]));
             if (screenshots) screenshot(new File(output, scenario + "-" + theme + ".png"));
+            if (screenshots && java.util.Arrays.asList("owner","member","playing","paused","finishedReady").contains(scenario)) {
+              onMain(() -> {
+                Bitmap panel = (Bitmap) probe.getMethod("floatingPreview", Context.class, String.class, boolean.class)
+                    .invoke(null, context[0], scenario, dark);
+                try (FileOutputStream stream = new FileOutputStream(new File(output, scenario + "-" + theme + "-panel.png"))) {
+                  if (!panel.compress(Bitmap.CompressFormat.PNG, 100, stream)) throw new AssertionError("保存合奏面板失败");
+                } finally { panel.recycle(); }
+              });
+            }
             int frames = 0;
             while (true) {
               AtomicBoolean more = new AtomicBoolean();

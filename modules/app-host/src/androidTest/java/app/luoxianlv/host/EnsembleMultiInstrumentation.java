@@ -35,8 +35,14 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
   private android.view.View background;
   private int backgroundVisibility;
   private final Recorder recorder = new Recorder();
+  private EnsembleScreenProbe screen;
+  private boolean verifyScreen;
 
-  @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+  @Override public void onCreate(Bundle arguments) {
+    super.onCreate(arguments);
+    verifyScreen = arguments != null && "true".equals(arguments.getString("verifyScreen"));
+    start();
+  }
 
   @Override public void onStart() {
     Bundle output = new Bundle();
@@ -65,6 +71,10 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
         return shown.get();
       });
       main(() -> { var page=findPage(activity.findViewById(android.R.id.content)); background=page.getChildAt(0); backgroundVisibility=background.getVisibility(); background.setVisibility(android.view.View.INVISIBLE); require(page.inUse(),"绘制暂停不应让宿主进入后台休眠"); });
+      if (verifyScreen) {
+        screen = new EnsembleScreenProbe(this, activity);
+        main(screen::show);
+      }
       previous = PlaybackBridge.current();
       require(previous == null || !previous.query("state").getBoolean("playing"), "已有演奏不能被测试接管");
       var context = new AtomicReference<Context>();
@@ -76,7 +86,7 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
       hadFixed = experimental.contains(FIXED);
       oldFixed = experimental.getBoolean(FIXED, false);
       preferencesSaved = true;
-      require(experimental.edit().putBoolean(FIXED, true).commit(), "固定布局未保存");
+      require(experimental.edit().putBoolean(FIXED, !verifyScreen).commit(), "布局模式未保存");
       oldMode = SharedInput.current().state().getString("mode");
       SharedInput.current().select(SharedInput.ACCESSIBILITY);
       await("输入模式", () -> SharedInput.ACCESSIBILITY.equals(SharedInput.current().state().getString("mode")));
@@ -93,7 +103,11 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
       require(failed.get() == null, "播放器准备失败：" + failed.get());
       main(() -> { recorder.enabled = true; session.activate(); });
       port = PlaybackBridge.connect(new PlaybackPort() {
-        @Override public Bundle query(String kind) { return session.query(kind); }
+        @Override public Bundle query(String kind) {
+          Bundle state = session.query(kind);
+          if (screen != null && kind.equals("ensemble") && state.getBoolean("ready")) screen.inputReady();
+          return state;
+        }
         @Override public void command(String action, Bundle args) {
           if (action.equals("ensembleStart")) {
             recorder.starts++;
@@ -148,6 +162,7 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
           require(editor.commit(), "原固定布局偏好恢复失败");
         }
         if (oldMode != null) SharedInput.current().select(oldMode);
+        if (screen != null) main(screen::close);
         if (background != null) main(() -> background.setVisibility(backgroundVisibility));
       } catch (Throwable error) { output.putString("stream", android.util.Log.getStackTraceString(error)); passed = false; }
       try { localProxy.close(); } catch (Exception error) { output.putString("stream", android.util.Log.getStackTraceString(error)); passed = false; }
@@ -206,11 +221,15 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
         result.put("clockSamples",diagnostic).put("localNowUs",SystemClock.elapsedRealtimeNanos()/1000)
             .put("roomActive",bridge.state().getBoolean("roomActive"));
         if (!notes.isEmpty()) result.put("first", notes.get(0)).put("last", notes.get(notes.size()-1));
+        if (screen != null) result.put("screen", screen.snapshot());
         if (complete) result.put("notes", new JSONArray(notes));
         return result;
       } catch (Exception error) { throw new AssertionError(error); }
     }
-    @Override public void screenshot(int displayId, ScreenshotCallback callback) { callback.failure(-1); }
+    @Override public void screenshot(int displayId, ScreenshotCallback callback) {
+      if (screen == null) callback.failure(-1);
+      else screen.capture(callback);
+    }
     @Override public void foreground(boolean enabled) { require(!enabled, "测试不应创建额外浮窗"); }
   }
 

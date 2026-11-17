@@ -61,8 +61,9 @@ internal object RealtimeQueries {
                     .put("method", "GET")
                     .put("path", uri.rawPath + (uri.rawQuery?.let { "?$it" } ?: ""))
                     .put("authorization", token.orEmpty())
+            // 无进展超时由连接引擎按分片顺延判定；这里只兜底总时长，避免慢网大结果中途转 HTTP 重下。
             val reply =
-                withTimeoutOrNull(16_000) {
+                withTimeoutOrNull(60_000) {
                     suspendCancellableCoroutine<Pair<Boolean, String>> { continuation ->
                         val owned = AtomicReference<AutoCloseable?>()
                         continuation.invokeOnCancellation { owned.getAndSet(null)?.close() }

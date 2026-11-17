@@ -36,6 +36,82 @@ import org.json.JSONObject
 object EnsembleUiProbe {
     private val mounted = mutableMapOf<View, ProbePage>()
 
+    /** 在模拟器中按正式悬浮窗宽度绘制真实控件，并核对主按钮的回调。 */
+    @JvmStatic
+    fun floatingPreview(
+        context: Context,
+        scenario: String,
+        dark: Boolean,
+    ): android.graphics.Bitmap {
+        mainThread()
+        val state = fixture(scenario)
+        val palette =
+            if (dark) app.luoxianlv.playback.PlayerUi.DarkPalette
+            else app.luoxianlv.playback.PlayerUi.LightPalette
+        val wrapped = android.view.ContextThemeWrapper(context, app.luoxianlv.R.style.AppTheme)
+        var command = ""
+        val panel =
+            app.luoxianlv.playback.EnsembleFloatingPanel(
+                wrapped,
+                palette,
+                { state },
+                { scenario == "playing" },
+                { null },
+                { command = it },
+                {},
+                {},
+            )
+        val density = context.resources.displayMetrics.density
+        panel.measure(
+            View.MeasureSpec.makeMeasureSpec(
+                (app.luoxianlv.playback.EnsembleFloatingPanel.WIDTH_DP * density).toInt(),
+                View.MeasureSpec.EXACTLY,
+            ),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+        )
+        panel.layout(0, 0, panel.measuredWidth, panel.measuredHeight)
+        val bitmap =
+            android.graphics.Bitmap.createBitmap(
+                panel.width,
+                panel.height,
+                android.graphics.Bitmap.Config.ARGB_8888,
+            )
+        panel.draw(android.graphics.Canvas(bitmap))
+        val expected =
+            when (scenario) {
+                "owner" -> "start"
+                "member" -> "prepare"
+                "paused" -> "resume"
+                "playing" -> "pause"
+                "finishedReady" -> "restart"
+                else -> null
+            }
+        if (expected != null) {
+            val bar = panel.getChildAt(1) as ViewGroup
+            val primary = bar.getChildAt(0)
+            check(primary.isEnabled && primary.performClick() && command == expected) {
+                "合奏悬浮窗主操作错误：$scenario / $command"
+            }
+        }
+        if (scenario == "paused") {
+            val row = panel.getChildAt(1) as ViewGroup
+            val more =
+                (0 until row.childCount).map(row::getChildAt).single {
+                    it.contentDescription == "更多操作"
+                }
+            val extra = panel.getChildAt(panel.childCount - 1) as ViewGroup
+            check(
+                extra.visibility == View.GONE &&
+                    more.performClick() &&
+                    extra.visibility == View.VISIBLE
+            )
+            val options = extra.getChildAt(0) as ViewGroup
+            check(options.getChildAt(0).performClick() && command == "restart")
+            check(extra.visibility == View.GONE)
+        }
+        return bitmap
+    }
+
     @JvmStatic
     fun render(context: Context, activity: Activity, scenario: String, dark: Boolean): View {
         mainThread()
@@ -182,6 +258,7 @@ object EnsembleUiProbe {
             if (page.scenario == "unauthorized")
                 check("登录" !in page.labels && page.calls["login"] == null)
         } else {
+            check("准备演奏" !in page.labels && "取消我的准备" !in page.labels) { "准备操作仅在游戏悬浮窗提供" }
             check(page.labels.any { it.replace(" ", "").contains("438216") }) { "缺少房间码" }
             if (page.scenario == "emptyRoom") {
                 check("还未选择曲目" in page.labels && "1/6" in page.labels) { "新房间缺少无谱或人数状态" }
@@ -196,28 +273,8 @@ object EnsembleUiProbe {
                     "成员获得了主控操作"
                 }
             }
-            if (page.scenario in setOf("finished", "finishedReady")) {
-                check("已结束" in page.labels && "开始合奏" !in page.labels) { "自然结束后仍提供初次开始操作" }
-                check(page.calls["control:start:"] == null)
-                if (page.scenario == "finishedReady") check(page.calls["control:restart:"] == 1)
-                else {
-                    check(page.calls["prepare"] == 1 && page.calls["control:restart:"] == null) {
-                        "自然结束后应先重新准备，不能直接重新开始"
-                    }
-                }
-            }
-            if (page.scenario == "rejoin") {
-                check(page.calls["control:rejoin:fixture-owner"] == 1) { "主控重接入未携带本人的账号" }
-            }
-            if (page.scenario in setOf("scheduledStart", "pendingRejoin")) {
-                val waiting = if (page.scenario == "scheduledStart") "等待同步开始" else "等待接入"
-                check(waiting in page.labels) { "预约尚未执行时缺少等待状态：$waiting" }
-                check(
-                    "重新接入合奏" !in page.labels &&
-                        page.calls.keys.none { it.startsWith("control:rejoin:") }
-                ) {
-                    "等待中的预约被误当成可以重新接入"
-                }
+            check(page.labels.none { it in setOf("开始合奏", "全员暂停", "继续合奏", "重新开始", "停止我的演奏") }) {
+                "演奏操作只能从游戏悬浮窗发起"
             }
         }
         return JSONObject()
@@ -295,7 +352,6 @@ object EnsembleUiProbe {
             put("重新同步", scenario != "disconnected")
             put("启动悬浮窗", scenario != "preparing")
             if (scenario == "member") {
-                put("准备演奏", true)
                 put("退出房间", true)
             } else {
                 put(
@@ -303,35 +359,6 @@ object EnsembleUiProbe {
                     scenario in setOf("owner", "paused", "finished", "finishedReady", "emptyRoom"),
                 )
                 put("结束房间", scenario != "disconnected")
-                put(
-                    when (scenario) {
-                        "preparing" -> "取消准备"
-                        "playing",
-                        "disconnected" -> "停止我的演奏"
-                        "finished",
-                        "emptyRoom" -> "准备演奏"
-                        else -> "取消我的准备"
-                    },
-                    scenario != "emptyRoom",
-                )
-                when (scenario) {
-                    "playing",
-                    "disconnected",
-                    "scheduledStart",
-                    "pendingRejoin" -> put("全员暂停", true)
-                    "rejoin" -> {
-                        put("重新接入合奏", true)
-                        put("全员暂停", true)
-                    }
-                    "finished",
-                    "finishedReady" -> put("重新开始", scenario == "finishedReady")
-                    "proposed" -> put("取消开始", true)
-                    "paused" -> {
-                        put("继续合奏", true)
-                        put("重新开始", true)
-                    }
-                    else -> put("开始合奏", scenario == "owner")
-                }
             }
         }
     }
@@ -341,16 +368,6 @@ object EnsembleUiProbe {
             "重新同步" -> "synchronize"
             "启动悬浮窗" -> "inputSetup"
             "选择曲目" -> "selectScore"
-            "准备演奏" -> "prepare"
-            "取消准备",
-            "取消我的准备",
-            "停止我的演奏" -> "stop"
-            "开始合奏" -> "control:start:"
-            "继续合奏" -> "control:resume:"
-            "重新开始" -> "control:restart:"
-            "重新接入合奏" -> "control:rejoin:fixture-owner"
-            "取消开始",
-            "全员暂停" -> "control:pause:"
             else -> null
         }
 
@@ -448,8 +465,6 @@ object EnsembleUiProbe {
                 selectScore = { record("selectScore") },
                 assign = { account, track -> record("assign:$account:$track") },
                 control = { command, account -> record("control:$command:${account.orEmpty()}") },
-                prepare = { record("prepare") },
-                stop = { record("stop") },
                 synchronize = { record("synchronize") },
                 leave = { record("leave") },
             )

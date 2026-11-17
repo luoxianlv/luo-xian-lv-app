@@ -49,6 +49,7 @@ internal data class InputModeState(
             when (mode) {
                 "shizuku" -> "Shizuku"
                 "wireless" -> "无线调试（内置）"
+                "root" -> "Root"
                 else -> "无障碍"
             }
 
@@ -66,6 +67,7 @@ internal data class InputModeState(
                 usable -> "可以开始演奏"
                 pairing -> "正在配对"
                 busy -> "正在连接"
+                mode == "root" && !permissionGranted -> "需要 Root 授权"
                 mode == "shizuku" && !installed -> "需要安装 Shizuku"
                 mode == "shizuku" && !binderAlive -> "需要启动 Shizuku"
                 mode == "shizuku" && !binderReady -> "正在等待 Shizuku"
@@ -101,6 +103,7 @@ internal data class InputModeState(
                 mode == "wireless" && !busy && !connected && !wifiConnected -> "先连接 Wi-Fi，再点连接。"
                 mode == "wireless" && !busy && !connected && !wirelessEnabled ->
                     "开启无线调试后会自动连接，无需重新配对。"
+                mode == "root" -> displayMessage.ifBlank { "在 Root 管理器中允许落弦律即可连接。" }
                 else -> displayMessage
             }
 
@@ -108,6 +111,7 @@ internal data class InputModeState(
         get() =
             when {
                 !supported || !overlayGranted || busy || pairing || usable -> null
+                mode == "root" -> InputModeAction(if (connected) "重新连接" else "授权并连接", "connect")
                 mode == "shizuku" && !installed -> InputModeAction("安装 Shizuku", "installShizuku")
                 mode == "shizuku" && !binderAlive -> InputModeAction("打开 Shizuku", "openShizuku")
                 mode == "shizuku" && (!binderReady || permissionState == "unavailable") ->

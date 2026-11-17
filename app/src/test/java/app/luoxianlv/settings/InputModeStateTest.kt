@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class InputModeStateTest {
+    @Test
+    fun rootAuthorizationAndTouchCapabilitiesAreIndependent() {
+        val root =
+            InputModeState(supported = true, overlayGranted = true, mode = "root", message = "")
+        assertEquals("Root", root.label)
+        assertEquals("需要 Root 授权", root.statusTitle)
+        assertEquals("connect", root.primaryAction?.command)
+        assertFalse(root.usable)
+        assertNull(root.copy(busy = true).primaryAction)
+        val connected = root.copy(permissionGranted = true, connected = true)
+        assertEquals("触控检查未通过", connected.statusTitle)
+        assertFalse(connected.usable)
+        assertTrue(connected.copy(touchReady = true, coexistenceReady = true).usable)
+        assertEquals(
+            "已连接，可边操作边演奏",
+            connected.copy(touchReady = true, coexistenceReady = true).statusSummary,
+        )
+    }
+
     private val shizuku =
         InputModeState(
             supported = true,

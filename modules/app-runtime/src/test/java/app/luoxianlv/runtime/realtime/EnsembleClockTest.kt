@@ -28,6 +28,7 @@ class EnsembleClockTest {
         add(clock, 40_000)
         assertEquals(1_000_000L, clock.estimate(60_000)!!.offsetUs)
         assertEquals(6000L, clock.estimate(60_000)!!.uncertaintyUs)
+        assertEquals(11_000L, clock.estimate(60_000)!!.roundTripUs)
     }
 
     @Test
@@ -35,8 +36,13 @@ class EnsembleClockTest {
         val clock = EnsembleClock()
         repeat(3) { add(clock, it * 20_000L) }
         add(clock, 100_000, 500_000, 1_100_000)
-        assertEquals(1_000_000L, clock.estimate(610_000)!!.offsetUs)
+        val estimate = clock.estimate(610_000)!!
+        assertEquals(1_000_000L, estimate.offsetUs)
+        assertEquals(6000L, estimate.uncertaintyUs)
+        assertEquals(501_000L, estimate.roundTripUs)
         assertNull(clock.estimate(31_000_000))
+        repeat(3) { add(clock, 31_000_000 + it * 20_000L) }
+        assertEquals(11_000L, clock.estimate(31_060_000)!!.roundTripUs)
     }
 
     @Test
