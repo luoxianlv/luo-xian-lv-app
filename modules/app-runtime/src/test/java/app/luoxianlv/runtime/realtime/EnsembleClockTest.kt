@@ -46,6 +46,27 @@ class EnsembleClockTest {
     }
 
     @Test
+    fun overlappingBoundsRetainPrecisionDuringAsymmetricDelay() {
+        val clock = EnsembleClock()
+        add(clock, 0, 140_000, 1_030_000)
+        add(clock, 300_000, 120_000, 980_000)
+        add(clock, 600_000, 70_000, 1_005_000)
+        val estimate = clock.estimate(700_000)!!
+        assertEquals(1_005_000L, estimate.offsetUs)
+        assertEquals(36_000L, estimate.uncertaintyUs)
+        assertEquals(141_000L, estimate.roundTripUs)
+    }
+
+    @Test
+    fun rejectsDisjointBoundsEvenWhenIndividualSamplesAreFast() {
+        val clock = EnsembleClock()
+        add(clock, 0, 10_000)
+        add(clock, 20_000, 10_000)
+        add(clock, 40_000, 10_000, 1_025_000)
+        assertNull(clock.estimate(60_000))
+    }
+
+    @Test
     fun serverRestartOrUnhealthyClockRequiresFreshCalibration() {
         val clock = EnsembleClock()
         repeat(3) { add(clock, it * 20_000L) }

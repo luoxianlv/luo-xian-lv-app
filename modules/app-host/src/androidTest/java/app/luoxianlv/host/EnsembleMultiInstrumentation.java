@@ -217,10 +217,11 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
         synchronized (clock) {
           for (Object sample : (Iterable<?>) samplesField.get(clock)) {
             var record = new JSONObject();
-            for (String name : new String[]{"offset", "delay", "received"}) {
+            for (String name : new String[]{"earliestOffset", "latestOffset", "delay", "received"}) {
               var method=sample.getClass().getDeclaredMethod("get"+Character.toUpperCase(name.charAt(0))+name.substring(1));
               method.setAccessible(true);record.put(name,method.invoke(sample));
             }
+            record.put("offset", record.getLong("earliestOffset") + record.getLong("delay") / 2);
             diagnostic.put(record);
           }
         }

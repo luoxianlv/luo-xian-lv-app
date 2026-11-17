@@ -12,7 +12,8 @@ internal class EnsembleClock {
     )
 
     private data class Sample(
-        val offset: Long,
+        val earliestOffset: Long,
+        val latestOffset: Long,
         val delay: Long,
         val received: Long,
         val roundTrip: Long,
@@ -53,12 +54,15 @@ internal class EnsembleClock {
         val serverWork = serverSentUs - serverReceivedUs
         if (roundTrip > 1_000_000 || serverWork > roundTrip) return false
         val delay = roundTrip - serverWork
-        val offset = (serverReceivedUs - sentUs) / 2 + (serverSentUs - receivedUs) / 2
+        // 双向传输时间均非负，因此四个时间戳给出偏移量的上下界，无需假定上下行对称。
+        val earliestOffset = serverSentUs - receivedUs
+        val latestOffset = serverReceivedUs - sentUs
+        val offset = earliestOffset + delay / 2
         // 大幅漂移需要重新取得足够样本，不能挪动已安排的按键期限。
         estimate(receivedUs)?.let { if (abs(offset - it.offsetUs) > 250_000) samples.clear() }
         samples.removeAll { receivedUs - it.received > 30_000_000 }
         if (samples.size == 12) samples.removeFirst()
-        samples.addLast(Sample(offset, delay, receivedUs, roundTrip))
+        samples.addLast(Sample(earliestOffset, latestOffset, delay, receivedUs, roundTrip))
         return true
     }
 
@@ -67,8 +71,13 @@ internal class EnsembleClock {
         val recent = samples.filter { nowUs >= it.received && nowUs - it.received <= 30_000_000 }
         if (recent.size < 3) return null
         val best = recent.sortedBy { it.delay }.take(3)
-        val offset = best.map { it.offset }.sorted()[1]
-        val uncertainty = best.maxOf { abs(it.offset - offset) + it.delay / 2 } + 1000
+        // 同一稳定时钟的真实偏移应同时落在这三个区间内；区间相离时等待新样本。
+        val earliest = best.maxOf { it.earliestOffset }
+        val latest = best.minOf { it.latestOffset }
+        if (earliest > latest) return null
+        val width = latest - earliest
+        val offset = earliest + width / 2
+        val uncertainty = (width + 1) / 2 + 1000
         if (uncertainty > 50_000) return null
         // 校时选低延迟样本，开始确认的预算则要覆盖近期最慢的一次完整往返。
         return Estimate(

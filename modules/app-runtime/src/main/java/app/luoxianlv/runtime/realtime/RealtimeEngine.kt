@@ -321,9 +321,12 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                     calibrationAttempts++
                     nextPing =
                         now +
-                            if (room && calibrationAttempts < 5 && clock.estimate(micros()) == null)
-                                1000
-                            else if (room) 5000 else heartbeat
+                            when {
+                                !room -> heartbeat
+                                clock.estimate(micros()) != null -> 5000
+                                calibrationAttempts < 5 -> 1000
+                                else -> 2500
+                            }
                 } else ping = null
             }
             if (hasHot && !hotReady && now >= hotDeadline) {
