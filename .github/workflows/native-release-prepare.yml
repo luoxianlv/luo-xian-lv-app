@@ -21,12 +21,12 @@ on:
       version_name:
         description: 候选版本号（只生成验收产物，不发布）
         required: true
-        default: '1.2.0'
+        default: '1.4.0'
         type: string
       version_code:
         description: 候选版本代码（须高于已发布版本）
         required: true
-        default: '20'
+        default: '26'
         type: string
 
 permissions:
@@ -40,7 +40,7 @@ jobs:
   prepare:
     if: github.repository == 'luoxianlv/luo-xian-lv-app' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,6 +95,14 @@ jobs:
         run: |
           grep -Fq 'boolean REALTIME_ENABLED = true;' modules/app-host/build/generated/source/buildConfig/release/app/luoxianlv/host/BuildConfig.java
           sha256sum modules/app-host/build/outputs/apk/release/app-host-release.apk
+      - name: 在临时模拟器验证正式版覆盖升级
+        if: inputs.verify_realtime_only && !inputs.source_tag
+        working-directory: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version_name }}
+          CODE: ${{ inputs.version_code }}
+        run: bash .github/scripts/verify-signed-upgrade.sh
       - name: 保存签名验收包与公开核验资料
         if: always() && !inputs.verify_realtime_only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

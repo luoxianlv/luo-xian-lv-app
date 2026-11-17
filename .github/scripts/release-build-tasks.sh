@@ -7,7 +7,7 @@ select_release_tasks() {
   if [[ "$native" == true ]]; then
     if [[ "$skip" == false ]]; then
       release_tasks+=(:buildSrc:test :hot-core:testDebugUnitTest :app:testDebugUnitTest)
-      for module in input-core update-core; do
+      for module in app-runtime input-core update-core; do
         if [[ -d "modules/$module" || -d "$module" ]]; then
           release_tasks+=(":$module:testDebugUnitTest")
         fi

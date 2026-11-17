@@ -70,7 +70,7 @@ jobs:
           source .github/scripts/gradle-ci-args.sh
           configure_ci_gradle
           bash ./gradlew :buildSrc:test :app:testDebugUnitTest :hot-core:testDebugUnitTest \
-            :input-core:testDebugUnitTest :update-core:testDebugUnitTest :app-host:assembleDebug \
+            :app-runtime:testDebugUnitTest :input-core:testDebugUnitTest :update-core:testDebugUnitTest :app-host:assembleDebug \
             "${ci_gradle_args[@]}" --stacktrace
       - name: Upload debug APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

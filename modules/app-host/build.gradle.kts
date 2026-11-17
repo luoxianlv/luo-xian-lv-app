@@ -59,6 +59,8 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            // 正式宿主从 1.4 起为登录用户启用实时通道，调试构建仍由测试显式开启。
+            buildConfigField("boolean", "REALTIME_ENABLED", providers.gradleProperty("realtimeEnabled").orElse("true").get())
             isMinifyEnabled = false
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
