@@ -196,6 +196,16 @@ public final class InputUserService extends IInputService.Stub {
     }
   }
 
+  @Override public boolean prepare(int w, int h, int r, long token) {
+    checkCaller();
+    if (!InputIdentity.privileged(Process.myUid()) || w < 1 || h < 1 || r < 0 || r > 3 || token <= 0 || callback == null) return false;
+    worker.execute(() -> {
+      if (activeToken != 0) { finished(token, false, "请先停止当前按键"); return; }
+      startNote(new float[0], 0, w, h, r, token);
+    });
+    return true;
+  }
+
   /** 等待完整触点快照，不占住控制线程；无槽位快照的旧协议仍需先抬手。 */
   /** 标准注入复用同一多点事件构造器；确认抬键完成后才报告成功。 */
   private void startStandardNote(float[] points, int durationMs, int w, int h, int r, long token) {
@@ -206,6 +216,7 @@ public final class InputUserService extends IInputService.Stub {
         dispatcher = new MergedTouchDispatcher(w, h, r);
       }
       if (activeToken != 0 && activeToken != token) finished(activeToken, false, "已由后续音符替换");
+      if (points.length == 0) { activeToken = 0; finished(token, true, ""); return; }
       if (standardTask != null) standardTask.cancel(false);
       activeToken = token;
       int[] ids = new int[points.length / 2];
@@ -268,6 +279,13 @@ public final class InputUserService extends IInputService.Stub {
         return;
       }
       stage = "begin";
+      if (request.points.length == 0) {
+        activeToken = 0;
+        cancelActivationWait();
+        publishActivationWait(request, "触控准备完成", "ready");
+        finished(request.token, true, "");
+        return;
+      }
       if (!engine.begin(request.points, request.durationMs, request.token)) {
         activeToken = 0;
         releaseEngine("自动按键提交失败，已归还触屏");

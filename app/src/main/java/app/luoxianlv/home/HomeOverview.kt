@@ -3,9 +3,13 @@ package app.luoxianlv.home
 import android.content.Intent
 import android.graphics.RectF
 import android.net.Uri
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.MusicVideo
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -22,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,9 +38,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +66,7 @@ internal fun HomeOverview(
     starting: Boolean = false,
     onToggleFloating: () -> Unit,
     onPractice: (Boolean) -> Unit,
+    onEnsemble: () -> Unit = {},
     settingsButton: @Composable () -> Unit,
 ) {
     // heightIn(min) 保证信息区至少占满「整列高度 - 插画高度」，
@@ -89,9 +98,23 @@ internal fun HomeOverview(
         )
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 演练场入口：原来这里是状态胶囊（「无障碍未开启 · 点击去开启」），
-        // 现在换成同款圆角按钮，幕布从按钮自身展开。
-        HomeStagePill(onPractice = onPractice)
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ) {
+            Row(
+                Modifier.width(IntrinsicSize.Max).height(IntrinsicSize.Min),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                HomeStageEntry(onPractice, Modifier.weight(1f))
+                VerticalDivider(
+                    Modifier.height(16.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .32f),
+                )
+                HomeModeEntry("多人合奏", Icons.Filled.Groups, onEnsemble, Modifier.weight(1f))
+            }
+        }
 
         Spacer(modifier = Modifier.height(22.dp))
 
@@ -137,7 +160,7 @@ internal fun HomeOverview(
  * 按钮自身的窗口坐标就是开场幕布的展开原点（退出时的碎光也飞回这里）， 所以位置变化不影响转场，只要量的是实际布局边界。
  */
 @Composable
-private fun HomeStagePill(
+private fun HomeStageEntry(
     onPractice: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -147,39 +170,42 @@ private fun HomeStagePill(
     // 位置只在点击时使用；页面滑动更新窗口坐标时无需触发重组。
     val bounds = remember { RectF() }
     val requestWallpaper = app.luoxianlv.wallpaper.rememberWallpaperRequest()
-    Surface(
+    HomeModeEntry(
+        label = "演练场",
+        icon = Icons.Filled.MusicVideo,
         onClick = {
             requestWallpaper(false) {
                 openPracticeStage(context, lifecycleOwner, RectF(bounds), dark, onPractice)
             }
         },
-        shape = RoundedCornerShape(50),
-        color = MaterialTheme.colorScheme.surfaceVariant,
         modifier =
             modifier.onGloballyPositioned {
                 val r = it.boundsInWindow()
                 bounds.set(r.left, r.top, r.right, r.bottom)
             },
+    )
+}
+
+@Composable
+private fun HomeModeEntry(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier =
+            modifier
+                .fillMaxHeight()
+                .clickable(role = Role.Button, onClick = onClick)
+                .heightIn(min = 44.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Filled.MusicVideo,
-                contentDescription = null,
-                tint = OnBackdropContent.copy(alpha = 0.72f),
-                modifier = Modifier.size(14.dp),
-            )
-            Spacer(modifier = Modifier.width(7.dp))
-            Text(
-                text = "演练场",
-                style = MaterialTheme.typography.labelMedium,
-                color = OnBackdropContent.copy(alpha = 0.72f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(7.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium)
     }
 }
 

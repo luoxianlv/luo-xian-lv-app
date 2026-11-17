@@ -13,9 +13,13 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.ImageView
+import android.widget.Toast
 import app.luoxianlv.R
 import app.luoxianlv.app.BusinessJobs
 import app.luoxianlv.diagnostics.AppLog
+import app.luoxianlv.ensemble.EnsembleController
+import app.luoxianlv.ensemble.EnsembleNavigation
+import app.luoxianlv.ensemble.EnsembleSession
 import app.luoxianlv.library.Song
 import app.luoxianlv.library.SongRepository
 import app.luoxianlv.playback.PlayerUi.dp
@@ -58,6 +62,8 @@ class FloatingControls(private val service: PlaybackSession) {
     private var restoredExpanded: Boolean? = null
     private var speedControlsVisible = false
     private var panel: FloatingPanel? = null
+    private var ensemblePanel: EnsembleFloatingPanel? = null
+    private var panelController: EnsembleController? = null
     private var cachedPanel: FloatingPanel? = null
     private var cachedPanelGeometry: FloatingDisplayGeometry? = null
     private var cachedPanelPalette: PlayerUiPalette? = null
@@ -82,6 +88,7 @@ class FloatingControls(private val service: PlaybackSession) {
         get() =
             touching ||
                 panel?.touching == true ||
+                ensemblePanel?.touching == true ||
                 playlistWindow.isShowing ||
                 playlistJob?.isActive == true ||
                 dockAnimator?.isRunning == true ||
@@ -100,6 +107,7 @@ class FloatingControls(private val service: PlaybackSession) {
         object : Runnable {
             override fun run() {
                 refresh()
+                handler.removeCallbacks(this)
                 if (root != null) handler.postDelayed(this, 200)
             }
         }
@@ -176,6 +184,8 @@ class FloatingControls(private val service: PlaybackSession) {
         root = null
         params = null
         panel = null
+        ensemblePanel = null
+        panelController = null
     }
 
     fun destroy() {
@@ -204,7 +214,12 @@ class FloatingControls(private val service: PlaybackSession) {
             pendingGeometry = null
             return
         }
-        if (touching || panel?.touching == true || dockAnimator?.isRunning == true) {
+        if (
+            touching ||
+                panel?.touching == true ||
+                ensemblePanel?.touching == true ||
+                dockAnimator?.isRunning == true
+        ) {
             handler.postDelayed(applyGeometry, DISPLAY_SETTLE_MS)
             return
         }
@@ -229,6 +244,12 @@ class FloatingControls(private val service: PlaybackSession) {
         preparePanelWhenIdle()
     }
 
+    private val expandedWidth: Int
+        get() =
+            context.dp(
+                if (EnsembleSession.current?.active == true) EnsembleFloatingPanel.WIDTH_DP else 236
+            )
+
     private fun updateLayout(
         view: View,
         layout: WindowManager.LayoutParams,
@@ -236,7 +257,7 @@ class FloatingControls(private val service: PlaybackSession) {
         remeasure: Boolean = false,
         updateAnchor: Boolean = true,
     ) {
-        val width = geometry.windowWidth(expanded, context.dp(44), context.dp(236), context.dp(16))
+        val width = geometry.windowWidth(expanded, context.dp(44), expandedWidth, context.dp(16))
         if (layout.width != width || remeasure) {
             layout.width = width
             view.measure(
@@ -317,7 +338,7 @@ class FloatingControls(private val service: PlaybackSession) {
         val view: View
         val width: Int
         if (!open) {
-            width = geometry.windowWidth(false, context.dp(44), context.dp(236), context.dp(16))
+            width = geometry.windowWidth(false, context.dp(44), expandedWidth, context.dp(16))
             view =
                 ImageView(context).apply {
                     setImageResource(R.drawable.ic_music_note)
@@ -331,13 +352,38 @@ class FloatingControls(private val service: PlaybackSession) {
                 }
             attachDrag(view, true)
         } else {
-            width = geometry.windowWidth(true, context.dp(44), context.dp(236), context.dp(16))
+            width = geometry.windowWidth(true, context.dp(44), expandedWidth, context.dp(16))
+            val room = EnsembleSession.current?.takeIf { it.active }
+            panelController = room
             view =
-                panelFor(geometry).also {
-                    it.showSpeedControls(speedControlsVisible)
-                    it.refresh()
-                    panel = it
-                }
+                if (room != null) {
+                    EnsembleFloatingPanel(
+                            context,
+                            palette,
+                            read = { room.state.value },
+                            playing = { service.playing },
+                            feedback = { room.pendingStatus ?: service.error },
+                            dispatch = { command ->
+                                if (EnsembleSession.current === room && room.active) {
+                                    when (command) {
+                                        "choose" -> showPlaylist()
+                                        "prepare" -> if (service.canStartPlayback()) room.prepare()
+                                        "stop" -> room.stopLocal(true)
+                                        "rejoin" -> room.control(command, room.state.value.account)
+                                        else -> room.control(command)
+                                    }
+                                }
+                            },
+                            onCollapse = { render(false) },
+                            attachDrag = { attachDrag(it, false) },
+                        )
+                        .also { ensemblePanel = it }
+                } else
+                    panelFor(geometry).also {
+                        it.showSpeedControls(speedControlsVisible)
+                        it.refresh()
+                        panel = it
+                    }
         }
         view.measure(
             View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
@@ -609,27 +655,49 @@ class FloatingControls(private val service: PlaybackSession) {
     }
 
     fun refresh() {
-        panel?.refresh()
+        if (
+            expanded &&
+                root != null &&
+                panelController !== EnsembleSession.current?.takeIf { it.active }
+        ) {
+            render(true)
+        } else {
+            ensemblePanel?.refresh() ?: panel?.refresh()
+        }
     }
 
     /** 选歌：居中独立小窗（卡片 + 当前曲目蓝色高亮）。打开时面板退出，关闭后恢复。 */
     private fun showPlaylist() {
-        // 先停止按键和准备中的播放，再读取列表，避免自动触摸落到选歌窗口。
-        service.pause()
         if (playlistJob?.isActive == true) return
+        val room = EnsembleSession.current?.takeIf { it.active }
+        if (room != null && !room.owner) {
+            service.pause()
+            EnsembleNavigation.open(context)
+            return
+        }
+        // 立即释放触控，避免任何旧音符落到选曲窗口。房主另外等待服务端确认全员暂停。
+        service.pauseNow()
         playlistJob = scope.launch {
             try {
+                val select =
+                    room?.pauseForFloatingScorePicker()
+                        ?: { song: Song ->
+                            check(EnsembleSession.current?.active != true) { "已进入合奏房间，请重新打开选曲" }
+                            service.select(song)
+                        }
                 val songs = BusinessJobs.io { SongRepository(service).songs() }
-                if (!destroyed && displayRequested) showPlaylist(songs)
+                if (!destroyed && displayRequested)
+                    showPlaylist(songs, if (room == null) service.song.id else "", select)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                AppLog.w("悬浮窗", "读取选歌列表失败", error)
+                AppLog.w("悬浮窗", "打开选曲失败", error)
+                Toast.makeText(context, error.message ?: "打开选曲失败", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private fun showPlaylist(songs: List<Song>) {
+    private fun showPlaylist(songs: List<Song>, selectedId: String, select: (Song) -> Unit) {
         palette = PlayerUi.palette(context)
         if (root != null) {
             panelHiddenForPicker = true
@@ -641,12 +709,16 @@ class FloatingControls(private val service: PlaybackSession) {
             try {
                 playlistWindow.show(
                     songs = songs,
-                    selectedId = service.song.id,
+                    selectedId = selectedId,
                     palette = palette,
                     screenBounds = service::screenBounds,
                     onSelect = { song ->
-                        service.select(song)
                         dismissPlaylist()
+                        try {
+                            select(song)
+                        } catch (error: IllegalStateException) {
+                            Toast.makeText(context, error.message, Toast.LENGTH_SHORT).show()
+                        }
                         refresh()
                     },
                     onDismiss = ::dismissPlaylist,

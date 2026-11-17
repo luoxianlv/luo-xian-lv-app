@@ -12,3 +12,8 @@
 # error_prone_annotations 2.15.0：两个 CLASS/ANNOTATION_TYPE 元注解的 deprecated
 # value() 仅引用 JDK java.compiler 枚举；APP/冻结依赖无其它运行调用，不补入 JDK 类。
 -dontwarn javax.lang.model.element.Modifier
+
+# Ktor 3.6 的 IDEA 调试器探测以 catch(Throwable) 在 Android 返回 false。
+# 已核对冻结 JAR 字节码；仅忽略这两个可选 JDK 管理接口，保留全部 SDK 成员。
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean

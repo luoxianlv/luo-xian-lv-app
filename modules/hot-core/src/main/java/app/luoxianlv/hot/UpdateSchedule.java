@@ -9,8 +9,10 @@ public final class UpdateSchedule {
   private final LongSupplier elapsed;
   private final DoubleSupplier random;
   private long due, retryNotBefore, lastStart = -MIN_GAP;
+  private long hintNotBefore;
   private int failures;
   private boolean usable, online, priorityWork, inFlight, requested;
+  private boolean realtime;
 
   public UpdateSchedule(LongSupplier elapsed, DoubleSupplier random) {
     this.elapsed = elapsed;
@@ -28,7 +30,24 @@ public final class UpdateSchedule {
 
   public synchronized void request() {
     if (inFlight) requested = true;
-    else due = Math.max(retryNotBefore, Math.max(elapsed.getAsLong(), lastStart + MIN_GAP));
+    else due = Math.max(hintNotBefore, Math.max(retryNotBefore, Math.max(elapsed.getAsLong(), lastStart + MIN_GAP)));
+  }
+
+  /** 一次发布的提示随机错峰；重复提示合并，不能不断推迟同一次检查。 */
+  public synchronized void hint() {
+    if (hintNotBefore == 0) {
+      double sample = random.getAsDouble();
+      StrictJson.require(Double.isFinite(sample) && sample >= 0 && sample <= 1, "提示抖动参数无效");
+      hintNotBefore = elapsed.getAsLong() + (long) (30000 * sample);
+    }
+    request();
+  }
+
+  /** 只有热更订阅完成同步才延长兜底间隔；断开不能绕过失败退避。 */
+  public synchronized void realtime(boolean subscribed) {
+    if (realtime == subscribed) return;
+    realtime = subscribed;
+    request();
   }
 
   /** -1 表示当前不应设置更新计时器；已有任务结束或生命周期变化后再计算。 */
@@ -52,6 +71,7 @@ public final class UpdateSchedule {
   }
 
   private void begin() {
+    hintNotBefore = 0;
     inFlight = true;
     requested = false;
     lastStart = elapsed.getAsLong();
@@ -76,14 +96,14 @@ public final class UpdateSchedule {
     StrictJson.require(inFlight && retryAfterMillis >= 0, "更新检查回调无效");
     inFlight = false;
     failures = success ? 0 : Math.min(6, failures + 1);
-    long base = success ? NORMAL : Math.min(MAX_BACKOFF, NORMAL << (failures - 1));
+    long base = success ? (realtime ? 600000 : NORMAL) : Math.min(MAX_BACKOFF, NORMAL << (failures - 1));
     double sample = random.getAsDouble();
     StrictJson.require(Double.isFinite(sample) && sample >= 0 && sample <= 1, "检查抖动参数无效");
     long wait = Math.min(MAX_BACKOFF, (long) (base * (0.8 + sample * 0.4)));
     if (requested && success) wait = MIN_GAP;
     wait = Math.max(wait, Math.min(MAX_BACKOFF, retryAfterMillis));
     retryNotBefore = Math.addExact(elapsed.getAsLong(), Math.min(MAX_BACKOFF, retryAfterMillis));
-    due = Math.max(lastStart + MIN_GAP, Math.addExact(elapsed.getAsLong(), wait));
+    due = Math.max(hintNotBefore, Math.max(lastStart + MIN_GAP, Math.addExact(elapsed.getAsLong(), wait)));
     // 恢复网络/重回前台只合并触发，不能把失败退避改成一次立即重试。
     if (!success) retryNotBefore = due;
     requested = false;

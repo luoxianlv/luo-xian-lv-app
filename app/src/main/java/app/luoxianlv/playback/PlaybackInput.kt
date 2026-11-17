@@ -45,6 +45,7 @@ internal class PlaybackInput : AutoCloseable {
     private var observer: AutoCloseable? = null
     private val retiring = mutableListOf<SharedInput.Session>()
     private var mode = SharedInput.ACCESSIBILITY
+    private var usable = true
     private var changed: (() -> Unit)? = null
     private var closed = false
     private var waiting: Runnable? = null
@@ -150,6 +151,36 @@ internal class PlaybackInput : AutoCloseable {
         lease?.release()
     }
 
+    /** 在倒计时前完成 shell 接管，不用试按琴键预热。 */
+    fun prepare(width: Int, height: Int, rotation: Int, done: (Boolean, String) -> Unit) {
+        if (!merged) {
+            done(true, "")
+            return
+        }
+        try {
+            val owner = lease ?: checkNotNull(bridge).openSession().also { lease = it }
+            pending.incrementAndGet()
+            val finished = AtomicBoolean()
+            fun finish(success: Boolean, message: String) {
+                onMain {
+                    if (finished.compareAndSet(false, true)) {
+                        pending.decrementAndGet()
+                        if (!closed) done(success, message)
+                    }
+                }
+            }
+            try {
+                owner.prepare(width, height, rotation, ::finish)
+            } catch (failure: Exception) {
+                finish(false, "触控准备失败，请重新连接")
+            } catch (failure: LinkageError) {
+                finish(false, "触控组件版本不匹配，请重启应用")
+            }
+        } catch (failure: Exception) {
+            done(false, "触控准备失败，请重新连接")
+        }
+    }
+
     /** 变速或拖动后马上续播时，等上次物理归还完成，不让新按键抢过释放任务。 */
     fun waitUntilIdle(done: (Boolean) -> Unit) {
         cancelWaiting()
@@ -188,6 +219,8 @@ internal class PlaybackInput : AutoCloseable {
         mode =
             selected?.state()?.getString("mode", SharedInput.ACCESSIBILITY)
                 ?: SharedInput.ACCESSIBILITY
+        usable =
+            mode == SharedInput.ACCESSIBILITY || selected?.state()?.getBoolean("touchReady") == true
         observer = selected?.observe {
             onMain {
                 if (closed || selected !== bridge) return@onMain
@@ -204,8 +237,11 @@ internal class PlaybackInput : AutoCloseable {
                     } else activationStartedAt = 0
                 }
                 val modeChanged = next != mode
+                val nextUsable = next == SharedInput.ACCESSIBILITY || state.getBoolean("touchReady")
+                val lostPermission = usable && !nextUsable
+                usable = nextUsable
                 mode = next
-                if (modeChanged) {
+                if (modeChanged || lostPermission) {
                     release()
                     changed?.invoke()
                 }

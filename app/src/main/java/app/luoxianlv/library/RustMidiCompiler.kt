@@ -3,8 +3,6 @@ package app.luoxianlv.library
 import android.util.Base64
 import app.luoxianlv.BuildConfig
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import org.json.JSONObject
 
 /** 前导静音超过 5 秒判定为旧版编译核心的缺陷产物（不会剪掉 MIDI 开头空白）， 编译时直接平移到 0，避免播放开头长时间没有点击。 */
@@ -22,7 +20,7 @@ data class RustCompiledMidi(
 object RustMidiCompiler {
     private val baseUrl = BuildConfig.UPDATE_BASE_URL.trimEnd('/')
 
-    fun compile(
+    suspend fun compile(
         token: String?,
         bytes: ByteArray,
         track: Int? = null,
@@ -76,43 +74,15 @@ object RustMidiCompiler {
         )
     }
 
-    private fun postCompileJson(
-        body: String,
-        token: String?,
-    ): String {
-        val connection =
-            try {
-                (URL("$baseUrl/api/compile-midi").openConnection() as HttpURLConnection).apply {
-                    app.luoxianlv.update.ClientVersion.attach(this)
-                    connectTimeout = 8000
-                    readTimeout = 15000
-                    requestMethod = "POST"
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Accept", "application/json")
-                    if (!token.isNullOrBlank()) setRequestProperty("Authorization", "Bearer $token")
-                }
-            } catch (e: IOException) {
-                throw IOException("网络连接失败，请检查网络后重试", e)
-            }
-        try {
-            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.bufferedReader(Charsets.UTF_8).use { it?.readText().orEmpty() }
-            if (status !in 200..299) {
-                val message = runCatching {
-                    JSONObject(text).optString("message")
-                }
-                    .getOrDefault("")
-                    .ifBlank { "HTTP $status" }
-                error(message)
-            }
-            return text
+    private suspend fun postCompileJson(body: String, token: String?): String {
+        return try {
+            app.luoxianlv.platform.BusinessNetwork.current()
+                .bytes("$baseUrl/api/compile-midi", token, body, readTimeoutMs = 15_000)
+                .toString(Charsets.UTF_8)
+        } catch (e: app.luoxianlv.platform.HttpFailure) {
+            throw e
         } catch (e: IOException) {
             throw IOException("网络连接失败，请检查网络后重试", e)
-        } finally {
-            connection.disconnect()
         }
     }
 }

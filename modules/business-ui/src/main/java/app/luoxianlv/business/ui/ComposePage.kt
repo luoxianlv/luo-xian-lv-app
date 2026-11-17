@@ -115,6 +115,7 @@ abstract class ComposePage :
         composer = recomposer
         jobs.launch { recomposer.runRecomposeAndApplyChanges() }
         return ComposeView(context).also { root ->
+            var readySent = false
             view = root
             if (android.os.Build.VERSION.SDK_INT < 28) {
                 // 旧系统在窗口显示时提前查找焦点；预组合节点须等首次布局挂载后才能参与。
@@ -146,10 +147,14 @@ abstract class ComposePage :
                     LocalOnBackPressedDispatcherOwner provides this,
                 ) {
                     Content()
-                    LaunchedEffect(Unit) {
-                        withFrameNanos {}
-                        withFrameNanos {}
-                        if (!closed) ready.ready()
+                    SideEffect {
+                        if (!closed && !readySent) {
+                            readySent = true
+                            // 这里只报告组合完成；宿主另验实际提交帧，后台恢复不等待不可见窗口 VSync。
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                if (!closed) ready.ready()
+                            }
+                        }
                     }
                 }
             }

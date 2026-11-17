@@ -3,11 +3,12 @@ package app.luoxianlv.wallpaper
 import android.content.Context
 import app.luoxianlv.BuildConfig
 import app.luoxianlv.app.BusinessJobs
+import app.luoxianlv.platform.BusinessNetwork
+import app.luoxianlv.platform.readLimited
 import app.luoxianlv.shared.AppStorage
-import app.luoxianlv.update.ClientVersion
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.utils.io.readAvailable
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -46,18 +47,13 @@ object DefaultWallpaper {
         downloadLock.withLock {
             if (installed(context)) return@withLock
             val job = currentCoroutineContext()
-            val manifestConnection =
-                open(
-                    "${BuildConfig.UPDATE_BASE_URL.trimEnd('/')}/api/wallpapers/default?delivery=edgeone"
-                )
             val metadata =
-                try {
-                    checkResponse(manifestConnection)
-                    val bytes =
-                        manifestConnection.inputStream.use { it.readBytesLimited(64 * 1024) }
-                    JSONObject(bytes.toString(Charsets.UTF_8))
-                } finally {
-                    manifestConnection.disconnect()
+                BusinessNetwork.current().consume(
+                    "${BuildConfig.UPDATE_BASE_URL.trimEnd('/')}/api/wallpapers/default?delivery=edgeone",
+                    followRedirects = false,
+                ) { response ->
+                    checkResponse(response.status.value)
+                    JSONObject(response.readLimited(64 * 1024).toString(Charsets.UTF_8))
                 }
             val size = metadata.getLong("size")
             val sha = metadata.getString("sha256")
@@ -72,28 +68,27 @@ object DefaultWallpaper {
                 require(archive.parentFile!!.usableSpace > size + 32L * 1024 * 1024) {
                     "存储空间不足"
                 }
-                val connection = open(url)
-                try {
-                    checkResponse(connection)
+                BusinessNetwork.current().consume(url, streaming = true, followRedirects = false) {
+                    response ->
+                    checkResponse(response.status.value)
                     val digest = MessageDigest.getInstance("SHA-256")
                     var received = 0L
                     var lastPercent = -1L
-                    connection.inputStream.use { input ->
-                        archive.outputStream().use { output ->
-                            val buffer = ByteArray(65536)
-                            while (true) {
-                                job.ensureActive()
-                                val count = input.read(buffer)
-                                if (count < 0) break
-                                received += count
-                                require(received <= size) { "壁纸文件大小异常" }
-                                output.write(buffer, 0, count)
-                                digest.update(buffer, 0, count)
-                                val percent = received * 100 / size
-                                if (percent != lastPercent) {
-                                    lastPercent = percent
-                                    withContext(Dispatchers.Main) { onProgress(received, size) }
-                                }
+                    val input = response.bodyAsChannel()
+                    archive.outputStream().use { output ->
+                        val buffer = ByteArray(65536)
+                        while (true) {
+                            job.ensureActive()
+                            val count = input.readAvailable(buffer, 0, buffer.size)
+                            if (count < 0) break
+                            received += count
+                            require(received <= size) { "壁纸文件大小异常" }
+                            output.write(buffer, 0, count)
+                            digest.update(buffer, 0, count)
+                            val percent = received * 100 / size
+                            if (percent != lastPercent) {
+                                lastPercent = percent
+                                withContext(Dispatchers.Main) { onProgress(received, size) }
                             }
                         }
                     }
@@ -103,8 +98,6 @@ object DefaultWallpaper {
                     ) {
                         "壁纸文件校验失败，请重试"
                     }
-                } finally {
-                    connection.disconnect()
                 }
                 job.ensureActive()
                 if (staging.exists()) check(staging.deleteRecursively()) { "无法清理未完成的壁纸" }
@@ -139,29 +132,8 @@ object DefaultWallpaper {
         }
     }
 
-    private fun open(url: String) =
-        (URL(url).openConnection() as HttpURLConnection).apply {
-            ClientVersion.attach(this)
-            connectTimeout = 15000
-            readTimeout = 15000
-            instanceFollowRedirects = false
-            setRequestProperty("Accept-Encoding", "identity")
-        }
-
-    private fun checkResponse(connection: HttpURLConnection) {
-        check(connection.responseCode != 429) { "下载请求过于频繁，请稍后再试" }
-        check(connection.responseCode == 200) { "壁纸暂时无法下载，请稍后重试" }
-    }
-
-    private fun java.io.InputStream.readBytesLimited(limit: Int): ByteArray {
-        val output = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(4096)
-        while (true) {
-            val count = read(buffer)
-            if (count < 0) break
-            require(output.size() + count <= limit) { "壁纸下载资料过大" }
-            output.write(buffer, 0, count)
-        }
-        return output.toByteArray()
+    private fun checkResponse(status: Int) {
+        check(status != 429) { "下载请求过于频繁，请稍后再试" }
+        check(status == 200) { "壁纸暂时无法下载，请稍后重试" }
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -112,8 +113,7 @@ fun AppNavHost(
 
     // 子页面打开时拦截返回键：先退回主页面
     androidx.activity.compose.BackHandler(enabled = subPage != null) {
-        navigation.startFloatingAfterSetup = false
-        subPage = null
+        navigation.dismissOverlay()
     }
 
     // 仅窗口宽度变化后修正停在半页的位置；普通切页交给 Pager，避免额外动画争抢滚动。
@@ -147,6 +147,12 @@ fun AppNavHost(
     // U-App 页面统计：单 Activity + Compose 只能手动按页面名打点（U-APM 的页面维度是 Activity）。
     // 顶级 Tab 是跟手切换的 Pager、子页面是覆盖层，这里统一按当前页面名成对上报开始/结束。
     val currentPage = subPage ?: tabs.getOrNull(pagerState.settledPage) ?: Routes.HOME
+    LaunchedEffect(app.luoxianlv.ensemble.EnsembleNavigation.requested) {
+        if (app.luoxianlv.ensemble.EnsembleNavigation.requested) {
+            navigation.openEnsemble()
+            app.luoxianlv.ensemble.EnsembleNavigation.requested = false
+        }
+    }
     androidx.compose.runtime.DisposableEffect(currentPage) {
         Analytics.pageStart(currentPage)
         onDispose { Analytics.pageEnd(currentPage) }
@@ -231,6 +237,7 @@ fun AppNavHost(
                                         )
                                     },
                                     onSettings = { goTab(Routes.SETTINGS) },
+                                    onEnsemble = navigation::openEnsemble,
                                     onInputMode = {
                                         navigation.startFloatingAfterSetup = true
                                         subPage = Routes.INPUT_MODE
@@ -306,7 +313,7 @@ fun AppNavHost(
 
                                     Routes.LOGIN -> {
                                         LoginScreen(
-                                            onBack = { subPage = null },
+                                            onBack = navigation::dismissOverlay,
                                             onShushuLogin = { updater.startShushuLogin(activity) },
                                             onRegister = {
                                                 runCatching {
@@ -361,14 +368,22 @@ fun AppNavHost(
                                     Routes.EXPERIMENTAL -> {
                                         ExperimentalSettingsScreen(onBack = { subPage = null })
                                     }
+                                    Routes.ENSEMBLE -> {
+                                        app.luoxianlv.ensemble.EnsembleScreen(
+                                            onBack = navigation::dismissOverlay,
+                                            onLogin = {
+                                                navigation.openEnsembleSetup(Routes.LOGIN)
+                                            },
+                                            onInputSetup = {
+                                                navigation.openEnsembleSetup(Routes.INPUT_MODE)
+                                            },
+                                        )
+                                    }
 
                                     Routes.INPUT_MODE -> {
                                         InputModeScreen(
                                             startAfterSetup = navigation.startFloatingAfterSetup,
-                                            onBack = {
-                                                navigation.startFloatingAfterSetup = false
-                                                subPage = null
-                                            },
+                                            onBack = navigation::dismissOverlay,
                                         )
                                     }
 
@@ -441,10 +456,14 @@ private fun UpdateAboutScreen(
     val checks =
         remember(appUpdates) { appUpdates.state.map { it.checking }.distinctUntilChanged() }
     val checking by checks.collectAsState(initial = appUpdates.state.value.checking)
+    val hints =
+        remember(appUpdates) { appUpdates.state.map { it.updateHint }.distinctUntilChanged() }
+    val hint by hints.collectAsState(initial = appUpdates.state.value.updateHint)
     AboutScreen(
         onBack = onBack,
         snackbarHostState = snackbarHostState,
         onCheckUpdate = { appUpdates.check(manual = true) },
         checkingUpdate = checking,
+        updateAvailable = hint,
     )
 }

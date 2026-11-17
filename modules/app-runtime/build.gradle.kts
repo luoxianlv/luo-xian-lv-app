@@ -47,6 +47,13 @@ androidComponents.onVariants { variant ->
 }
 
 dependencies {
+    compileOnly(project(":hot-contract"))
+    implementation(libs.java.websocket)
+    testImplementation(project(":hot-contract"))
+    testImplementation(libs.junit)
+    testImplementation(libs.json)
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.cio)
     implementation(libs.material)
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)

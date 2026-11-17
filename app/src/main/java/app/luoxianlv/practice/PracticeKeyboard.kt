@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.view.MotionEvent
@@ -34,7 +35,8 @@ class PracticeKeyboard(context: Context) : View(context) {
     private var exitPointer: Int? = null
     private var wallpaperPointer: Int? = null
     private var soundPointer: Int? = null
-    private val speakerPath = android.graphics.Path()
+    private val soundOnPath = centeredSoundIcon(true)
+    private val soundOffPath = centeredSoundIcon(false)
     var safeLeft = 0
         set(value) {
             field = value
@@ -56,32 +58,22 @@ class PracticeKeyboard(context: Context) : View(context) {
     private val density
         get() = resources.displayMetrics.density
 
+    // 三个按钮共用中心线及步距，绘制与触摸命中均取同一套边界。
+    private fun toolbarBounds(index: Int): RectF {
+        val left = safeLeft + (12 + 60 * index) * density
+        val top = safeTop + 12 * density
+        val size = 54 * density
+        return RectF(left, top, left + size, top + size)
+    }
+
     private val exitBounds
-        get() =
-            RectF(
-                safeLeft + 12 * density,
-                safeTop + 12 * density,
-                safeLeft + 66 * density,
-                safeTop + 66 * density,
-            )
+        get() = toolbarBounds(0)
 
     private val wallpaperBounds
-        get() =
-            RectF(
-                safeLeft + 72 * density,
-                safeTop + 12 * density,
-                safeLeft + 126 * density,
-                safeTop + 66 * density,
-            )
+        get() = toolbarBounds(1)
 
     private val soundBounds
-        get() =
-            RectF(
-                safeLeft + 132 * density,
-                safeTop + 12 * density,
-                safeLeft + 186 * density,
-                safeTop + 66 * density,
-            )
+        get() = toolbarBounds(2)
 
     init {
         isFocusable = true
@@ -336,22 +328,7 @@ class PracticeKeyboard(context: Context) : View(context) {
         paint.alpha = if (wallpaperSoundEnabled) 255 else 180
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 1.5f
-        speakerPath.reset()
-        speakerPath.moveTo(-9f, -3f)
-        speakerPath.lineTo(-5f, -3f)
-        speakerPath.lineTo(0f, -7f)
-        speakerPath.lineTo(0f, 7f)
-        speakerPath.lineTo(-5f, 3f)
-        speakerPath.lineTo(-9f, 3f)
-        speakerPath.close()
-        canvas.drawPath(speakerPath, paint)
-        if (wallpaperSoundEnabled) {
-            canvas.drawArc(-2f, -6f, 9f, 6f, -60f, 120f, false, paint)
-            canvas.drawArc(-4f, -9f, 14f, 9f, -55f, 110f, false, paint)
-        } else {
-            canvas.drawLine(4f, -3f, 10f, 3f, paint)
-            canvas.drawLine(4f, 3f, 10f, -3f, paint)
-        }
+        canvas.drawPath(if (wallpaperSoundEnabled) soundOnPath else soundOffPath, paint)
         canvas.restore()
         if (width > 520 * density)
             text(
@@ -472,4 +449,39 @@ class PracticeKeyboard(context: Context) : View(context) {
         close()
         super.onDetachedFromWindow()
     }
+}
+
+/** 以扬声器和右侧声波或叉号的整体描边居中，两种状态分别求边界。 */
+private fun centeredSoundIcon(enabled: Boolean): Path {
+    val icon =
+        Path().apply {
+            moveTo(-9f, -3f)
+            lineTo(-5f, -3f)
+            lineTo(0f, -7f)
+            lineTo(0f, 7f)
+            lineTo(-5f, 3f)
+            lineTo(-9f, 3f)
+            close()
+            if (enabled) {
+                addArc(-2f, -6f, 9f, 6f, -60f, 120f)
+                addArc(-4f, -9f, 14f, 9f, -55f, 110f)
+            } else {
+                moveTo(4f, -3f)
+                lineTo(10f, 3f)
+                moveTo(4f, 3f)
+                lineTo(10f, -3f)
+            }
+        }
+    val stroke =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f
+            strokeCap = Paint.Cap.ROUND
+        }
+    val outline = Path()
+    stroke.getFillPath(icon, outline)
+    val bounds = RectF()
+    outline.computeBounds(bounds, true)
+    icon.offset(-bounds.centerX(), -bounds.centerY())
+    return icon
 }

@@ -11,15 +11,17 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -41,6 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -238,7 +241,7 @@ fun InputModeScreen(onBack: () -> Unit, startAfterSetup: Boolean = false) {
                 }
             }
             item(key = "modes") {
-                SettingsCard {
+                SettingsCard(Modifier.selectableGroup()) {
                     InputModeOption("无障碍", "直接使用，手动触摸可能中断演奏", "accessibility", state)
                     InputModeOption("Shizuku", "通过 Shizuku 连接，可边操作边演奏", "shizuku", state)
                     InputModeOption("无线调试（内置）", "使用手机的无线调试，无需额外应用", "wireless", state)
@@ -296,12 +299,12 @@ fun InputModeScreen(onBack: () -> Unit, startAfterSetup: Boolean = false) {
                     else "各模式均可识别琴键；Shizuku、无线调试和 Root 连接后可边操作边演奏。切换模式会暂停演奏。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 6.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
             if (state.mode == "shizuku" || state.mode == "wireless") {
                 item(key = "security-setting") {
-                    InputSecurityHint(Modifier.padding(horizontal = 6.dp))
+                    InputSecurityHint(Modifier.padding(horizontal = 16.dp))
                 }
             }
         }
@@ -327,31 +330,38 @@ internal fun InputModeTitle(title: String, onBack: () -> Unit) {
 
 @Composable
 private fun InputModeOption(title: String, summary: String, mode: String, state: InputModeState) {
+    val enabled = state.supported && state.overlayGranted
+    val selected = state.mode == mode
     val select: () -> Unit = {
         if (state.mode != mode) {
             PlaybackConnection.instance?.pause()
             runCatching { currentInputBridge()?.select(mode) }
         }
     }
-    Row(
+    Column(
         Modifier.fillMaxWidth()
-            .clickable(enabled = state.supported && state.overlayGranted, onClick = select)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(
-            selected = state.mode == mode,
-            onClick = select,
-            enabled = state.supported && state.overlayGranted,
-        )
-        Column(Modifier.weight(1f).padding(start = 4.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                summary,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = select,
             )
+            .heightIn(min = 60.dp)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
         }
+        Text(
+            summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

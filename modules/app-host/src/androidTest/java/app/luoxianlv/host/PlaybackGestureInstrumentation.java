@@ -31,8 +31,12 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
   private Context businessContext;
   private SharedInput.Bridge input;
   private final ArrayList<Fixture> fixtures = new ArrayList<>();
+  private boolean ensembleOnly;
 
-  @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+  @Override public void onCreate(Bundle arguments) {
+    ensembleOnly = "true".equals(arguments.getString("ensembleOnly"));
+    super.onCreate(arguments); start();
+  }
 
   @Override public void onStart() {
     Bundle report = new Bundle();
@@ -71,6 +75,14 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
       input.select(SharedInput.ACCESSIBILITY);
       await("未切换到传统无障碍路径", () -> SharedInput.ACCESSIBILITY.equals(input.state().getString("mode")));
 
+      ensemblePreparationAndStop();
+      Fixture pitch = create(Behavior.TIMELY_SUCCESS);
+      prepareEnsemble(pitch, 1);
+      require(pitch.binding.calls.get() == 1 && pitch.binding.request(0).durationMs == 1,
+          "准备调式未完成，或提前发送了音符");
+      pitch.close();
+      ensembleLateCallbackKeepsTimeline();
+      if (!ensembleOnly) {
       timelySuccessContinues();
       timelyCancelOrReject(Behavior.TIMELY_CANCEL, "手势被系统取消");
       timelyCancelOrReject(Behavior.REJECT, "系统拒绝手势");
@@ -78,7 +90,8 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
       blockedMainCallback();
       synchronousLateCallback(true);
       synchronousLateCallback(false);
-      report.putString("stream", "无障碍等待保护验收通过：及时成功连续演奏、正常取消/拒绝文案、缺失回调超时、进度回退、旧回调隔离、用户暂停、主线程排队及同步提交过慢；未注入系统触摸，不代表真机根因。\n");
+      }
+      report.putString("stream", "播放测试通过：合奏准备不发音符、定时开始、迟到跳过、停止令牌失效" + (ensembleOnly ? "" : "，单人回调等待与暂停回归") + "；使用真实业务播放器和模拟输入，未注入系统触摸。\n");
       success = true;
     } catch (Throwable failure) {
       report.putString("stream", "无障碍等待保护验收失败：" + failure + "\n");
@@ -121,6 +134,64 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
         && stopped.getString("error") == null && stopped.getLong("positionMs") == position,
         "正常演奏暂停后仍被旧成功回调更改状态");
     require(fixture.binding.calls.get() == sent, "正常演奏暂停后仍继续发送音符");
+    fixture.close();
+  }
+
+  private String prepareEnsemble(Fixture fixture) {
+    return prepareEnsemble(fixture, 0);
+  }
+  private String prepareEnsemble(Fixture fixture, int mode) {
+    String token = java.util.UUID.randomUUID().toString();
+    org.json.JSONArray notes = new org.json.JSONArray();
+    try {
+      for (int i = 0; i < 20; i++) notes.put(new org.json.JSONObject()
+          .put("startUs", i * 200_000L).put("endUs", (i + 1) * 200_000L)
+          .put("key", i % 8).put("mode", mode).put("halfTone", false));
+    } catch (org.json.JSONException failure) { throw new AssertionError(failure); }
+    Bundle args = new Bundle();
+    args.putString("token", token); args.putString("hash", "test-score");
+    args.putString("title", "合奏时序测试"); args.putString("events", notes.toString());
+    args.putLong("durationUs", 4_000_000); args.putLong("positionUs", 0);
+    main(() -> fixture.session.command("ensemblePrepare", args));
+    await("合奏准备失败：" + fixture.state().getString("error"), () -> fixture.ensemble().getBoolean("ready"));
+    if (mode == 0) require(fixture.binding.calls.get() == 0, "准备阶段提前发送了音符");
+    return token;
+  }
+
+  private long startEnsemble(Fixture fixture, String token, long waitMs) {
+    long deadlineUs = SystemClock.elapsedRealtimeNanos() / 1000 + waitMs * 1000;
+    Bundle args = new Bundle(); args.putString("token", token);
+    args.putLong("positionUs", 0); args.putLong("localStartUs", deadlineUs);
+    main(() -> new Handler(Looper.getMainLooper()).postAtTime(
+        () -> fixture.session.command("ensembleStart", args), SystemClock.uptimeMillis() + waitMs));
+    return deadlineUs;
+  }
+
+  private void ensemblePreparationAndStop() {
+    Fixture fixture = create(Behavior.TIMELY_SUCCESS);
+    String token = prepareEnsemble(fixture);
+    long deadlineUs = startEnsemble(fixture, token, 250);
+    SystemClock.sleep(100);
+    require(fixture.binding.calls.get() == 0, "合奏早于预约时刻开始");
+    await("到预约时刻仍未开始", () -> fixture.binding.calls.get() > 0);
+    require(fixture.ensemble().getLong("localStartUs") == deadlineUs, "合奏起点被回调时刻重新设定");
+    main(() -> fixture.session.command("ensembleStop", new Bundle()));
+    int sent = fixture.binding.calls.get();
+    startEnsemble(fixture, token, 0);
+    SystemClock.sleep(400);
+    require(!fixture.ensemble().getBoolean("playing") && fixture.binding.calls.get() == sent,
+        "停止后旧令牌重新启动了合奏");
+    fixture.close();
+  }
+
+  private void ensembleLateCallbackKeepsTimeline() {
+    Fixture fixture = create(Behavior.ENSEMBLE_DELAY);
+    String token = prepareEnsemble(fixture);
+    long deadlineUs = startEnsemble(fixture, token, 100);
+    await("迟到回调没有触发跳过", () -> fixture.ensemble().getInt("skipped") > 0);
+    await("跳过后未继续未来音符", () -> fixture.binding.calls.get() >= 2);
+    require(fixture.ensemble().getLong("localStartUs") == deadlineUs, "迟到回调整体推迟了时间轴");
+    require(fixture.binding.calls.get() <= 3, "迟到音符被集中补发");
     fixture.close();
   }
 
@@ -267,6 +338,10 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
       main(() -> result.set(session.query("state")));
       return result.get();
     }
+    Bundle ensemble() {
+      AtomicReference<Bundle> value = new AtomicReference<>();
+      main(() -> value.set(session.query("ensemble"))); return value.get();
+    }
     boolean busy() {
       AtomicBoolean value = new AtomicBoolean();
       main(() -> {
@@ -286,7 +361,7 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
     }
   }
 
-  private enum Behavior { TIMELY_SUCCESS, TIMELY_CANCEL, REJECT, MISSING, BLOCK_MAIN, SYNC_SUCCESS, SYNC_CANCEL }
+  private enum Behavior { TIMELY_SUCCESS, TIMELY_CANCEL, REJECT, MISSING, BLOCK_MAIN, SYNC_SUCCESS, SYNC_CANCEL, ENSEMBLE_DELAY }
 
   private static final class GestureRequest {
     final AccessibilityBinding.GestureCallback callback;
@@ -312,7 +387,9 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
       synchronized (requests) { requests.add(request); }
       calls.incrementAndGet();
       if (behavior == Behavior.REJECT) return false;
-      if (behavior == Behavior.TIMELY_SUCCESS || behavior == Behavior.TIMELY_CANCEL) {
+      if (behavior == Behavior.ENSEMBLE_DELAY) {
+        main.postDelayed(() -> callback.completed(true), request.durationMs + (calls.get() == 1 ? 350 : 0));
+      } else if (behavior == Behavior.TIMELY_SUCCESS || behavior == Behavior.TIMELY_CANCEL) {
         main.postDelayed(() -> {
           callbacksSent.incrementAndGet();
           callback.completed(behavior == Behavior.TIMELY_SUCCESS);

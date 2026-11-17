@@ -31,7 +31,8 @@ def main():
     arguments = ["--kotlinlang-style", "--quiet"]
     if args.check:
         arguments += ["--dry-run", "--set-exit-if-changed"]
-    arguments += [str(p.relative_to(ROOT)) for p in sorted((ROOT / "app/src").rglob("*.kt"))]
+    roots = [ROOT / "app/src", ROOT / "modules/app-runtime/src"]
+    arguments += [str(p.relative_to(ROOT)) for root in roots for p in sorted(root.rglob("*.kt"))]
     # An argument file keeps Windows command lines below their length limit.
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".args", delete=False) as argfile:
         argfile.write("\n".join(arguments))

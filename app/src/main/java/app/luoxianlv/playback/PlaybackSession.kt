@@ -54,6 +54,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private var changeRevision = 0L
     private var listenerGeometry: FloatingDisplayGeometry? = null
     private var restoredFloating = false
+    private var floatingStartPending = false
     private var handoverPrepared = false
     private val current
         get() = active && !closed && binding.current()
@@ -123,6 +124,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private var fixedKeys = false
     private val interruptionGuard = PlaybackInterruptionGuard()
     private val input = PlaybackInput()
+    private val ensemble = EnsemblePlayback()
 
     internal fun canStartPlayback() =
         input.merged || interruptionGuard.canStart(SystemClock.uptimeMillis())
@@ -136,7 +138,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             override fun run() {
                 if (!current) return
                 if (
-                    (playing || preparing) &&
+                    (playing || preparing || ensemble.active) &&
                         !recoveringDisplay &&
                         playbackDisplay != displayState()
                 )
@@ -157,13 +159,22 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                 listenerGeometry = geometry
                 changeRevision++
                 if (::floating.isInitialized) floating.reposition()
-                if ((playing || preparing) && playbackDisplay != displayState()) {
+                if (
+                    (playing || preparing || ensemble.active) && playbackDisplay != displayState()
+                ) {
                     beginDisplayRecovery()
                 }
             }
         }
 
     private fun beginDisplayRecovery() {
+        if (ensemble.active) {
+            pauseNow()
+            app.luoxianlv.ensemble.EnsembleSession.current?.stopLocal(true)
+            error = "屏幕发生变化，请重新准备合奏"
+            floating.refresh()
+            return
+        }
         AppLog.log(
             "开始恢复显示：播放显示=$playbackDisplay 当前显示=" +
                 displayState() +
@@ -262,13 +273,16 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     val positionMs
         get() =
-            (baseMs +
-                    if (playing)
-                        ((SystemClock.uptimeMillis() - anchor - input.activationDelayMs)
-                                .coerceAtLeast(0) * speed)
-                            .toLong()
-                    else 0)
-                .coerceIn(0, durationMs)
+            if (ensemble.active && playing)
+                ensemble.position(SystemClock.elapsedRealtimeNanos() / 1000).coerceIn(0, durationMs)
+            else
+                (baseMs +
+                        if (playing)
+                            ((SystemClock.uptimeMillis() - anchor - input.activationDelayMs)
+                                    .coerceAtLeast(0) * speed)
+                                .toLong()
+                        else 0)
+                    .coerceIn(0, durationMs)
 
     val modeLabel
         get() = pitchMode.label + if (halfToneOn) " · 半音" else ""
@@ -280,11 +294,16 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         active = true
         prepareSong()
         monitor()
-        if (repository.floatingEnabled)
+        if (repository.floatingEnabled) {
+            floatingStartPending = true
             handler.postDelayed(
-                { if (current && repository.floatingEnabled) showFloating(true) },
+                {
+                    floatingStartPending = false
+                    if (current && repository.floatingEnabled) showFloating(true)
+                },
                 250,
             )
+        }
     }
 
     private fun initialize(context: Context, binding: AccessibilityBinding) {
@@ -292,9 +311,11 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         attachBaseContext(context)
         this.binding = binding
         input.initialize {
-            if (current && (playing || preparing)) {
+            if (current && (playing || preparing || ensemble.active)) {
+                val wasEnsemble = ensemble.active
                 pauseNow()
-                error = "输入模式已切换，请重新点击播放"
+                if (wasEnsemble) app.luoxianlv.ensemble.EnsembleSession.current?.stopLocal(true)
+                error = "输入状态已改变，请重新准备"
                 floating.refresh()
             }
         }
@@ -354,7 +375,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             halfToneOn = halfToneOn,
             fixedKeys = fixedKeys,
             fixAttempted = fixAttemptedForSong,
-            floatingVisible = if (active) floating.isRequested else restoredFloating,
+            floatingVisible =
+                if (active) floating.isRequested || floatingStartPending else restoredFloating,
             floatingState = floating.snapshot(),
             error = error,
         )
@@ -425,14 +447,20 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     override fun deactivate() {
         if (!active || closed) return
-        restoredFloating = floating.isRequested
+        restoredFloating = floating.isRequested || floatingStartPending
+        floatingStartPending = false
         pauseNow()
         active = false
         stopMonitoring()
         floating.hide()
     }
 
-    override fun interrupt() = pause()
+    override fun interrupt() {
+        if (ensemble.active) {
+            pauseNow()
+            app.luoxianlv.ensemble.EnsembleSession.current?.stopLocal(true)
+        } else pause()
+    }
 
     override fun close() {
         if (closed) return
@@ -452,6 +480,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     override fun canReplace() =
         current &&
+            !floatingStartPending &&
+            !ensemble.active &&
             !playing &&
             !preparing &&
             !recoveringDisplay &&
@@ -474,6 +504,15 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     override fun query(kind: String): Bundle =
         when (kind) {
+            "ensemble" ->
+                Bundle().apply {
+                    putString("token", ensemble.token)
+                    putBoolean("ready", ensemble.ready)
+                    putBoolean("playing", playing && ensemble.active)
+                    putLong("localStartUs", ensemble.localStartUs)
+                    putInt("skipped", ensemble.skipped)
+                    putString("error", error)
+                }
             "song" -> PlaybackWire.song(song)
             "diagnostics" -> PlaybackWire.diagnostics(diagnostics())
             "bounds" ->
@@ -506,6 +545,20 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     override fun command(action: String, arguments: Bundle) {
         if (!current) return
         when (action) {
+            "ensemblePrepare" -> prepareEnsemble(arguments)
+            "ensembleCue" -> cueEnsemble(arguments.getLong("positionUs"))
+            "ensembleClock" ->
+                if (ensemble.token == arguments.getString("token") && playing) {
+                    ensemble.correctionUs = arguments.getLong("correctionUs").coerceIn(-1000, 1000)
+                }
+            "ensembleStart" -> startEnsemble(arguments)
+            "ensembleStop" -> if (ensemble.active) pauseNow()
+            "ensembleLeave" ->
+                if (song.source == "合奏") {
+                    pauseNow()
+                    speed = repository.speed
+                    prepareSong()
+                }
             "select" -> select(PlaybackWire.song(arguments))
             "play" -> play()
             "pause" -> pause()
@@ -568,6 +621,12 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     fun toggle() {
         if (!current) return
+        app.luoxianlv.ensemble.EnsembleSession.current
+            ?.takeIf { it.active }
+            ?.let {
+                it.toggle()
+                return
+            }
         changeRevision++
         when {
             // 埋点：用户手动暂停演奏（seek/变速等内部调用 pause() 的路径不计）
@@ -582,6 +641,13 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     fun play() {
         if (!current) return
+        if (!ensemble.preparing)
+            app.luoxianlv.ensemble.EnsembleSession.current
+                ?.takeIf { it.active }
+                ?.let {
+                    it.toggle()
+                    return
+                }
         changeRevision++
         if (!canStartPlayback()) {
             AppLog.log("忽略播放：距离手势中断不足 300 毫秒")
@@ -715,10 +781,131 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
             floating.refresh()
             return
         }
+        if (ensemble.preparing) {
+            ensemble.preparing = false
+            preparing = true
+            val token = generation
+            val display = checkNotNull(playbackDisplay)
+            input.prepare(display.width, display.height, display.rotation) { success, message ->
+                if (token != generation || !ensemble.active || !current) return@prepare
+                if (!success) {
+                    preparing = false
+                    error = message
+                    floating.refresh()
+                } else cueEnsemble(ensemble.positionUs)
+            }
+            return
+        }
         Analytics.logEvent(this, "play_start") // 埋点：开始演奏（识别/准备完成后真正起播）
         playing = true
         generation++
         anchor = SystemClock.uptimeMillis()
+        drive()
+        floating.refresh()
+    }
+
+    private fun prepareEnsemble(arguments: Bundle) {
+        if (PracticePlaybackGate.active) {
+            error = "合奏仅支持游戏内演奏"
+            floating.refresh()
+            return
+        }
+        pauseNow()
+        val token = arguments.getString("token").orEmpty()
+        error = null
+        require(token.matches(Regex("[A-Za-z0-9_-]{16,96}")))
+        // 异步解析期间也监测旋转，基线必须先于准备令牌建立。
+        playbackDisplay = displayState()
+        ensemble.token = token
+        ensemble.preparing = true
+        ensemble.positionUs = arguments.getLong("positionUs")
+        ensemble.sleepOffsetMs = SystemClock.elapsedRealtime() - SystemClock.uptimeMillis()
+        val load = songLoad.begin()
+        songLoadJob?.cancel()
+        songLoadJob = scoreScope.launch {
+            try {
+                val prepared =
+                    withContext(ScoreWork.playback) {
+                        val events =
+                            app.luoxianlv.ensemble.EnsembleScore.events(
+                                arguments.getString("events").orEmpty(),
+                                arguments.getLong("durationUs"),
+                            )
+                        PlaybackTimeline(events, 120)
+                    }
+                if (ensemble.token != token || !current || songLoad.finish(load) == null)
+                    return@launch
+                timeline = prepared
+                song =
+                    Song(
+                        "ensemble-${arguments.getString("hash")}",
+                        arguments.getString("title").orEmpty(),
+                        "",
+                        120,
+                        "合奏",
+                    )
+                baseMs = (ensemble.positionUs / 1000).coerceIn(0, durationMs)
+                speed = 1f
+                error = null
+                play()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                songLoad.finish(load)
+                ensemble.preparing = false
+                error = "合奏谱面准备失败"
+                floating.refresh()
+            }
+        }
+    }
+
+    private fun cueEnsemble(positionUs: Long) {
+        if (!ensemble.active || playing) return
+        ensemble.ready = false
+        ensemble.positionUs = positionUs.coerceIn(0, durationMs * 1000)
+        baseMs = ensemble.positionUs / 1000
+        preparing = true
+        val token = generation
+        val first =
+            timeline.events.indices.firstOrNull {
+                !timeline.events[it].rest && timeline.offsets[it] + 0.5 >= baseMs
+            }
+        val done: (Boolean) -> Unit = { success ->
+            if (token == generation && ensemble.active && current) {
+                preparing = false
+                ensemble.ready = success
+                error = if (success) null else (gestureFailure ?: "调式准备失败")
+                floating.refresh()
+            }
+        }
+        if (first == null) done(true) else ensurePitch(timeline.events[first], done)
+    }
+
+    private fun startEnsemble(arguments: Bundle) {
+        if (
+            !(ensemble.ready &&
+                ensemble.token == arguments.getString("token") &&
+                playbackDisplay == displayState() &&
+                kotlin.math.abs(
+                    SystemClock.elapsedRealtime() -
+                        SystemClock.uptimeMillis() -
+                        ensemble.sleepOffsetMs
+                ) <= 50)
+        ) {
+            error = "合奏准备已失效，请重新准备"
+            floating.refresh()
+            return
+        }
+        ensemble.positionUs = arguments.getLong("positionUs")
+        ensemble.localStartUs = arguments.getLong("localStartUs")
+        ensemble.sleepOffsetMs = SystemClock.elapsedRealtime() - SystemClock.uptimeMillis()
+        baseMs = ensemble.positionUs / 1000
+        val index = timeline.indexAt(baseMs)
+        ensemble.lastEvent =
+            if (index < timeline.events.size && timeline.offsets[index] + 0.5 < baseMs) index
+            else index - 1
+        generation++
+        playing = true
         drive()
         floating.refresh()
     }
@@ -863,10 +1050,14 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     fun pause() {
         if (!current) return
         pauseNow()
+        app.luoxianlv.ensemble.EnsembleSession.current
+            ?.takeIf { it.active }
+            ?.let { it.stopLocal(true, it.owner) }
     }
 
-    private fun pauseNow() {
+    internal fun pauseNow() {
         val pausedPosition = positionMs
+        ensemble.clear()
         val wasPlaying = playing
         val wasPreparing = preparing
         changeRevision++
@@ -900,6 +1091,11 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     fun seek(milliseconds: Long) {
         if (!current) return
+        if (app.luoxianlv.ensemble.EnsembleSession.current?.active == true) {
+            error = "合奏进度由主控统一安排"
+            floating.refresh()
+            return
+        }
         val resume = playing
         pause()
         baseMs = milliseconds.coerceIn(0, durationMs)
@@ -908,6 +1104,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     fun setSpeed(value: Float) {
         if (!current) return
+        if (app.luoxianlv.ensemble.EnsembleSession.current?.active == true) return
         val resume = playing
         pause()
         speed = value.coerceIn(.5f, 2f)
@@ -936,6 +1133,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
 
     fun showFloating(enabled: Boolean) {
         if (!current) return
+        floatingStartPending = false
         changeRevision++
         repository.floatingEnabled = enabled
         if (enabled) {
@@ -987,6 +1185,24 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private fun drive() {
         handler.removeCallbacks(next)
         if (!playing || busy) return
+        if (ensemble.active) {
+            // 只调整尚未提交的音符期限，每次校时最多修正 1 ms。
+            ensemble.localStartUs += ensemble.correctionUs
+            ensemble.correctionUs = 0
+        }
+        if (
+            ensemble.active &&
+                kotlin.math.abs(
+                    SystemClock.elapsedRealtime() -
+                        SystemClock.uptimeMillis() -
+                        ensemble.sleepOffsetMs
+                ) > 50
+        ) {
+            interrupt()
+            error = "设备休眠后需要重新准备合奏"
+            floating.refresh()
+            return
+        }
         if (playbackDisplay != displayState()) {
             beginDisplayRecovery()
             return
@@ -994,17 +1210,44 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         val at = positionMs
         val index = timeline.indexAt(at)
         if (index >= timeline.events.size || at >= durationMs) {
-            pause()
+            interrupt()
             baseMs = durationMs
             return
         }
         val note = timeline.events[index]
         val end = timeline.offsets[index + 1]
+        if (
+            ensemble.active &&
+                !note.rest &&
+                (index <= ensemble.lastEvent || at - timeline.offsets[index] > 50)
+        ) {
+            if (index > ensemble.lastEvent) {
+                ensemble.skipped++
+                ensemble.lastEvent = index
+                if (ensemble.skipped <= 3 || ensemble.skipped % 10 == 0)
+                    AppLog.log("合奏跳过迟到音符：累计=${ensemble.skipped}")
+            }
+            handler.postDelayed(next, (end - at).toLong().coerceAtLeast(1))
+            return
+        }
         if (note.rest) {
+            if (ensemble.active) {
+                val upcoming = timeline.events.getOrNull(index + 1)
+                if (
+                    upcoming != null &&
+                        !upcoming.rest &&
+                        (pitchMode != upcoming.mode || halfToneOn != upcoming.halfTone)
+                ) {
+                    busy = true
+                    ensurePitch(upcoming, ::finishGesture)
+                    return
+                }
+            }
             handler.postDelayed(next, ((end - at) / speed).toLong().coerceAtLeast(1))
             return
         }
         busy = true
+        if (ensemble.active) ensemble.lastEvent = index
         val token = generation
         ensurePitch(note) { success ->
             if (token != generation) return@ensurePitch
@@ -1017,7 +1260,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                 return@ensurePitch
             }
             val remaining = ((end - positionMs) / speed).toLong()
-            if (remaining <= 0) {
+            if (remaining <= 0 || (ensemble.active && positionMs - timeline.offsets[index] > 50)) {
+                if (ensemble.active) ensemble.skipped++
                 finishGesture(true)
             } else {
                 press(
@@ -1034,7 +1278,10 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     private fun finishGesture(success: Boolean) {
         busy = false
         if (!success) {
-            pause()
+            if (ensemble.active) {
+                pauseNow()
+                app.luoxianlv.ensemble.EnsembleSession.current?.stopLocal(true)
+            } else pause()
             error = gestureFailure ?: "手势未完成"
             AppLog.w(TAG, error ?: "手势未完成")
         } else if (playing) {
@@ -1081,7 +1328,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
     ) {
         val point = keys.modes.getValue(mode)
         // 音区按钮是切换点击；保留 1 毫秒手势，保证立即切换且不会成为长按。
-        press(point[0], point[1], 1, { true }, done)
+        press(point[0], point[1], 1, { true }, done, allowPreparation = true)
     }
 
     private fun press(
@@ -1090,13 +1337,18 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         duration: Long,
         active: () -> Boolean,
         done: (Boolean) -> Unit,
+        allowPreparation: Boolean = false,
     ) {
         val currentDisplay = displayState()
         if (playing && playbackDisplay != currentDisplay) {
             beginDisplayRecovery()
             return
         }
-        if (!playing || !active() || playbackDisplay != currentDisplay) {
+        if (
+            !(playing || (allowPreparation && ensemble.active && preparing)) ||
+                !active() ||
+                playbackDisplay != currentDisplay
+        ) {
             gestureFailure = "播放已停止或屏幕方向已变化，请重新点击播放"
             done(false)
             return
@@ -1167,7 +1419,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                 currentDisplay.rotation,
             ) { success, message, activationWaitMs ->
                 if (token != generation || closed) return@press
-                if (playing) anchor += activationWaitMs
+                if (playing && !ensemble.active) anchor += activationWaitMs
                 if (success) {
                     AppLog.log("合流触摸完成：坐标=${px.toInt()},${py.toInt()} 实际显示=$currentDisplay")
                     floating.mark(px, py)

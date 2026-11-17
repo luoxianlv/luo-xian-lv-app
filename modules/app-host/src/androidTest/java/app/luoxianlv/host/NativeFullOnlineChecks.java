@@ -14,6 +14,7 @@ import app.luoxianlv.hot.contract.PlaybackBridge;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Instant;
 import java.util.Collections;
@@ -122,20 +123,25 @@ final class NativeFullOnlineChecks {
         () -> {
           originalPlayback[0] = playbackSession().snapshot();
           Bundle hidden = new Bundle();
-          hidden.putBoolean("enabled", false);
+          hidden.putBoolean("enabled", rollback);
           PlaybackBridge.current().command("showFloating", hidden);
         });
 
     var identity =
         InstallationIdentity.open(new File(area, "installation"), context.getPackageName(), "test");
+    String actualFingerprint;
+    try (var input = context.getAssets().open("hot/host-contract.sha256")) {
+      actualFingerprint = new String(input.readAllBytes(), StandardCharsets.US_ASCII).trim();
+    }
+    var installed = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+    long installedVersion = android.os.Build.VERSION.SDK_INT >= 28 ? installed.getLongVersionCode() : installed.versionCode;
     var api =
         new HotApiClient(
             origin,
             identity,
             1,
-            HotSignatures.hash(
-                "full-native-host-contract-1".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
-            true);
+            actualFingerprint,
+            true, installedVersion);
     var budget = new DownloadBudget(new File(area, "budget"));
     var downloader =
         new ObjectDownloader(
@@ -178,6 +184,7 @@ final class NativeFullOnlineChecks {
     var outcome = new AtomicReference<GroupActivation.Result>();
     var error = new AtomicReference<Throwable>();
     var exposed = new java.util.concurrent.atomic.AtomicLong();
+    var realtime = app.luoxianlv.hot.contract.SharedRealtime.current();
     try {
       main(
           () ->
@@ -227,6 +234,11 @@ final class NativeFullOnlineChecks {
                 check(pageClassLoader(page.host()) == next.classLoader(), "新开窗口没有使用候选");
             });
         if (rollback) {
+          // 保持正常游戏使用时的浮窗租约；隐藏且未演奏的普通服务会自行退出。
+          main(() -> {
+            Bundle visible = new Bundle(); visible.putBoolean("enabled", true);
+            PlaybackBridge.current().command("showFloating", visible);
+          });
           // 真实退后台暂停观察，留出系统重新连接的时间，不靠缩短或伪造健康时钟制造失败场景。
           main(
               () ->
@@ -276,6 +288,7 @@ final class NativeFullOnlineChecks {
                 check(badge(home.getWindow().getDecorView()) == null, "回退后仍显示候选组件");
               });
           check(journal.state().stable.equals(baseline.manifest.snapshotId), "回退后的磁盘选择仍指向候选");
+          check(realtime == app.luoxianlv.hot.contract.SharedRealtime.current(), "回退替换了宿主 WS");
           boolean isolated = false;
           try {
             quarantine.requireAllowed(candidate.snapshot.manifest, 1);
@@ -401,6 +414,9 @@ final class NativeFullOnlineChecks {
             Bundle position = new Bundle();
             position.putLong("position", originalPlayback[0].getLong("position"));
             PlaybackBridge.current().command("seek", position);
+            Bundle visible = new Bundle();
+            visible.putBoolean("enabled", originalPlayback[0].getBoolean("floating"));
+            PlaybackBridge.current().command("showFloating", visible);
           });
       worker.shutdown();
     }

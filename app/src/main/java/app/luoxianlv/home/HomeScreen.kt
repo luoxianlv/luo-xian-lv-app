@@ -56,6 +56,7 @@ fun HomeScreen(
     onPractice: (Boolean) -> Unit,
     onSettings: () -> Unit,
     onInputMode: () -> Unit,
+    onEnsemble: () -> Unit = {},
     snackbarHostState: SnackbarHostState,
     vm: LibraryViewModel = viewModel(),
 ) {
@@ -151,6 +152,7 @@ fun HomeScreen(
                 Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                     HomeHero(height = heroHeight)
                     HomeOverview(
+                        onEnsemble = onEnsemble,
                         onPractice = onPractice,
                         // 直接从 time 派生：rememberHomeTime() 每分钟写回一个 MutableState，
                         // 这里读 time.hour 就订阅了它，跨时段会自动重算，不需要额外的刷新逻辑。

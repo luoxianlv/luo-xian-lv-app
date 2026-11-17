@@ -196,8 +196,8 @@ class SongRepository(context: Context) {
         return song
     }
 
-    /** 导入 MIDI：在内存里发给服务端编译，拿到简谱后 MIDI 字节直接丢弃， 不再写 filesDir/midi_sources 留作重编译缓存。 */
-    fun addMidi(
+    /** 原 MIDI 供合奏分轨使用；已存在的无源谱保持兼容。 */
+    suspend fun addMidi(
         title: String,
         bytes: ByteArray,
         track: Int? = null,
@@ -216,12 +216,14 @@ class SongRepository(context: Context) {
                 bpm,
                 "MIDI · 引擎编译",
             )
+        app.luoxianlv.ensemble.EnsembleSources(appContext).save(id, bytes)
         write(songs().filterNot { it.builtIn } + song)
         selectedId = song.id
         return song
     }
 
     fun remove(id: String) {
+        app.luoxianlv.ensemble.EnsembleSources(appContext).remove(id)
         // 内置谱面不在 prefs 的歌单里，写回歌单对它无效，必须单独记一条删除意图，
         // 否则 songs() 下次合并又会把它带回来。
         if (builtIns.any { it.id == id }) setHiddenBuiltIns(hiddenBuiltIns() + id)

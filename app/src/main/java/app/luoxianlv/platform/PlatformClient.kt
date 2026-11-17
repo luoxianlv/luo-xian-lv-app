@@ -65,51 +65,37 @@ class PlatformClient(private val context: Context) {
         accessToken: String,
         onResult: (Result<List<SyncedScore>>) -> Unit,
     ) {
-        if (
-            !app.luoxianlv.app.BusinessJobs.thread("同步曲库") {
-                onResult(
-                    runCatching {
-                        require(deviceId.isNotBlank()) { "设备标识不能为空" }
-                        require(accessToken.isNotBlank()) { "登录凭证不能为空" }
-                        val records = mutableListOf<SyncedScore>()
-                        var cursor: String? = null
-                        for (pageIndex in 0 until MAX_LIBRARY_PAGES) {
-                            val device = java.net.URLEncoder.encode(deviceId, "UTF-8")
-                            val cursorQuery =
-                                cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" }
-                                    ?: ""
-                            val payload =
-                                http
-                                    .requestText(
-                                        "$baseUrl/api/client/library?device_id=$device$cursorQuery",
-                                        accessToken,
-                                    )
-                                    .trim()
-                            val (items, nextCursor) = responses.parseLibraryPage(payload)
-                            (0 until items.length())
-                                .mapNotNull { index ->
-                                    responses.parseSyncedScore(items.optJSONObject(index))?.let {
-                                        score ->
-                                        if (
-                                            score.notationText.isNotBlank() ||
-                                                score.contentUrl != null
-                                        ) {
-                                            enrichContent(score, accessToken)
-                                        } else {
-                                            score
-                                        }
-                                    }
-                                }
-                                .also(records::addAll)
-                            if (nextCursor == null || nextCursor == cursor) break
-                            cursor = nextCursor
+        background(onResult) {
+            require(deviceId.isNotBlank()) { "设备标识不能为空" }
+            require(accessToken.isNotBlank()) { "登录凭证不能为空" }
+            val records = mutableListOf<SyncedScore>()
+            var cursor: String? = null
+            for (pageIndex in 0 until MAX_LIBRARY_PAGES) {
+                val device = java.net.URLEncoder.encode(deviceId, "UTF-8")
+                val cursorQuery =
+                    cursor?.let { "&cursor=${java.net.URLEncoder.encode(it, "UTF-8")}" } ?: ""
+                val payload =
+                    http
+                        .requestText(
+                            "$baseUrl/api/client/library?device_id=$device$cursorQuery",
+                            accessToken,
+                        )
+                        .trim()
+                val (items, nextCursor) = responses.parseLibraryPage(payload)
+                (0 until items.length())
+                    .mapNotNull { index ->
+                        responses.parseSyncedScore(items.optJSONObject(index))?.let { score ->
+                            if (score.notationText.isNotBlank() || score.contentUrl != null)
+                                enrichContent(score, accessToken)
+                            else score
                         }
-                        records
                     }
-                )
+                    .also(records::addAll)
+                if (nextCursor == null || nextCursor == cursor) break
+                cursor = nextCursor
             }
-        )
-            onResult(Result.failure(IllegalStateException("本代同步已停用，请重新操作")))
+            records
+        }
     }
 
     /** 拉取平台曲目并原子合并较新版本；结果回调在工作线程执行。 */
@@ -218,34 +204,53 @@ class PlatformClient(private val context: Context) {
         }
     }
 
-    private fun enrichContent(
+    private suspend fun enrichContent(
         score: SyncedScore,
         accessToken: String,
     ): SyncedScore {
         if (score.notationText.isNotBlank() || score.contentUrl == null) return score
         return runCatching {
-                val contentOrigin = URL(score.contentUrl)
-                val platformOrigin = URL(baseUrl)
-                val sameOrigin =
-                    contentOrigin.protocol == platformOrigin.protocol &&
-                        contentOrigin.host == platformOrigin.host &&
-                        contentOrigin.port == platformOrigin.port
-                val bytes =
-                    http.requestBytes(score.contentUrl, if (sameOrigin) accessToken else null)
-                if (
-                    bytes.size >= 4 &&
-                        bytes.copyOfRange(0, 4).contentEquals(byteArrayOf(0x4d, 0x54, 0x68, 0x64))
-                ) {
-                    val rust =
-                        RustMidiCompiler.compile(compileToken(accessToken), bytes, melody = true)
-                    score.copy(notationText = rust.score, bpm = rust.bpm)
-                } else {
-                    val text = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
-                    require(text.any { it.isDigit() }) { "谱面内容为空" }
-                    score.copy(notationText = text)
-                }
+            val contentOrigin = URL(score.contentUrl)
+            val platformOrigin = URL(baseUrl)
+            val sameOrigin =
+                contentOrigin.protocol == platformOrigin.protocol &&
+                    contentOrigin.host == platformOrigin.host &&
+                    contentOrigin.port == platformOrigin.port
+            val bytes = http.requestBytes(score.contentUrl, if (sameOrigin) accessToken else null)
+            if (
+                bytes.size >= 4 &&
+                    bytes.copyOfRange(0, 4).contentEquals(byteArrayOf(0x4d, 0x54, 0x68, 0x64))
+            ) {
+                val rust = RustMidiCompiler.compile(compileToken(accessToken), bytes, melody = true)
+                score.copy(notationText = rust.score, bpm = rust.bpm)
+            } else {
+                val text = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF").trim()
+                require(text.any { it.isDigit() }) { "谱面内容为空" }
+                score.copy(notationText = text)
             }
-            .getOrDefault(score)
+        }
+            .getOrElse { failure ->
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                score
+            }
+    }
+
+    /** 合奏按既有授权解码原 MIDI，仅在本次编译内存中使用，不保存解密源文件。 */
+    internal suspend fun ensembleMidi(id: String): ByteArray? {
+        require(id.isNotBlank() && id.length <= 256 && id.none { it in "/?#" })
+        val bytes =
+            http.requestBytes(
+                "$baseUrl/api/scores/${java.net.URLEncoder.encode(id, "UTF-8")}/download",
+                compileToken(),
+            )
+        return when {
+            bytes.startsWithMidi() -> bytes
+            bytes.looksLikeLicense() ->
+                JSONObject(bytes.toString(Charsets.UTF_8)).let {
+                    licensedMidi.decode(it.optJSONObject("data") ?: it)
+                }
+            else -> null
+        }
     }
 
     private companion object {
