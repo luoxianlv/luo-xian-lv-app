@@ -95,7 +95,9 @@ cp "$apk" "dist/$asset"
 jq -n --arg name "$version" --argjson code "$code" --arg asset "$asset" \
   '{versionName:$name, versionCode:$code, asset:$asset}' > dist/package.json
 notes_file=".github/release-notes/${version}.json"
-test -s "$notes_file" || { echo "Missing release notes: $notes_file" >&2; exit 1; }
-jq -e '.sections | type == "array"' "$notes_file" > /dev/null || { echo 'Invalid release notes format' >&2; exit 1; }
-cp "$notes_file" dist/release-notes.json
+if [[ -e "$notes_file" || "${INTERNAL_SIGNED_CANDIDATE:-false}" != true ]]; then
+  test -s "$notes_file" || { echo "Missing release notes: $notes_file" >&2; exit 1; }
+  jq -e '.sections | type == "array"' "$notes_file" > /dev/null || { echo 'Invalid release notes format' >&2; exit 1; }
+  cp "$notes_file" dist/release-notes.json
+fi
 printf 'Packaged %s (versionCode %s)\n' "$RELEASE_TAG" "$code" >> "$GITHUB_STEP_SUMMARY"

@@ -13,6 +13,11 @@ on:
         required: true
         default: false
         type: boolean
+      verify_realtime_only:
+        description: 开启实时连接并验证正式签名，仅核验，不上传 APK 或写入构建缓存
+        required: false
+        default: false
+        type: boolean
       version_name:
         description: 候选版本号（只生成验收产物，不发布）
         required: true
@@ -53,7 +58,7 @@ jobs:
         with:
           source_dir: source
           profile: native
-          read_only: 'false'
+          read_only: ${{ inputs.verify_realtime_only && 'true' || 'false' }}
       - name: 检查候选版本
         working-directory: source
         env:
@@ -72,6 +77,7 @@ jobs:
           RELEASE_TAG: v${{ inputs.version_name }}
           ORG_GRADLE_PROJECT_appVersionName: ${{ inputs.version_name }}
           ORG_GRADLE_PROJECT_appVersionCode: ${{ inputs.version_code }}
+          ORG_GRADLE_PROJECT_realtimeEnabled: ${{ inputs.verify_realtime_only && 'true' || 'false' }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ORG_GRADLE_PROJECT_releaseStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ORG_GRADLE_PROJECT_releaseKeyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -80,10 +86,17 @@ jobs:
           UPDATE_BASE_URL: ${{ vars.UPDATE_BASE_URL }}
           RELEASE_SKIP_TESTS: ${{ inputs.skip_tests && 'true' || 'false' }}
           NATIVE_RELEASE_PACKAGE: 'true'
+          INTERNAL_SIGNED_CANDIDATE: ${{ inputs.verify_realtime_only && 'true' || 'false' }}
           NATIVE_HOT_CONFIG_JSON: ${{ vars.NATIVE_HOT_CONFIG_JSON }}
         run: bash "$GITHUB_WORKSPACE/.github/scripts/package-release.sh"
+      - name: 核对实时开关并记录已验签 APK 摘要
+        if: inputs.verify_realtime_only
+        working-directory: source
+        run: |
+          grep -Fq 'boolean REALTIME_ENABLED = true;' modules/app-host/build/generated/source/buildConfig/release/app/luoxianlv/host/BuildConfig.java
+          sha256sum modules/app-host/build/outputs/apk/release/app-host-release.apk
       - name: 保存签名验收包与公开核验资料
-        if: always()
+        if: always() && !inputs.verify_realtime_only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-signed-candidate-${{ inputs.version_name }}
@@ -92,7 +105,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
       - name: 保存三层 SDK、映射与失败诊断
-        if: always()
+        if: always() && !inputs.verify_realtime_only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: native-signed-evidence-${{ inputs.version_name }}

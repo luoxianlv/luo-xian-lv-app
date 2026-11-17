@@ -79,7 +79,7 @@ class NativePackagingGuards(unittest.TestCase):
             path.chmod(0o755)
         return path
 
-    def packaged(self, prefix, external=False):
+    def packaged(self, prefix, external=False, internal=False, has_notes=True):
         self.source(prefix)
         self.fixture("gradlew", 'printf "%s\\n" "$@" > gradle-args\nexit 0\n')
         self.fixture("bin/jq", '#!/bin/sh\nif [ "$1" = "-n" ]; then printf "{}\\n"; else cat >/dev/null; fi\n', True)
@@ -109,7 +109,8 @@ exit 1
             self.fixture(prefix + f"app-{role}/build/native-report/release/report.json", role + "-report")
         for role in ("runtime", "business"):
             self.fixture(prefix + f"app-{role}/build/native-link/release/{role}.apk", role + "-apk")
-        self.fixture(".github/release-notes/1.1.0.json", '{"sections":[]}\n')
+        if has_notes:
+            self.fixture(".github/release-notes/1.1.0.json", '{"sections":[]}\n')
         env = {"PATH": str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
                "RUNNER_TEMP": self.runner.as_posix(), "ANDROID_HOME": (self.root / "sdk").as_posix(),
                "GITHUB_STEP_SUMMARY": (self.root / "summary").as_posix(), "RELEASE_TAG": "v1.1.0",
@@ -119,11 +120,18 @@ exit 1
                "ORG_GRADLE_PROJECT_releaseStorePassword": "fixture",
                "ORG_GRADLE_PROJECT_releaseKeyAlias": "fixture",
                "ORG_GRADLE_PROJECT_releaseKeyPassword": "fixture"}
+        if internal:
+            env["INTERNAL_SIGNED_CANDIDATE"] = "true"
         for name in ("SYSTEMROOT", "WINDIR"):
             if name in os.environ:
                 env[name] = os.environ[name]
         result = subprocess.run([self.bash, str(self.script)], cwd=self.root, env=env,
                                 capture_output=True, text=True, encoding="utf-8", timeout=15)
+        if not has_notes and not internal:
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Missing release notes", result.stderr)
+            return
+        self.assertEqual((self.root / "dist/release-notes.json").exists(), has_notes)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.root / "audit-host-path").read_text(),
                          prefix + "app-host/build/outputs/apk/release/app-host-release.apk")
@@ -155,6 +163,12 @@ exit 1
 
     def test_native_packaging_uses_old_tag_module_outputs(self):
         self.packaged("")
+
+    def test_internal_candidate_can_precede_public_release_notes(self):
+        self.packaged("modules/", internal=True, has_notes=False)
+
+    def test_public_package_still_requires_release_notes(self):
+        self.packaged("modules/", has_notes=False)
 
 
 if __name__ == "__main__":
