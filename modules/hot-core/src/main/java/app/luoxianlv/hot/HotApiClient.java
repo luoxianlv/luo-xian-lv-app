@@ -473,13 +473,19 @@ public final class HotApiClient {
       }
       int status = connection.getResponseCode();
       connection.setReadTimeout(Math.min(500, readTimeout));
+      long length = connection.getHeaderField("Transfer-Encoding") == null
+          ? connection.getHeaderFieldLong("Content-Length", -1) : -1;
+      // 明文仅供回环联调。桌面 JDK 在连接建立后不会更新 socket 的读取超时，
+      // 且 disconnect 会等待正阻塞在 read 的线程。固定长度回环响应可分次取已到的字节。
+      long loopbackLength = localTest && "http".equals(origin.getScheme()) ? length : -1;
       cancellation.check();
       if (status < 200 || status >= 300) {
         String code = "request_failed";
         try (InputStream input = connection.getErrorStream()) {
           if (input != null) {
             String parsed =
-                StrictJson.envelope(read(input, 65536, 30000, cancellation, false)).string("code");
+                StrictJson.envelope(read(input, 65536, 30000, cancellation, false, loopbackLength))
+                    .string("code");
             if (parsed.matches("[a-z_]{1,64}")) code = parsed;
           }
         } catch (Exception ignored) {
@@ -500,8 +506,7 @@ public final class HotApiClient {
                     5 * StrictJson.MAX_BYTES,
                     readTimeout,
                     cancellation,
-                    connection.getHeaderField("Transfer-Encoding") == null
-                        && connection.getHeaderFieldLong("Content-Length", -1) >= 0)),
+                    length >= 0, loopbackLength)),
             serverTime);
       }
     } catch (Exception failure) {
@@ -517,16 +522,34 @@ public final class HotApiClient {
       int limit,
       int timeoutMillis,
       UpdateCancellation cancellation,
-      boolean fixedLength)
+      boolean fixedLength,
+      long loopbackLength)
       throws Exception {
     long start = System.nanoTime();
     ByteArrayOutputStream output = new ByteArrayOutputStream();
     byte[] buffer = new byte[8192];
+    StrictJson.require(loopbackLength <= limit, "API 响应大小无效");
     int n;
     while (true) {
       cancellation.check();
+      int count = buffer.length;
+      if (loopbackLength >= 0) {
+        if (output.size() == loopbackLength) break;
+        count = Math.min(count, input.available());
+        if (count == 0) {
+          if (System.nanoTime() - start >= timeoutMillis * 1_000_000L)
+            throw new java.net.SocketTimeoutException("API 响应等待超时");
+          try {
+            Thread.sleep(20);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new UpdateCancellation.Cancelled();
+          }
+          continue;
+        }
+      }
       try {
-        n = input.read(buffer);
+        n = input.read(buffer, 0, count);
       } catch (java.net.SocketTimeoutException waiting) {
         cancellation.check();
         if (!fixedLength || System.nanoTime() - start > timeoutMillis * 1_000_000L) throw waiting;
