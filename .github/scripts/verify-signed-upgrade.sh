@@ -12,19 +12,30 @@ sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?}}"
 export PATH="$sdk/cmdline-tools/latest/bin:$sdk/platform-tools:$PATH"
 image='system-images;android-30;google_apis;x86_64'
 sdkmanager --install 'emulator' 'platform-tools' "$image" >/dev/null
-echo no | avdmanager create avd --force --name release-upgrade --package "$image" >/dev/null
+export ANDROID_AVD_HOME="$work/avds"
+mkdir -p "$ANDROID_AVD_HOME"
+echo no | avdmanager create avd --force --name release-upgrade --package "$image" --device pixel_2 >/dev/null
+# Keep the guest small on hosted runners after the release build.
+config="$ANDROID_AVD_HOME/release-upgrade.avd/config.ini"
+sed -i '/^disk.dataPartition.size=/d' "$config"
+echo 'disk.dataPartition.size=2G' >> "$config"
+df -h "$work"
+bash ./gradlew --stop
 sudo chmod a+rw /dev/kvm
 adb start-server
 "$sdk/emulator/emulator" -avd release-upgrade -port 5554 -no-window -no-audio \
-  -no-snapshot -no-boot-anim -gpu swiftshader_indirect -accel on >"$work/emulator.log" 2>&1 &
+  -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 1536 -cores 2 -accel on >"$work/emulator.log" 2>&1 &
 emulator_pid=$!
-trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+cleanup() {
+  if (( $? != 0 )); then tail -80 "$work/emulator.log"; fi
+  kill "$emulator_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
 export ANDROID_SERIAL=emulator-5554
-timeout 240 adb wait-for-device
-for _ in {1..180}; do
-  [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" != 1 ]] || break
+for _ in {1..120}; do
   kill -0 "$emulator_pid"
-  sleep 1
+  if [[ "$(timeout 4 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then break; fi
+  sleep 2
 done
 [[ "$(adb shell getprop sys.boot_completed | tr -d '\r')" == 1 ]]
 adb shell svc wifi disable
