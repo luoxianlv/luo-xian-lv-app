@@ -23,19 +23,48 @@ class MainNavigationState {
     var tab = Routes.HOME
     val subPage = mutableStateOf<String?>(null)
     var startFloatingAfterSetup = false
+    private var returnToEnsemble = false
     var moving = false
+
+    fun openEnsemble() {
+        returnToEnsemble = false
+        startFloatingAfterSetup = false
+        subPage.value = Routes.ENSEMBLE
+    }
+
+    fun openEnsembleSetup(route: String) {
+        require(route == Routes.LOGIN || route == Routes.INPUT_MODE)
+        returnToEnsemble = true
+        startFloatingAfterSetup = route == Routes.INPUT_MODE
+        subPage.value = route
+    }
+
+    fun dismissOverlay() {
+        val returnToRoom =
+            returnToEnsemble && subPage.value in setOf(Routes.LOGIN, Routes.INPUT_MODE)
+        returnToEnsemble = false
+        startFloatingAfterSetup = false
+        subPage.value = if (returnToRoom) Routes.ENSEMBLE else null
+    }
 
     fun restore(state: Bundle?) {
         tab = state?.getString("tab")?.takeIf { it in mainTabs } ?: Routes.HOME
         subPage.value = state?.getString("overlay")?.takeIf { it in overlayRoutes }
         startFloatingAfterSetup =
             subPage.value == Routes.INPUT_MODE && state?.getBoolean("floatingSetup", false) == true
+        returnToEnsemble =
+            subPage.value in setOf(Routes.LOGIN, Routes.INPUT_MODE) &&
+                state?.getBoolean("ensembleReturn", false) == true
     }
 
     fun save() =
         Bundle().apply {
             putString("tab", tab)
             subPage.value?.let { putString("overlay", it) }
+            putBoolean(
+                "ensembleReturn",
+                returnToEnsemble && subPage.value in setOf(Routes.LOGIN, Routes.INPUT_MODE),
+            )
             putBoolean(
                 "floatingSetup",
                 startFloatingAfterSetup && subPage.value == Routes.INPUT_MODE,

@@ -23,6 +23,20 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 
+/** The floating control follows the same resume, replay and rejoin rules as the room page. */
+internal fun ensembleOwnerStartAction(room: JSONObject): String {
+    val phase = room.optString("phase")
+    val duration = room.optJSONObject("score")?.optLong("durationUs") ?: 0L
+    return when {
+        phase == "playing" -> "rejoin"
+        phase in setOf("idle", "paused") &&
+            duration > 0 &&
+            room.optLong("positionUs") >= duration -> "restart"
+        phase == "paused" -> "resume"
+        else -> "start"
+    }
+}
+
 /** 业务代次持有房间展示与输入准备，Socket 和校时仍归共享运行时。 */
 internal class EnsembleController(context: Context) : AutoCloseable {
     data class ViewState(
@@ -30,9 +44,11 @@ internal class EnsembleController(context: Context) : AutoCloseable {
         val account: String = "",
         val connection: String = "stopped",
         val working: Boolean = false,
+        val preparing: Boolean = false,
         val ready: Boolean = false,
         val message: String = "",
         val supported: Boolean = true,
+        val serviceUnavailable: Boolean = false,
     )
 
     private val app = context.applicationContext
@@ -49,6 +65,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
     private var prepared = ""
     private var preparedHash = ""
     private var preparingJob: Job? = null
+    private var preparationGeneration = 0L
     private var lastProposal = ""
     private var lastCommit = ""
     private var connectionEpoch = ""
@@ -61,6 +78,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
     private var syncJob: Job? = null
     private var startCommand: Job? = null
     private var pendingRoomEvent: JSONObject? = null
+    private var messageGeneration = 0L
     @Volatile private var roomGeneration = 0L
     private var lastSync = 0L
     val active
@@ -118,6 +136,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
                 mutable.value =
                     mutable.value.copy(
                         connection = value.getString("state").orEmpty(),
+                        serviceUnavailable = value.getBoolean("serviceUnavailable", false),
                         account = account,
                         supported =
                             !value.getBoolean("connected") || value.getBoolean("ensembleEnabled"),
@@ -208,6 +227,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
     }
 
     private fun message(text: String) {
+        messageGeneration++
         mutable.value = mutable.value.copy(message = text.take(200))
     }
 
@@ -329,6 +349,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
         if (closed || suspended || syncJob?.isActive == true) return
         syncJob = scope.launch {
             lastSync = SystemClock.elapsedRealtime()
+            val previousMessageGeneration = messageGeneration
             runCatching {
                 command("current").let {
                     if (closed || suspended) return@let
@@ -347,6 +368,12 @@ internal class EnsembleController(context: Context) : AutoCloseable {
                     } else clearRoom()
                 }
             }
+                .onSuccess {
+                    // A successful refresh clears the error it was meant to recover, while
+                    // preserving any newer error reported by a concurrent room operation.
+                    if (messageGeneration == previousMessageGeneration)
+                        mutable.value = mutable.value.copy(message = "")
+                }
                 .onFailure { if (it !is CancellationException) message(it.message ?: "同步失败") }
         }
     }
@@ -483,13 +510,16 @@ internal class EnsembleController(context: Context) : AutoCloseable {
             return
         }
         if (prepared.isEmpty()) prepare()
-        else if (owner)
-            control(if (mutable.value.room?.getString("phase") == "paused") "resume" else "start")
-        else stopLocal(true)
+        else if (owner) {
+            val action = mutable.value.room?.let(::ensembleOwnerStartAction) ?: return
+            control(action, mutable.value.account.takeIf { action == "rejoin" })
+        } else stopLocal(true)
     }
 
     fun prepare() {
         if (closed || suspended || preparingJob?.isActive == true) return
+        val generation = ++preparationGeneration
+        mutable.value = mutable.value.copy(preparing = true, message = "")
         preparingJob = scope.launch {
             try {
                 val room = mutable.value.room ?: error("请先加入房间")
@@ -554,6 +584,9 @@ internal class EnsembleController(context: Context) : AutoCloseable {
             } catch (failure: Exception) {
                 stopLocal(false)
                 message(failure.message ?: "准备失败")
+            } finally {
+                if (generation == preparationGeneration)
+                    mutable.value = mutable.value.copy(preparing = false)
             }
         }
     }
@@ -621,7 +654,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
             }
         scheduled?.close()
         scheduled =
-            bridge?.schedule(
+            bridge.schedule(
                 arguments,
                 { localStartUs ->
                     val playback = PlaybackBridge.current() ?: error("输入会话已结束")
@@ -658,7 +691,17 @@ internal class EnsembleController(context: Context) : AutoCloseable {
                                 )
                             )
                         }
-                            .onFailure { if (it !is CancellationException) message("已开始演奏，回执未确认") }
+                            .onFailure {
+                                if (
+                                    it !is CancellationException &&
+                                        prepared == token &&
+                                        lastProposal == id &&
+                                        lastCommit == id
+                                ) {
+                                    stopLocal(true, reason = "开始回执未确认")
+                                    message("本机已停止，开始回执尚未确认，请重新同步")
+                                }
+                            }
                     }
             }
     }
@@ -667,6 +710,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
         if (prepared.isNotEmpty() || runStartUs > 0) AppLog.d("多人合奏", "本机停止：$reason；通知房间=$notify")
         startCommand?.cancel()
         startCommand = null
+        preparationGeneration++
         preparingJob?.cancel()
         preparingJob = null
         scheduled?.close()
@@ -681,7 +725,7 @@ internal class EnsembleController(context: Context) : AutoCloseable {
             bridge?.stopScheduled()
             PlaybackBridge.current()?.command("ensembleStop", Bundle())
         }
-        mutable.value = mutable.value.copy(ready = false)
+        mutable.value = mutable.value.copy(ready = false, preparing = false)
         if (notify && active && !suspended)
             scope.launch {
                 runCatching { applyRoom(command(if (owner && pauseRoom) "pause" else "stop")) }

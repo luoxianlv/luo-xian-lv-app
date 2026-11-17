@@ -10,7 +10,11 @@
         android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
     <instrumentation android:name="app.luoxianlv.host.RealtimeTlsInstrumentation"
         android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.RealtimeDiagnosticsInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
     <instrumentation android:name="app.luoxianlv.host.EnsembleMultiInstrumentation"
+        android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
+    <instrumentation android:name="app.luoxianlv.host.EnsembleUiInstrumentation"
         android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
     <instrumentation android:name="app.luoxianlv.host.BusinessHttpInstrumentation"
         android:targetPackage="app.luoxianlv.debug" android:functionalTest="true" />
