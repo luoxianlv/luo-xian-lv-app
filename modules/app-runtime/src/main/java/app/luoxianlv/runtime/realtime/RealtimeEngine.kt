@@ -323,8 +323,8 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                         now +
                             when {
                                 !room -> heartbeat
-                                clock.estimate(micros()) != null -> 5000
-                                calibrationAttempts < 5 -> 1000
+                                calibrationAttempts < 5 && clock.estimate(micros()) == null -> 1000
+                                // 每分钟 24 个样本满足服务端 30 次预算，维持低延迟样本覆盖。
                                 else -> 2500
                             }
                 } else ping = null
