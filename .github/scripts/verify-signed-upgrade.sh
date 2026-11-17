@@ -8,12 +8,14 @@ gh release download "$old" --pattern "luoxianlv-$old-release.apk" --dir "$work"
 candidate="modules/app-host/build/outputs/apk/release/app-host-release.apk"
 package=app.luoxianlv
 activity="$package/app.luoxianlv.MainActivity"
+sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?}}"
+export PATH="$sdk/cmdline-tools/latest/bin:$sdk/platform-tools:$PATH"
 image='system-images;android-30;google_apis;x86_64'
 sdkmanager --install 'emulator' 'platform-tools' "$image" >/dev/null
 echo no | avdmanager create avd --force --name release-upgrade --package "$image" >/dev/null
 sudo chmod a+rw /dev/kvm
 adb start-server
-"$ANDROID_HOME/emulator/emulator" -avd release-upgrade -port 5554 -no-window -no-audio \
+"$sdk/emulator/emulator" -avd release-upgrade -port 5554 -no-window -no-audio \
   -no-snapshot -no-boot-anim -gpu swiftshader_indirect -accel on >"$work/emulator.log" 2>&1 &
 emulator_pid=$!
 trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
