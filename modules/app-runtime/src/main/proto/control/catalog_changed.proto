@@ -1,0 +1,13 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message CatalogChangedData {
+  Versions versions = 1;
+}
+message Versions {
+  optional uint32 version_code = 1;
+  optional string version_name = 2;
+  optional bool update_enabled = 3;
+  optional string midi_core_version = 4;
+}

@@ -246,7 +246,9 @@ internal class EnsembleController(context: Context) : AutoCloseable {
 
     private suspend fun command(type: String, body: JSONObject = JSONObject()): JSONObject {
         val generation = roomGeneration
-        mutable.value.room?.optString("id")?.let { if (!body.has("roomId")) body.put("roomId", it) }
+        if (type !in setOf("create", "join", "current", "commandResult") && !body.has("roomId")) {
+            mutable.value.room?.optString("id")?.let { body.put("roomId", it) }
+        }
         val result = BusinessJobs.io {
             if (generation != roomGeneration) throw CancellationException("房间已改变")
             val id = UUID.randomUUID().toString()

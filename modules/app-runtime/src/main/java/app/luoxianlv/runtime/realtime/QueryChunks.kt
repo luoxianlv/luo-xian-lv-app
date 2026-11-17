@@ -2,7 +2,6 @@ package app.luoxianlv.runtime.realtime
 
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
-import java.util.Base64
 import org.json.JSONObject
 
 /** 连续分片才可组成结果；确认窗口由连接线程推进，正文不会进入页面回调。 */
@@ -27,7 +26,7 @@ internal class QueryChunks {
             output = ByteArray(size)
         }
         require(metadata == header && total == size)
-        val bytes = Base64.getDecoder().decode(part.getString("bytes"))
+        val bytes = part.get("bytes") as ByteArray
         require(bytes.isNotEmpty() && bytes.size <= 8192 && offset + bytes.size <= total)
         require(part.getBoolean("done") == (offset + bytes.size == total))
         require(part.getBoolean("done") || bytes.size == 8192)

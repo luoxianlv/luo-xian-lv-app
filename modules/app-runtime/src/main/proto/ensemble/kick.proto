@@ -1,0 +1,8 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message EnsembleKickData {
+  optional string room_id = 1;
+  optional string account_id = 2;
+}

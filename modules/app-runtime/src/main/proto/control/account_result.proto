@@ -1,0 +1,9 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message AccountResultData {
+  optional string account_id = 1;
+  optional uint32 expires_in = 2;
+  optional bool authorized = 3;
+}

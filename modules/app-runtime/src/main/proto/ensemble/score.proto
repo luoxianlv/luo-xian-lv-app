@@ -1,0 +1,12 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+import "ensemble/track.proto";
+
+message Score {
+  optional string sha256 = 1;
+  optional string title = 2;
+  optional int64 duration_us = 3;
+  repeated Track tracks = 4;
+}

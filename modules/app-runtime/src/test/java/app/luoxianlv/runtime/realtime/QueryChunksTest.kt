@@ -1,6 +1,5 @@
 package app.luoxianlv.runtime.realtime
 
-import java.util.Base64
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -13,7 +12,7 @@ class QueryChunksTest {
             .put("retryAfterMillis", 0)
             .put("offset", at)
             .put("total", raw.size)
-            .put("bytes", Base64.getEncoder().encodeToString(raw.copyOfRange(at, at + count)))
+            .put("bytes", raw.copyOfRange(at, at + count))
             .put("done", at + count == raw.size)
 
     @Test

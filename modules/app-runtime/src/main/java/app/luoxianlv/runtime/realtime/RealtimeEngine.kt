@@ -58,7 +58,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     private val pending = LinkedHashMap<String, Pending>()
 
     private data class Outbound(
-        val text: String,
+        val payload: ByteArray,
         val bytes: Int,
         val queuedAt: Long,
         val sent: () -> Unit,
@@ -371,10 +371,12 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                 }
 
                 override fun onMessage(message: String) {
+                    closeConnection(1003, "protobuf binary required")
+                }
+
+                override fun onMessage(bytes: ByteBuffer) {
                     val receivedUs = micros()
-                    val size =
-                        if (message.length <= RealtimeWire.MAX_BYTES) RealtimeWire.utf8Size(message)
-                        else Int.MAX_VALUE
+                    val size = bytes.remaining()
                     if (size > RealtimeWire.MAX_BYTES) {
                         closeConnection(1009, "message limit")
                         return
@@ -384,10 +386,12 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                         closeConnection(1009, "queue limit")
                         return
                     }
+                    val payload = ByteArray(size).also { bytes.get(it) }
                     if (
                         !post {
                             try {
-                                if (policy.current(attempt)) received(attempt, message, receivedUs)
+                                if (policy.current(attempt))
+                                    received(attempt, RealtimeProto.decode(payload), receivedUs)
                             } finally {
                                 inbound.addAndGet(-size)
                             }
@@ -396,10 +400,6 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                         inbound.addAndGet(-size)
                         closeConnection(1013, "queue limit")
                     }
-                }
-
-                override fun onMessage(bytes: ByteBuffer) {
-                    closeConnection(1003, "text required")
                 }
 
                 override fun onClose(code: Int, reason: String, remote: Boolean) {
@@ -424,8 +424,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         client.connect()
     }
 
-    private fun received(attempt: Long, text: String, receivedUs: Long) {
-        val value = RealtimeWire.objectValue(text)
+    private fun received(attempt: Long, value: JSONObject, receivedUs: Long) {
         require(value.getInt("protocolVersion") == 1)
         val id = value.getString("messageId")
         val topic = value.getString("topic")
@@ -480,6 +479,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
         }
         if (topic == "catalog" && type == "changed") {
             data.optJSONObject("versions")?.let { catalog = it.toString() }
+            val text = value.toString()
             observers.toList().forEach { it.message(topic, type, text, "versions") }
             publish()
             return
@@ -523,6 +523,9 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             }
             clearAccountRequest(if (type == "result") 480_000 else 60_000)
         }
+        val event =
+            if (observers.isNotEmpty() && topic in setOf("ensemble", "business")) value.toString()
+            else null
         pending[id]
             ?.takeIf { it.topic == topic && type in setOf("result", "error") }
             ?.let {
@@ -532,8 +535,9 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
                     .put("clientReceivedUs", receivedUs.toString())
                 complete(it, type == "result", data.toString())
             }
-        if (topic in setOf("ensemble", "business"))
-            observers.toList().forEach { it.message(topic, type, text, data.optString("kind")) }
+        if (event != null) {
+            observers.toList().forEach { it.message(topic, type, event, data.optString("kind")) }
+        }
         publish()
     }
 
@@ -600,11 +604,11 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
     ): Boolean {
         val client = socket ?: return false
         if (!policy.connected || !client.isOpen) return false
-        val text = RealtimeWire.encode(epoch, id, topic, type, data)
-        val bytes = RealtimeWire.utf8Size(text)
+        val payload = RealtimeProto.encode(epoch, id, topic, type, data)
+        val bytes = payload.size
         if (bytes > RealtimeWire.MAX_BYTES || outbound.size >= 64 || outboundBytes + bytes > 49_152)
             return false
-        outbound.addLast(Outbound(text, bytes, now(), sent))
+        outbound.addLast(Outbound(payload, bytes, now(), sent))
         outboundBytes += bytes
         flush()
         return true
@@ -622,7 +626,7 @@ class RealtimeEngine(context: Context, private val host: SharedRealtime.Host, or
             val frame = outbound.removeFirst()
             outboundBytes -= frame.bytes
             frame.sent()
-            client.send(frame.text)
+            client.send(frame.payload)
         }
         if (outbound.isNotEmpty() && !flushing) {
             flushing = true

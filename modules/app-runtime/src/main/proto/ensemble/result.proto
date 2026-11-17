@@ -1,0 +1,13 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+import "ensemble/room.proto";
+
+message EnsembleResultData {
+  oneof value {
+    Room snapshot = 1;
+    bool no_room = 2;
+    string permit = 3;
+  }
+}

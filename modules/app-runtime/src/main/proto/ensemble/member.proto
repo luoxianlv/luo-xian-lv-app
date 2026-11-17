@@ -1,0 +1,14 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+import "ensemble/preparation.proto";
+
+message Member {
+  optional string account = 1;
+  optional string nickname = 2;
+  optional uint32 track = 3;
+  Ready ready = 4;
+  optional bool online = 5;
+  optional bool playing = 6;
+}

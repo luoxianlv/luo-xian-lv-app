@@ -1,0 +1,10 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message Participant {
+  optional string account = 1;
+  optional string token = 2;
+  optional bool ack = 3;
+  optional bool executed = 4;
+}

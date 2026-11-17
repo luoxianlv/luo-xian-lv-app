@@ -1,0 +1,9 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+import "ensemble/room.proto";
+
+message EnsembleChangedData {
+  Room room = 1;
+}

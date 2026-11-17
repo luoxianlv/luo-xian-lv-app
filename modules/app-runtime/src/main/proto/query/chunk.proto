@@ -1,0 +1,13 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message QueryChunkData {
+  optional uint32 status = 1;
+  optional string time = 2;
+  optional uint32 retry_after_millis = 3;
+  optional uint32 offset = 4;
+  optional uint32 total = 5;
+  optional bytes bytes = 6;
+  optional bool done = 7;
+}

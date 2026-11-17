@@ -1,0 +1,15 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+import "ensemble/participant.proto";
+
+message Plan {
+  optional string id = 1;
+  optional string run = 2;
+  optional string execute_at_us = 3;
+  optional string position_us = 4;
+  repeated Participant participants = 5;
+  optional bool committed = 6;
+  optional bool rejoin = 7;
+}

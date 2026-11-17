@@ -78,7 +78,7 @@ public final class RealtimeTlsInstrumentation extends Instrumentation {
             callback.complete("a".repeat(64), 0, 0); return () -> {};
           }
           @Override public AutoCloseable accountGrant(String token, String epoch, SharedRealtime.Authorization callback) {
-            throw new AssertionError("此测试不请求账号授权");
+            callback.complete("b".repeat(64), 0, 0); return () -> {};
           }
           @Override public void hotChanged(boolean ready, String revision, String trust) { subscribed.set(ready); }
           @Override public void usageChanged() { }

@@ -1,0 +1,21 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+import "ensemble/member.proto";
+import "ensemble/score.proto";
+import "ensemble/plan.proto";
+
+message Room {
+  optional string id = 1;
+  optional string code = 2;
+  optional string owner = 3;
+  optional string revision = 4;
+  optional string phase = 5;
+  repeated Member members = 6;
+  Score score = 7;
+  Plan plan = 8;
+  optional string run = 9;
+  optional int64 anchor_us = 10;
+  optional int64 position_us = 11;
+}

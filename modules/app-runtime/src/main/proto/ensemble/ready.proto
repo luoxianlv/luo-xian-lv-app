@@ -1,0 +1,10 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+import "ensemble/preparation.proto";
+
+message EnsembleReadyData {
+  optional string room_id = 1;
+  Ready ready = 2;
+}

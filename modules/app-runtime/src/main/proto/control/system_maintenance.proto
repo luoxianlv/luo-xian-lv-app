@@ -1,0 +1,7 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message SystemMaintenanceData {
+  optional uint32 retry_after_ms = 1;
+}

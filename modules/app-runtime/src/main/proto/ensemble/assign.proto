@@ -1,0 +1,9 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message EnsembleAssignData {
+  optional string room_id = 1;
+  optional string account_id = 2;
+  optional uint32 track = 3;
+}

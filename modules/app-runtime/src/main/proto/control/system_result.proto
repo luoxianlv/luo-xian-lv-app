@@ -1,0 +1,10 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message SystemResultData {
+  optional string received_us = 1;
+  optional string sent_us = 2;
+  optional string clock_epoch = 3;
+  optional bool clock_healthy = 4;
+}

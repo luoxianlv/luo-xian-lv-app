@@ -1,0 +1,5 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message Track { optional string name = 1; optional string sha256 = 2; }

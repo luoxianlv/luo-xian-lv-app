@@ -1,0 +1,10 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message HotChangedData {
+  optional string channel_revision = 1;
+  optional string trust_version = 2;
+  optional string event_id = 3;
+  optional string type = 4;
+}

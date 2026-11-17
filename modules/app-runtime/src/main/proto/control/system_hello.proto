@@ -1,0 +1,12 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message SystemHelloData {
+  repeated string capabilities = 1;
+  optional string clock_epoch = 2;
+  optional string server_time_us = 3;
+  optional uint32 heartbeat_seconds = 4;
+  optional uint32 authorization_expires_in = 5;
+  optional string installation_id = 6;
+}

@@ -68,14 +68,4 @@ internal object RealtimeWire {
         require(value.length <= 19 && value.isNotEmpty() && value.all { it in '0'..'9' })
         return value.toLong().also { require(if (zero) it >= 0 else it > 0) }
     }
-
-    fun encode(epoch: String, id: String, topic: String, type: String, data: JSONObject): String =
-        JSONObject()
-            .put("protocolVersion", 1)
-            .put("messageId", id)
-            .put("connectionEpoch", epoch)
-            .put("topic", topic)
-            .put("type", type)
-            .put("data", data)
-            .toString()
 }

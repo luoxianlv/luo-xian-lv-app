@@ -7,3 +7,4 @@ modules/hot-core/src/test/resources/permit-v1/* -text
 # 固定第三方源码依赖逐文件原始摘要，Git 不转换行尾，也不格式化上游空白。
 modules/update-core/src/main/cpp/vendor/** -text whitespace=-trailing-space
 modules/update-core/src/test/resources/w26/** -text
+modules/app-runtime/src/main/resources/app/luoxianlv/runtime/realtime/realtime.pb binary

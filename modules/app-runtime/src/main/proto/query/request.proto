@@ -1,0 +1,10 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message QueryRequestData {
+  optional string method = 1;
+  optional string path = 2;
+  optional string authorization = 3;
+  optional bytes body_json = 4;
+}

@@ -1,0 +1,9 @@
+syntax = "proto3";
+package luoxianlv.realtime.v1;
+option java_package = "app.luoxianlv.runtime.realtime.proto";
+
+message EnsembleAckData {
+  optional string room_id = 1;
+  optional string plan_id = 2;
+  optional string token = 3;
+}

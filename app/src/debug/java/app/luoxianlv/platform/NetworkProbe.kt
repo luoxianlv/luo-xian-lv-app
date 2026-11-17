@@ -23,12 +23,12 @@ object NetworkProbe {
                         bus.state.first { it.connected && it.identity.accountId.isNotEmpty() }
                     }
                     val before = bus.invalidations.value.library
-                    bridge.send("bus-notices", "ensemble", "testNotices", "{}") { _, _ -> }
+                    bridge.send("bus-notices", "ensemble", "current", "{}") { _, _ -> }
                     withTimeout(5000) { bus.invalidations.first { it.library > before } }
                     withTimeout(5000) { bus.state.first { it.versions?.versionCode == 12345L } }
                     bus.pause()
                     val paused = bus.state.value
-                    bridge.send("bus-notices-paused", "ensemble", "testNotices", "{}") { _, _ -> }
+                    bridge.send("bus-notices-paused", "ensemble", "current", "{}") { _, _ -> }
                     delay(150)
                     check(bus.state.value == paused)
                     val pausedRevision = bus.invalidations.value.library

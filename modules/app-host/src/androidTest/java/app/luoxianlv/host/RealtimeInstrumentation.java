@@ -74,7 +74,12 @@ public final class RealtimeInstrumentation extends Instrumentation {
       SystemClock.sleep(1200);
       require(tickets.get() == 0 && peer.live.get() == 0, "未登录时申请了 WS 票据");
       engine.account("local-test-token");
-      await("WS 或热更订阅未完成", () -> selected.state().getBoolean("connected") && hot.get());
+      try {
+        await("WS 或热更订阅未完成", () -> selected.state().getBoolean("connected") && hot.get());
+      } catch (AssertionError timeout) {
+        throw new AssertionError("WS 初始化失败，state=" + selected.state() + ", tickets=" + tickets.get()
+            + ", handshakes=" + peer.epochs.get(), peer.lastFailure != null ? peer.lastFailure : timeout);
+      }
       require(peer.live.get() == 1 && tickets.get() == 1, "初始化重复创建连接");
       engine.room(true, false);
       await("四时间戳校时未完成", () -> selected.state().getBoolean("clockReady"));
@@ -112,7 +117,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
             try { releaseMain.await(3, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
           });
           require(mainBlocked.await(2,TimeUnit.SECONDS),"主线程阻塞夹具未启动");
-          selected.send("background-notices", "ensemble", "testNotices", "{}", (ok,json)->{});
+          selected.send("background-notices", "ensemble", "current", "{}", (ok,json)->{});
           long noticeDeadline=SystemClock.elapsedRealtime()+2000;
           while(lastNotice.get()!=300 && SystemClock.elapsedRealtime()<noticeDeadline) SystemClock.sleep(10);
           require(lastNotice.get()==300 && selected.state().getBoolean("connected"),"页面忙碌阻断后台通知或使 WS 断线");
@@ -121,7 +126,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
         } finally { releaseMain.countDown(); }
         runOnMainSync(()->{});
         int closedNotices=backgroundNotices.get();
-        selected.send("closed-background-notices", "ensemble", "testNotices", "{}", (ok,json)->{});
+        selected.send("closed-background-notices", "ensemble", "current", "{}", (ok,json)->{});
         SystemClock.sleep(200);
         require(backgroundNotices.get()==closedNotices,"关闭后台监听仍收到通知");
         var busDone = new CountDownLatch(1);
@@ -149,7 +154,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
       require(peer.live.get() == 1, "断线重连留下重复连接");
       await("重连后账号授权未恢复", () -> "test-account".equals(selected.state().getString("accountId")));
       int beforeMaintenance = tickets.get();
-      engine.send("drain-test", "ensemble", "testMaintenance", "{}", (ok, json) -> {});
+      engine.send("drain-test", "ensemble", "snapshot", "{}", (ok, json) -> {});
       await("维护通知未进入退避", () -> !selected.state().getBoolean("connected"));
       SystemClock.sleep(3500);
       require(tickets.get() == beforeMaintenance, "维护冷却尚未到期就重新请求票据");
@@ -232,8 +237,9 @@ public final class RealtimeInstrumentation extends Instrumentation {
             .put("capabilities", new org.json.JSONArray().put("hot-hints-v1").put("ensemble-v1").put("queries-v1").put("hot-queries-v1")));
         byte[] queryBody=null;String queryId="";int querySent=0;long queryTime=0;
         while (true) {
-          String text = read(input); if (text == null) return;
-          JSONObject request = new JSONObject(text), data = new JSONObject();
+          byte[] bytes = read(input); if (bytes == null) return;
+          JSONObject request = (JSONObject) codec().getMethod("decode", byte[].class).invoke(null, (Object) bytes);
+          JSONObject data = new JSONObject();
           String topic = request.getString("topic"), kind = request.getString("type");
           if (topic.equals("query")) {
             if(kind.equals("cancel")){queryBody=null;continue;}
@@ -251,7 +257,7 @@ public final class RealtimeInstrumentation extends Instrumentation {
               send(output,epoch,queryId,"query","chunk",new JSONObject().put("status",200)
                   .put("time",Long.toString(queryTime)).put("retryAfterMillis",0)
                   .put("offset",start).put("total",queryBody.length).put("done",querySent==queryBody.length)
-                  .put("bytes",Base64.getEncoder().encodeToString(java.util.Arrays.copyOfRange(queryBody,start,querySent))));
+                  .put("bytes",java.util.Arrays.copyOfRange(queryBody,start,querySent)));
             }
             continue;
           }
@@ -262,14 +268,14 @@ public final class RealtimeInstrumentation extends Instrumentation {
           else if (topic.equals("account") && kind.equals("authorize")) {authorized.incrementAndGet();data.put("accountId", "test-account");}
           else if (topic.equals("account") && kind.equals("clear")) cleared.incrementAndGet();
           send(output, epoch, request.getString("messageId"), topic, "result", data);
-          if (kind.equals("testNotices")) {
+          if (kind.equals("current")) {
             for (int notice=1; notice<=300;notice++) {
               send(output,epoch,"notice-"+notice,"business","changed",new JSONObject().put("kind","library").put("revision",Integer.toString(notice)));
               if (notice % 8 == 0) Thread.sleep(10);
             }
             send(output,epoch,"catalog-notice","catalog","changed",new JSONObject().put("versions",new JSONObject().put("versionCode",12345).put("versionName","测试版本").put("updateEnabled",true).put("midiCoreVersion","test-core")));
           }
-          if (kind.equals("testMaintenance")) {
+          if (request.getString("messageId").equals("drain-test")) {
             send(output, epoch, "maintenance", "system", "maintenance", new JSONObject().put("retryAfterMs", 5000));
             return;
           }
@@ -277,23 +283,27 @@ public final class RealtimeInstrumentation extends Instrumentation {
       } catch (Exception ended) { lastFailure = ended; }
       finally { live.decrementAndGet(); }
     }
-    private static String read(InputStream input) throws IOException {
+    private static byte[] read(InputStream input) throws IOException {
       int first = input.read(); if (first < 0 || (first & 15) == 8) return null;
+      if ((first & 15) != 2) throw new IOException("expected binary WebSocket frame");
       int second = input.read(); if (second < 0) return null;
       int size = second & 127;
       if (size == 126) size = (input.read() << 8) | input.read();
       if (size > 16384 || size == 127 || (second & 128) == 0) throw new IOException("frame");
       byte[] mask = bytes(input, 4), body = bytes(input, size);
       for (int i = 0; i < body.length; i++) body[i] ^= mask[i % 4];
-      return new String(body, StandardCharsets.UTF_8);
+      return body;
     }
     private static byte[] bytes(InputStream input, int size) throws IOException {
       byte[] result = new byte[size]; new DataInputStream(input).readFully(result); return result;
     }
+    private static Class<?> codec() throws Exception {
+      return Class.forName("app.luoxianlv.runtime.realtime.RealtimeProto", true, Bootstrap.source().prepared.classLoader().getParent());
+    }
     private static void send(OutputStream output, String epoch, String id, String topic, String kind, JSONObject data) throws Exception {
-      byte[] body = new JSONObject().put("protocolVersion", 1).put("connectionEpoch", epoch).put("messageId", id)
-          .put("topic", topic).put("type", kind).put("data", data).toString().getBytes(StandardCharsets.UTF_8);
-      output.write(129);
+      byte[] body = (byte[]) codec().getMethod("encode", String.class, String.class, String.class, String.class, JSONObject.class)
+          .invoke(null, epoch, id, topic, kind, data);
+      output.write(130);
       if (body.length < 126) output.write(body.length);
       else { output.write(126); output.write(body.length >> 8); output.write(body.length & 255); }
       output.write(body); output.flush();
