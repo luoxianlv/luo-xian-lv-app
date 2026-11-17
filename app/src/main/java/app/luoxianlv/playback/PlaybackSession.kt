@@ -510,6 +510,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                     putBoolean("ready", ensemble.ready)
                     putBoolean("playing", playing && ensemble.active)
                     putLong("localStartUs", ensemble.localStartUs)
+                    putInt("eventIndex", ensemble.lastEvent)
                     putInt("skipped", ensemble.skipped)
                     putString("error", error)
                 }
@@ -1209,6 +1210,13 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         }
         val at = positionMs
         val index = timeline.indexAt(at)
+        if (ensemble.active && index > ensemble.lastEvent + 1) {
+            // 回调跨过多个事件时只统计已经结束的音符；始终按共同时间线定位当前音。
+            for (expired in ensemble.lastEvent + 1 until index) {
+                if (!timeline.events[expired].rest) ensemble.skipped++
+            }
+            ensemble.lastEvent = index - 1
+        }
         if (index >= timeline.events.size || at >= durationMs) {
             interrupt()
             baseMs = durationMs
@@ -1216,17 +1224,7 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
         }
         val note = timeline.events[index]
         val end = timeline.offsets[index + 1]
-        if (
-            ensemble.active &&
-                !note.rest &&
-                (index <= ensemble.lastEvent || at - timeline.offsets[index] > 50)
-        ) {
-            if (index > ensemble.lastEvent) {
-                ensemble.skipped++
-                ensemble.lastEvent = index
-                if (ensemble.skipped <= 3 || ensemble.skipped % 10 == 0)
-                    AppLog.log("合奏跳过迟到音符：累计=${ensemble.skipped}")
-            }
+        if (ensemble.active && !note.rest && index <= ensemble.lastEvent) {
             handler.postDelayed(next, (end - at).toLong().coerceAtLeast(1))
             return
         }
@@ -1260,7 +1258,8 @@ class PlaybackSession : ContextWrapper(null), NativePlaybackSession {
                 return@ensurePitch
             }
             val remaining = ((end - positionMs) / speed).toLong()
-            if (remaining <= 0 || (ensemble.active && positionMs - timeline.offsets[index] > 50)) {
+            // 回调或换调耗时只缩短当前音的按住时间；到谱定结束时刻仍须释放。
+            if (remaining <= 0) {
                 if (ensemble.active) ensemble.skipped++
                 finishGesture(true)
             } else {

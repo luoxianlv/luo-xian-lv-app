@@ -76,6 +76,7 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
       await("未切换到传统无障碍路径", () -> SharedInput.ACCESSIBILITY.equals(input.state().getString("mode")));
 
       ensemblePreparationAndStop();
+      ensembleShortDelayKeepsCurrentNote();
       Fixture pitch = create(Behavior.TIMELY_SUCCESS);
       prepareEnsemble(pitch, 1);
       require(pitch.binding.calls.get() == 1 && pitch.binding.request(0).durationMs == 1,
@@ -192,6 +193,17 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
     await("跳过后未继续未来音符", () -> fixture.binding.calls.get() >= 2);
     require(fixture.ensemble().getLong("localStartUs") == deadlineUs, "迟到回调整体推迟了时间轴");
     require(fixture.binding.calls.get() <= 3, "迟到音符被集中补发");
+    fixture.close();
+  }
+
+  private void ensembleShortDelayKeepsCurrentNote() {
+    Fixture fixture = create(Behavior.ENSEMBLE_SHORT_DELAY);
+    long deadlineUs = startEnsemble(fixture, prepareEnsemble(fixture), 150);
+    await("第二个音未提交", () -> fixture.binding.calls.get() >= 2);
+    long secondMs = fixture.binding.request(1).durationMs;
+    require(fixture.ensemble().getInt("skipped") == 0 && secondMs > 0 && secondMs <= NOTE_MS - 50,
+        "前音回调延迟 100ms 后丢弃了仍有效的音，或延长了时值：第二次按键=" + secondMs + "ms");
+    require(fixture.ensemble().getLong("localStartUs") == deadlineUs, "迟到恢复改变了共同起点");
     fixture.close();
   }
 
@@ -361,7 +373,7 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
     }
   }
 
-  private enum Behavior { TIMELY_SUCCESS, TIMELY_CANCEL, REJECT, MISSING, BLOCK_MAIN, SYNC_SUCCESS, SYNC_CANCEL, ENSEMBLE_DELAY }
+  private enum Behavior { TIMELY_SUCCESS, TIMELY_CANCEL, REJECT, MISSING, BLOCK_MAIN, SYNC_SUCCESS, SYNC_CANCEL, ENSEMBLE_DELAY, ENSEMBLE_SHORT_DELAY }
 
   private static final class GestureRequest {
     final AccessibilityBinding.GestureCallback callback;
@@ -387,8 +399,9 @@ public final class PlaybackGestureInstrumentation extends Instrumentation {
       synchronized (requests) { requests.add(request); }
       calls.incrementAndGet();
       if (behavior == Behavior.REJECT) return false;
-      if (behavior == Behavior.ENSEMBLE_DELAY) {
-        main.postDelayed(() -> callback.completed(true), request.durationMs + (calls.get() == 1 ? 350 : 0));
+      if (behavior == Behavior.ENSEMBLE_DELAY || behavior == Behavior.ENSEMBLE_SHORT_DELAY) {
+        long extra = behavior == Behavior.ENSEMBLE_DELAY ? 350 : 100;
+        main.postDelayed(() -> callback.completed(true), request.durationMs + (calls.get() == 1 ? extra : 0));
       } else if (behavior == Behavior.TIMELY_SUCCESS || behavior == Behavior.TIMELY_CANCEL) {
         main.postDelayed(() -> {
           callbacksSent.incrementAndGet();

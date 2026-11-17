@@ -181,20 +181,26 @@ public final class EnsembleMultiInstrumentation extends Instrumentation {
     @Override public boolean gesture(GestureDescription description, GestureCallback callback) {
       require(enabled && Looper.myLooper() == Looper.getMainLooper(), "输入提交线程或代次不正确");
       long duration = description.getStroke(0).getDuration();
+      long callbackDelayMs = 0;
       if (duration > 1) {
         require(notes.size() < 5000, "测试轨迹超出上限");
         Bundle clock = SharedRealtime.current().clock();
         long local = SystemClock.elapsedRealtimeNanos() / 1000;
-        long position = session.query("state").getLong("positionMs") * 1000;
-        long noteIndex = (position + 250_000) / 500_000;
+        int noteIndex = session.query("ensemble").getInt("eventIndex", -1);
+        require(noteIndex >= 0, "没有本次提交的合奏音符编号");
+        if ((noteIndex == 21 || noteIndex == 73) &&
+            new File(getTargetContext().getFilesDir(), "ensemble-multi/delay-after-" + noteIndex).isFile()) {
+          callbackDelayMs = 100;
+        }
         try {
           notes.add(new JSONObject().put("run", run).put("start", starts).put("note", noteIndex)
               .put("localUs", local).put("serverUs", local + clock.getLong("offsetUs"))
               .put("localStartUs", localStartUs).put("positionStartUs", positionUs)
-              .put("uncertaintyUs", clock.getLong("uncertaintyUs")).put("durationMs", duration));
+              .put("uncertaintyUs", clock.getLong("uncertaintyUs")).put("durationMs", duration)
+              .put("callbackDelayMs", callbackDelayMs));
         } catch (Exception error) { throw new AssertionError(error); }
       }
-      main.postDelayed(() -> callback.completed(true), duration);
+      main.postDelayed(() -> callback.completed(true), duration + callbackDelayMs);
       return true;
     }
     JSONObject snapshot(boolean complete) {

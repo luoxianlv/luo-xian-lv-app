@@ -15,10 +15,16 @@ parser.add_argument("--apk", required=True)
 parser.add_argument("--test-apk", required=True)
 parser.add_argument("--output", required=True)
 parser.add_argument("--minutes", type=int, default=10)
+parser.add_argument("--rounds", type=int, default=1)
+parser.add_argument("--exercise-callback-delay", action="store_true",
+                    help="偶数轮在两台设备的指定前音结束后延迟回调 100 毫秒")
 parser.add_argument("--participants", type=int, choices=[3, 6], default=6)
 args = parser.parse_args()
 fixture = pathlib.Path(args.fixture).resolve()
 assert ".local" in fixture.parts and 0 <= args.minutes <= 20
+assert 1 <= args.rounds <= 10 and args.minutes * args.rounds <= 20
+if args.exercise_callback_delay:
+    assert args.rounds >= 2 and args.minutes >= 1
 output = pathlib.Path(args.output).resolve()
 output.mkdir(parents=True, exist_ok=False)
 size = args.participants
@@ -204,15 +210,24 @@ try:
     # 所有人暂停后重来，形成共同起点，测完整十分钟绝对时间线。
     command(0, "pause")
     await_state("全员立即暂停", lambda all: all_(all, lambda state, i: not state.get("playing") and (state.get("room") or {}).get("phase") == "paused"))
-    each(lambda index: command(index, "prepare"))
-    await_state("重来准备", lambda all: all_(all, lambda state, i: state.get("ready")))
-    command(0, "restart")
-    await_state("十分钟共同起点", lambda all: all_(all, lambda state, i: state.get("playing")), 20)
-    until = time.monotonic() + args.minutes * 60
-    while time.monotonic() < until:
-        current = states()
-        assert all_(current, lambda state, i: state.get("playing")), "十分钟期间出现非预期停止"
-        time.sleep(min(10, max(0, until-time.monotonic())))
+    for round_index in range(args.rounds):
+        if round_index:
+            command(0, "pause")
+            await_state("轮间暂停", lambda all: all_(all, lambda s, i:
+                (s.get("room") or {}).get("phase") == "paused" and not s.get("playing") and not s.get("ready")))
+        if args.exercise_callback_delay:
+            for index, note in [(0, 73), (1, 21)]:
+                action = ["touch"] if round_index % 2 else ["rm", "-f"]
+                adb(index, "shell", "run-as", package, *action, f"{remote}/delay-after-{note}")
+        each(lambda index: command(index, "prepare"))
+        await_state("重来准备", lambda all: all_(all, lambda state, i: state.get("ready")))
+        command(0, "restart")
+        await_state("本轮共同起点", lambda all: all_(all, lambda state, i: state.get("playing")), 20)
+        until = time.monotonic() + args.minutes * 60
+        while time.monotonic() < until:
+            current = states()
+            assert all_(current, lambda state, i: state.get("playing")), "本轮期间出现非预期停止"
+            time.sleep(min(10, max(0, until-time.monotonic())))
     command(0, "openFloatingPicker")
     await_state("长时间线暂停", lambda all: all_(all, lambda state, i: not state.get("playing")))
     paused = await_state("悬浮选曲已暂停全员", lambda all: all_(all, lambda s, i:
@@ -267,5 +282,6 @@ finally:
     for stream in logs:
         stream.close()
     (output/"result.json").write_text(json.dumps({"passed": success, "devices": serials, "minutes": args.minutes,
+        "rounds": args.rounds, "exerciseCallbackDelay": args.exercise_callback_delay,
         "apkSha256": apk_hash, "testApkSha256": test_apk_hash,
         "realRuntimeAndPlayback": True,"systemTouchSimulated": True,"controlledClock": controlled,"stages": stages}, ensure_ascii=False, indent=2), encoding="utf-8")
