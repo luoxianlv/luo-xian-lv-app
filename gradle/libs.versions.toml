@@ -20,7 +20,7 @@ ktor = "3.6.0"
 javaWebSocket = "1.6.0"
 
 [libraries]
-protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "3.25.5" }
+protobuf-java = { module = "com.google.protobuf:protobuf-java", version = "4.36.2" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
