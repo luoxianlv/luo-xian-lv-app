@@ -22,7 +22,7 @@ class PlatformClient(private val context: Context) {
     private fun compileToken(explicit: String? = null): String? =
         explicit?.takeIf { it.isNotBlank() } ?: sessionStore.current()?.accessToken
 
-    fun startShushuLogin(activity: Activity) = oauth.startShushuLogin(activity)
+    fun startShushuLogin(activity: Activity): Boolean = oauth.startShushuLogin(activity)
 
     fun finishShushuLogin(intent: Intent, onResult: (Result<LoginResult>) -> Unit) =
         oauth.finishShushuLogin(intent, onResult)

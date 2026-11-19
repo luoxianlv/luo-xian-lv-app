@@ -48,6 +48,7 @@ import app.luoxianlv.settings.ExperimentalSettingsScreen
 import app.luoxianlv.settings.InputModeScreen
 import app.luoxianlv.settings.SettingsScreen
 import app.luoxianlv.shared.NoticeSnackbarHost
+import app.luoxianlv.shared.showNotice
 import app.luoxianlv.ui.theme.GradientBackdrop
 import app.luoxianlv.update.AppUpdateViewModel
 import kotlin.math.abs
@@ -314,7 +315,15 @@ fun AppNavHost(
                                     Routes.LOGIN -> {
                                         LoginScreen(
                                             onBack = navigation::dismissOverlay,
-                                            onShushuLogin = { updater.startShushuLogin(activity) },
+                                            onShushuLogin = {
+                                                if (!updater.startShushuLogin(activity)) {
+                                                    scope.launch {
+                                                        snackbarHostState.showNotice(
+                                                            "无法打开浏览器，请启用浏览器或使用账号密码登录"
+                                                        )
+                                                    }
+                                                }
+                                            },
                                             onRegister = {
                                                 runCatching {
                                                     activity.startActivity(

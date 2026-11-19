@@ -1,10 +1,12 @@
 package app.luoxianlv.platform
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Base64
+import androidx.core.content.edit
 import app.luoxianlv.shared.Kv
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -16,7 +18,7 @@ internal class ShushuLogin(
     private val baseUrl: String,
     private val http: BackendClient,
 ) {
-    fun startShushuLogin(activity: Activity) {
+    fun startShushuLogin(activity: Activity): Boolean {
         val random = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val verifier =
             Base64.encodeToString(random, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
@@ -31,12 +33,12 @@ internal class ShushuLogin(
                 MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray()),
                 Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
             )
-        Kv.of(context, "oauth")
-            .edit()
-            .putString("state", state)
-            .putString("verifier", verifier)
-            .putString("redirect_uri", REDIRECT_URI)
-            .apply()
+        val prefs = Kv.of(context, "oauth")
+        prefs.edit {
+            putString("state", state)
+            putString("verifier", verifier)
+            putString("redirect_uri", REDIRECT_URI)
+        }
         val url =
             Uri.parse("https://shushu.fan/oauth/authorize")
                 .buildUpon()
@@ -48,7 +50,17 @@ internal class ShushuLogin(
                 .appendQueryParameter("code_challenge", challenge)
                 .appendQueryParameter("code_challenge_method", "S256")
                 .build()
-        activity.startActivity(Intent(Intent.ACTION_VIEW, url))
+        return try {
+            activity.startActivity(Intent(Intent.ACTION_VIEW, url))
+            true
+        } catch (_: ActivityNotFoundException) {
+            prefs.edit {
+                remove("state")
+                remove("verifier")
+                remove("redirect_uri")
+            }
+            false
+        }
     }
 
     fun finishShushuLogin(
