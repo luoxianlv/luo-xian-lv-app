@@ -16,7 +16,7 @@ umengUyumao = "1.1.4"
 umengApm = "2.1.0"
 umengApmPlugin = "2.0.0"
 
-ktor = "3.6.0"
+ktor = "3.6.1"
 javaWebSocket = "1.6.0"
 
 [libraries]
