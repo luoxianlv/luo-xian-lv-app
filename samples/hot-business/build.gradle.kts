@@ -4,7 +4,9 @@ plugins {
 }
 android {
     namespace = "app.luoxianlv.hot.business"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         applicationId = "app.luoxianlv.hot.business"
         minSdk = 26
@@ -33,5 +35,5 @@ dependencies {
     compileOnly(libs.activity.compose)
     compileOnly(libs.lifecycle.runtime.compose)
     compileOnly(libs.lifecycle.viewmodel.compose)
-    compileOnly("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")
+    compileOnly(libs.kotlin.stdlib)
 }

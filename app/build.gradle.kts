@@ -23,7 +23,9 @@ val releaseStorePath = (project.findProperty("releaseStoreFile") as String?)?.ta
 
 android {
     namespace = "app.luoxianlv"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "app.luoxianlv"

@@ -2,7 +2,9 @@ plugins { id("com.android.library") }
 
 android {
     namespace = "app.luoxianlv.hot"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         minSdk = 26
         testInstrumentationRunner = "app.luoxianlv.hot.HotCoreInstrumentation"

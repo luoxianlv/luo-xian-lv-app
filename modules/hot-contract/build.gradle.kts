@@ -5,7 +5,9 @@ import com.android.build.api.variant.ScopedArtifacts
 plugins { id("com.android.library") }
 android {
     namespace = "app.luoxianlv.hot.contract"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         minSdk = 26
         consumerProguardFiles("consumer-rules.pro")

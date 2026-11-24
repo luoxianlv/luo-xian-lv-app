@@ -7,7 +7,7 @@
 | 工具 | 要求 |
 | --- | --- |
 | JDK | 推荐 JDK 21，与原生构建 CI 一致；源码兼容级别为 Java 17 |
-| Android SDK | Platform 37；构建时按 AGP 提示安装所需 Build Tools |
+| Android SDK | Platform 37.2；构建时按 AGP 提示安装所需 Build Tools |
 | Gradle | 使用仓库 Wrapper，当前为 9.7.1 |
 | Android Gradle Plugin | 9.1.1，版本由仓库配置管理 |
 | Kotlin | 以 `gradle/libs.versions.toml` 为准 |

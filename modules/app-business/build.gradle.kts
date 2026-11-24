@@ -9,7 +9,9 @@ plugins {
 
 android {
     namespace = "app.luoxianlv"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         applicationId = "app.luoxianlv.business"
         minSdk = 26

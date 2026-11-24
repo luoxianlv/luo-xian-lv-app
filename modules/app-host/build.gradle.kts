@@ -27,7 +27,9 @@ require(!nativeSigningFlag("nativeRequireReleaseSigning") || hasReleaseSigning) 
 
 android {
     namespace = "app.luoxianlv.host"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         applicationId = "app.luoxianlv"
         minSdk = 26

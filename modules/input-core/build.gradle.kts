@@ -2,7 +2,9 @@ plugins { id("com.android.library") }
 
 android {
     namespace = "app.luoxianlv.input"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     ndkVersion = "28.2.13676358"
     defaultConfig {
         minSdk = 26
@@ -23,7 +25,7 @@ dependencies {
     compileOnly(project(":hot-contract"))
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
-    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.2")
     implementation("androidx.annotation:annotation:1.3.0")
     testImplementation(libs.junit)
 }

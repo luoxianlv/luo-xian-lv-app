@@ -4,7 +4,9 @@ plugins {
 }
 android {
     namespace = "app.luoxianlv.business.ui"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         minSdk = 26
         testInstrumentationRunner = "app.luoxianlv.business.ui.PageStateInstrumentation"

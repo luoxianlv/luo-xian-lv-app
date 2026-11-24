@@ -5,7 +5,9 @@ plugins { id("com.android.application") }
 
 android {
     namespace = "app.luoxianlv.runtime"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         applicationId = "app.luoxianlv.runtime"
         minSdk = 26
@@ -67,6 +69,9 @@ dependencies {
     implementation(libs.navigation.compose)
     implementation(libs.fastkv)
     implementation(libs.webkit)
+    // androidx.core 只在运行时依赖较新的 annotation；显式声明让编译与运行类路径同版本，
+    // 否则导出的运行时 SDK 会混入两份不同的 annotation.kotlin_module。
+    implementation(libs.androidx.annotation)
     implementation(libs.kotlin.stdlib)
     releaseImplementation(libs.umeng.common)
     releaseImplementation(libs.umeng.asms)

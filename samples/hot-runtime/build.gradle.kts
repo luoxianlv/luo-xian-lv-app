@@ -1,7 +1,9 @@
 plugins { id("com.android.application") }
 android {
     namespace = "app.luoxianlv.hot.runtime"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     defaultConfig {
         applicationId = "app.luoxianlv.hot.runtime"
         minSdk = 26
@@ -31,5 +33,5 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
-    implementation("org.jetbrains.kotlin:kotlin-stdlib:2.4.20")
+    implementation(libs.kotlin.stdlib)
 }
